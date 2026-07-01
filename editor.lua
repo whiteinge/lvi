@@ -163,6 +163,22 @@ function M.run(opts)
       sys.write(1, table.concat(out))
       sys.read(0)                                     -- any key
     end
+    -- Run an external command with the real terminal (interactive-capable:
+    -- fzf, vim, git commit). Drop to cooked mode, leave the alt screen, let the
+    -- child inherit the tty, then optionally pause before repainting. `prompt`
+    -- false = seamless resume (:silent, for full-screen programs that restore
+    -- the screen themselves); true = "Press ENTER" (to read line output).
+    ed.shell = function(cmd, prompt)
+      sys.restore(saved)
+      sys.write(1, term.alt_off .. term.show)
+      os.execute(cmd)
+      if prompt then
+        sys.write(1, "\r\n\27[7m-- Press ENTER to continue --\27[0m")
+        sys.read(0)
+      end
+      sys.write(1, term.alt_on)
+      saved = sys.raw_mode()
+    end
     refresh(ed)
     sys.write(1, render.frame(ed))
   else

@@ -9,6 +9,7 @@
 --- +/- offsets) and the rest of the command set land later, likely on LPeg.
 
 local bufs = require("bufs")
+local buffer = require("buffer")
 
 local M = {}
 
@@ -100,6 +101,44 @@ local function do_hl(ed, args)
   return "", "ok"
 end
 
+-- Run a shell command. On a tty (ed.shell present) it runs interactively with
+-- the real terminal; otherwise (socket/headless) its stdout is captured and
+-- returned as the payload. ed._silent suppresses the interactive "Press ENTER".
+local function do_shell(ed, cmd)
+  if cmd == "" then return "no command", "err" end
+  if ed.shell then
+    ed.shell(cmd, not ed._silent)
+    return "", "ok"
+  end
+  local p = io.popen(cmd, "r")
+  local out = p and p:read("*a") or ""
+  if p then p:close() end
+  return out, "ok"
+end
+
+-- Filter lines a..b through cmd (input via a temp file to avoid a bidirectional-
+-- pipe deadlock), replacing them with its stdout. One splice = one undo.
+local function do_filter(ed, a, b, cmd)
+  if cmd == "" then return "no command", "err" end
+  local from, to = line_range(ed, a, b)
+  local tmp = os.tmpname()
+  local f = io.open(tmp, "wb")
+  f:write(table.concat(ed.buf:get(from, to), "\n"), "\n")
+  f:close()
+  local p = io.popen(cmd .. " < " .. tmp, "r")
+  local out = p and p:read("*a") or ""
+  if p then p:close() end
+  os.remove(tmp)
+  local lines = {}
+  if out ~= "" then
+    local body = (out:sub(-1) == "\n") and out:sub(1, -2) or out
+    for ln in (body .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = ln end
+  end
+  ed.buf:splice(from, to - from + 1, lines)
+  ed.cy, ed.cx = clampline(ed, from), 1
+  return "", "ok"
+end
+
 function M.dispatch(ed, line)
   local a, b, rest = parse_range(ed, line)
   rest = rest:gsub("^%s+", "")
@@ -107,7 +146,11 @@ function M.dispatch(ed, line)
   cmd = cmd or ""
 
   if cmd == "" then
-    if a then ed.cy = clampline(ed, b); ed.cx = 1 end  -- bare address: goto line
+    if bang == "!" then                                 -- :[range]!cmd
+      if a then return do_filter(ed, a, b, args)        -- filter the range
+      else return do_shell(ed, args) end                -- :!cmd -- run it
+    end
+    if a then ed.cy = clampline(ed, b); ed.cx = 1 end   -- bare address: goto line
     return "", "ok"
   end
 
@@ -183,6 +226,33 @@ function M.dispatch(ed, line)
       if i then bufs.switch(ed, i); return "", "ok" end
     end
     return "no such buffer: " .. args, "err"
+  elseif cmd == "r" or cmd == "read" then
+    if args == "" then return "No file name", "err" end
+    local text
+    if args:sub(1, 1) == "!" then
+      local p = io.popen(args:sub(2), "r")
+      text = p and p:read("*a") or ""
+      if p then p:close() end
+    else
+      local fh = io.open(args, "rb")
+      if not fh then return "can't open " .. args, "err" end
+      text = fh:read("*a") or ""; fh:close()
+    end
+    local lines = {}
+    if text ~= "" then
+      lines = buffer.split((text:sub(-1) == "\n") and text:sub(1, -2) or text)
+    end
+    local at = (a or ed.cy) + 1                         -- read after the addressed line
+    ed.buf:insert(at, lines)
+    ed.cy, ed.cx = clampline(ed, at), 1
+    return "", "ok"
+
+  elseif cmd == "silent" or cmd == "sil" then
+    ed._silent = true
+    local p, s = M.dispatch(ed, args)                   -- run the sub-command silently
+    ed._silent = nil
+    return p, s
+
   elseif cmd == "ls" or cmd == "buffers" or cmd == "files" then
     return bufs.list(ed), "ok"
   elseif cmd == "bd" or cmd == "bdelete" then
