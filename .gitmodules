@@ -1,33 +1,6 @@
-[submodule "vendor/lua-term"]
-	path = vendor/lua-term
-	url = https://github.com/hoelzro/lua-term.git
 [submodule "vendor/argparse"]
 	path = vendor/argparse
 	url = https://github.com/mpeterv/argparse.git
-[submodule "vendor/scintillua"]
-	path = vendor/scintillua
-	url = https://github.com/orbitalquark/scintillua.git
-[submodule "vendor/lua-path"]
-	path = vendor/lua-path
-	url = https://github.com/moteus/lua-path.git
-[submodule "vendor/ldoc"]
-	path = vendor/ldoc
-	url = https://github.com/lunarmodules/LDoc.git
-[submodule "vendor/lunix"]
-	path = vendor/lunix
-	url = https://github.com/wahern/lunix.git
-[submodule "vendor/luafun"]
-	path = vendor/luafun
-	url = https://github.com/luafun/luafun.git
 [submodule "vendor/lust"]
 	path = vendor/lust
 	url = https://github.com/bjornbytes/lust.git
-[submodule "vendor/inspect"]
-	path = vendor/inspect
-	url = https://github.com/kikito/inspect.lua.git
-[submodule "vendor/json.lua"]
-	path = vendor/json.lua
-	url = https://github.com/rxi/json.lua.git
-[submodule "vendor/plterm"]
-	path = vendor/plterm
-	url = https://github.com/philanc/plterm.git
