@@ -61,6 +61,7 @@ int   isatty(int fd);
 int   setenv(const char *name, const char *value, int overwrite);
 typedef void (*lvi_sighandler)(int);
 lvi_sighandler signal(int signum, lvi_sighandler handler);
+int   raise(int sig);
 int   close(int fd);
 long  read(int fd, void *buf, unsigned long count);        /* ssize_t/size_t */
 long  write(int fd, const void *buf, unsigned long count);
@@ -114,6 +115,11 @@ function M.setenv(name, value) C.setenv(name, tostring(value), 1) end
 -- Ignore SIGPIPE so writing a reply to a client that already disconnected (e.g.
 -- a --detach/fire-and-forget client) returns an error instead of killing us.
 function M.ignore_sigpipe() C.signal(13, ffi.cast("lvi_sighandler", 1)) end -- SIGPIPE -> SIG_IGN
+
+-- Suspend this process (Ctrl-Z / job control). Execution resumes here on `fg`.
+-- SIGTSTP is the one number that diverges (Linux 20 vs BSD/macOS 18).
+local SIGTSTP = (ffi.os == "Linux") and 20 or 18
+function M.suspend() C.raise(SIGTSTP) end
 
 -- Terminal size of fd (default stdout). struct winsize is uniform; only the
 -- request number diverges (Linux vs the BSD _IOR encoding macOS/*BSD share).

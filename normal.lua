@@ -471,6 +471,7 @@ actions = {
     ed.marks = ed.marks or {}
     ed.marks[string.char(getkey(ed))] = { ed.cy, ed.cx }
   end,
+  [26] = function(ed) if ed.suspend_self then ed.suspend_self() end end, -- Ctrl-Z: suspend
   [b("u")] = function(ed)
     local l = ed.buf:undo()
     if l then ed.cy, ed.cx = l, 1; clamp(ed) else ed.message = "Already at oldest change" end

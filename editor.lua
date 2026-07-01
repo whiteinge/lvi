@@ -179,18 +179,24 @@ function M.run(opts)
       saved = sys.raw_mode()
       return r
     end
-    -- Run an external command interactively. `prompt` true adds "Press ENTER"
-    -- (to read line output); false = seamless resume (:silent, for full-screen
-    -- programs that restore the screen themselves).
+    -- Run an external command interactively; returns its exit code. `prompt`
+    -- true adds "Press ENTER" (to read line output, with the code on failure);
+    -- false = seamless resume (:silent, for full-screen programs).
     ed.shell = function(cmd, prompt)
-      ed.with_tty(function()
-        os.execute(cmd)
+      return ed.with_tty(function()
+        local st = os.execute(cmd)
+        local code = (type(st) == "number") and math.floor(st / 256) or (st and 0 or 1)
         if prompt then
-          sys.write(1, "\r\n\27[7m-- Press ENTER to continue --\27[0m")
+          local note = (code ~= 0) and (" [exit " .. code .. "]") or ""
+          sys.write(1, "\r\n\27[7m-- Press ENTER to continue" .. note .. " --\27[0m")
           sys.read(0)
         end
+        return code
       end)
     end
+    -- Ctrl-Z: suspend to the shell (reusing the tty dance); execution continues
+    -- after `raise(SIGTSTP)` when the user runs `fg`.
+    ed.suspend_self = function() ed.with_tty(sys.suspend) end
     refresh(ed)
     sys.write(1, render.frame(ed))
   else

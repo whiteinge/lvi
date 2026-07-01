@@ -101,33 +101,40 @@ local function do_hl(ed, args)
   return "", "ok"
 end
 
+-- Run cmd and capture stdout; returns stdout, exit_code. The exit code comes via
+-- a temp file (`; echo $?`) since LuaJIT's popen:close() doesn't surface it, and
+-- WITHOUT capturing stderr (which would fight an interactive finder's UI). On a
+-- tty, ed._silent hands the child the real terminal (ed.with_tty) so fzy/fzf can
+-- draw while we still capture its selection.
+local function run_capture(ed, cmd)
+  local codef = os.tmpname()
+  local run = function()
+    local p = io.popen(cmd .. "; echo $? >" .. codef, "r")
+    local o = p and p:read("*a") or ""
+    if p then p:close() end
+    return o
+  end
+  local out = (ed._silent and ed.with_tty) and ed.with_tty(run) or run()
+  local cf = io.open(codef, "r")
+  local code = cf and tonumber(((cf:read("*a") or ""):match("%d+"))) or 0
+  if cf then cf:close() end
+  os.remove(codef)
+  return out, code
+end
+
 -- Run a shell command. On a tty (ed.shell present) it runs interactively with
 -- the real terminal; otherwise (socket/headless) its stdout is captured and
 -- returned as the payload. ed._silent suppresses the interactive "Press ENTER".
 local function do_shell(ed, cmd)
   if cmd == "" then return "no command", "err" end
-  if ed.shell then
-    ed.shell(cmd, not ed._silent)
+  if ed.shell then                                    -- interactive on a tty
+    local code = ed.shell(cmd, not ed._silent)
+    if code ~= 0 then return ("shell failed: exit %d"):format(code), "err" end
     return "", "ok"
   end
-  local p = io.popen(cmd, "r")
-  local out = p and p:read("*a") or ""
-  if p then p:close() end
+  local out, code = run_capture(ed, cmd)              -- socket/headless: capture
+  if code ~= 0 then return (out ~= "" and out or ("exit " .. code)), "err" end
   return out, "ok"
-end
-
--- Run cmd and capture stdout. On a tty, ed._silent (set by :silent) hands the
--- child the real terminal via ed.with_tty -- so an interactive program (fzy)
--- can draw its UI while we still capture its selection. Otherwise a plain pipe.
-local function run_capture(ed, cmd)
-  local run = function()
-    local p = io.popen(cmd, "r")
-    local o = p and p:read("*a") or ""
-    if p then p:close() end
-    return o
-  end
-  if ed._silent and ed.with_tty then return ed.with_tty(run) end
-  return run()
 end
 
 -- Filter lines a..b through cmd (input via a temp file to avoid a bidirectional-
@@ -139,8 +146,9 @@ local function do_filter(ed, a, b, cmd)
   local f = io.open(tmp, "wb")
   f:write(table.concat(ed.buf:get(from, to), "\n"), "\n")
   f:close()
-  local out = run_capture(ed, cmd .. " < " .. tmp)
+  local out, code = run_capture(ed, cmd .. " < " .. tmp)
   os.remove(tmp)
+  if code ~= 0 then return ("filter failed: exit %d (buffer unchanged)"):format(code), "err" end
   local lines = {}
   if out ~= "" then
     local body = (out:sub(-1) == "\n") and out:sub(1, -2) or out
@@ -264,7 +272,9 @@ function M.dispatch(ed, line)
     if args == "" then return "No file name", "err" end
     local text
     if args:sub(1, 1) == "!" then
-      text = run_capture(ed, args:sub(2))
+      local code
+      text, code = run_capture(ed, args:sub(2))
+      if code ~= 0 then return ("read failed: exit %d"):format(code), "err" end
     else
       local fh = io.open(args, "rb")
       if not fh then return "can't open " .. args, "err" end
