@@ -39,6 +39,13 @@ describe("disp", function()
     expect(s3).to.equal(1)
   end)
 
+  it("finds the byte at a display column (tab-aware)", function()
+    expect(disp.byte_at_dispcol("abc", 8, 0)).to.equal(1)
+    expect(disp.byte_at_dispcol("abc", 8, 2)).to.equal(3)
+    expect(disp.byte_at_dispcol("a\tb", 8, 4)).to.equal(2) -- inside the tab
+    expect(disp.byte_at_dispcol("a\tb", 8, 8)).to.equal(3) -- 'b' after the tab
+  end)
+
   it("maps a visual position back to a byte (byteat, inverse of locate)", function()
     expect(disp.byteat("abcdef", 3, 8, 1, 0)).to.equal(4) -- row 1, col 0 -> 'd'
     expect(disp.byteat("abcdef", 3, 8, 0, 1)).to.equal(2) -- 'b'

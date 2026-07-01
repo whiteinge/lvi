@@ -71,6 +71,33 @@ local function do_set(ed, args)
   return table.concat(out, "\n"), "ok"
 end
 
+-- :hl GROUP [specs...] -- set a named highlight group's ranges (replacing it);
+-- no specs clears the group. Specs: L:C1-C2 (byte cols), L:C (one col), L (whole
+-- line). Named groups let independent lists (search, qf-current, ...) coexist.
+local function do_hl(ed, args)
+  ed.highlights = ed.highlights or {}
+  local group, rest = args:match("^(%S+)%s*(.-)%s*$")
+  if not group then return "usage: hl GROUP [L:C1-C2 ...]", "err" end
+  local ranges = {}
+  for spec in rest:gmatch("%S+") do
+    local l, c1, c2 = spec:match("^(%d+):(%d+)%-(%d+)$")
+    if l then
+      ranges[#ranges + 1] = { line = tonumber(l), c1 = tonumber(c1), c2 = tonumber(c2) }
+    else
+      local l2, c = spec:match("^(%d+):(%d+)$")
+      if l2 then
+        ranges[#ranges + 1] = { line = tonumber(l2), c1 = tonumber(c), c2 = tonumber(c) }
+      else
+        local lw = spec:match("^(%d+)$")
+        if lw then ranges[#ranges + 1] = { line = tonumber(lw), c1 = 1, c2 = math.huge }
+        else return "bad highlight spec: " .. spec, "err" end
+      end
+    end
+  end
+  ed.highlights[group] = ranges
+  return "", "ok"
+end
+
 function M.dispatch(ed, line)
   local a, b, rest = parse_range(ed, line)
   rest = rest:gsub("^%s+", "")
@@ -130,6 +157,16 @@ function M.dispatch(ed, line)
 
   elseif cmd == "set" or cmd == "se" then
     return do_set(ed, args)
+
+  elseif cmd == "hl" or cmd == "highlight" then
+    return do_hl(ed, args)
+
+  elseif cmd == "nohl" or cmd == "nohlsearch" then
+    ed.highlights = {}
+    return "", "ok"
+
+  elseif cmd == "pos" then                  -- cursor position query: line<TAB>col
+    return ed.cy .. "\t" .. ed.cx, "ok"
 
   elseif cmd == "echo" then
     return args, "ok"

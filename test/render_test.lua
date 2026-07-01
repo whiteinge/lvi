@@ -58,6 +58,18 @@ describe("render.frame", function()
     local f = render.frame(ed_with("a\tb", { cols = 20, opts = { wrap = false, tabstop = 4 } }))
     expect(f:find("a   b", 1, true)).to.exist()
   end)
+
+  it("draws a highlight overlay in reverse video", function()
+    local f = render.frame(ed_with("hello world",
+      { cols = 20, highlights = { search = { { line = 1, c1 = 1, c2 = 5 } } } }))
+    expect(f:find("\27[7mhello\27[0m", 1, true)).to.exist() -- 'hello' reversed
+  end)
+
+  it("highlights a span offset within the line (tab-aware columns)", function()
+    local f = render.frame(ed_with("ab cd ef",
+      { cols = 20, highlights = { m = { { line = 1, c1 = 4, c2 = 5 } } } }))
+    expect(f:find("\27[7mcd\27[0m", 1, true)).to.exist()
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

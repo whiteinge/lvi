@@ -343,6 +343,10 @@ local motions = {
     local l = math.max(1, math.min(m[1], ed.buf:nlines()))
     return l, first_nonblank(line(ed, l))
   end },
+  [124] = { kind = "char", move = function(ed, count) -- N| : goto display column N
+    local ts = (ed.opts and ed.opts.tabstop) or 8
+    return ed.cy, disp.byte_at_dispcol(line(ed, ed.cy), ts, (count or 1) - 1)
+  end },
   [b("j")] = { kind = "line", move = function(ed, n) return ed.cy + (n or 1), ed.cx end },
   [b("k")] = { kind = "line", move = function(ed, n) return ed.cy - (n or 1), ed.cx end },
   [b("G")] = { kind = "line", move = function(ed, n)

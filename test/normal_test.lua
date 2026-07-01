@@ -98,6 +98,14 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("| (goto column)", function()
+    it("moves to a display column", function()
+      local ed = make("abcdef")
+      feed(ed, "4|"); expect(ed.cx).to.equal(4)
+      feed(ed, "|"); expect(ed.cx).to.equal(1)   -- no count -> column 1
+    end)
+  end)
+
   describe("gj / gk (screen-line motion)", function()
     it("gj == j when wrap is off", function()
       local ed = make("a\nb\nc")               -- no opts -> nowrap

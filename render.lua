@@ -4,14 +4,61 @@
 --- full repaint. It is (almost) pure -- it reads ed's view state and produces a
 --- string -- which makes it unit-testable without a real tty. Per the rendering
 --- design ([[lvi-rendering]] in project memory): we only ever touch the lines
---- and columns actually visible, so cost is O(viewport), never O(buffer). This
---- slice is nowrap only (truncate each line to the width); wrap, horizontal
---- scroll, and syntax highlighting layer on later without changing this shape.
+--- and columns actually visible, so cost is O(viewport), never O(buffer).
+--- Highlights are a stateless overlay -- named groups of byte ranges in
+--- ed.highlights, set from outside (`:hl`), drawn here in reverse video. This is
+--- the mechanism external search / quickfix build on.
 
 local term = require("term")
 local disp = require("disp")
 
 local M = {}
+
+local REV_ON, REV_OFF = "\27[7m", "\27[0m"
+
+-- Bucket every highlight range by line, once per frame: O(total ranges), then
+-- O(1) lookup per visible line.
+local function hl_index(ed)
+  local idx = {}
+  if not ed.highlights then return idx end
+  for _, ranges in pairs(ed.highlights) do
+    for _, r in ipairs(ranges) do
+      idx[r.line] = idx[r.line] or {}
+      table.insert(idx[r.line], r)
+    end
+  end
+  return idx
+end
+
+-- Convert a line's highlight ranges (byte columns) into 0-based, end-exclusive
+-- display-column intervals.
+local function intervals(ranges, orig, ts)
+  if not ranges then return nil end
+  local out = {}
+  for _, r in ipairs(ranges) do
+    local s = disp.dispcol(orig, ts, r.c1)
+    local e = (r.c2 >= #orig) and disp.width(orig, ts) or disp.dispcol(orig, ts, r.c2 + 1)
+    if e > s then out[#out + 1] = { s, e } end
+  end
+  return (#out > 0) and out or nil
+end
+
+-- Emit a display piece (starting at absolute display col `pstart`) with reverse
+-- video around cells inside any interval.
+local function emit(piece, pstart, ivs)
+  if not ivs then return piece end
+  local out, on = {}, false
+  for k = 1, #piece do
+    local col = pstart + k - 1
+    local hot = false
+    for _, iv in ipairs(ivs) do if col >= iv[1] and col < iv[2] then hot = true; break end end
+    if hot and not on then out[#out + 1] = REV_ON; on = true
+    elseif not hot and on then out[#out + 1] = REV_OFF; on = false end
+    out[#out + 1] = piece:sub(k, k)
+  end
+  if on then out[#out + 1] = REV_OFF end
+  return table.concat(out)
+end
 
 -- Left (name/message) and right (position) halves of the status line.
 local function status_halves(ed)
@@ -33,6 +80,7 @@ function M.frame(ed)
   local buf = ed.buf
   local ts = (ed.opts and ed.opts.tabstop) or 8
   local wrap = ed.opts and ed.opts.wrap
+  local hidx = hl_index(ed)
   local out = { term.hide, term.home }
   local crow, ccol
 
@@ -42,10 +90,14 @@ function M.frame(ed)
     local ccsub, cccol = disp.locate(buf:line(ed.cy) or "", W, ts, ed.cx)
     local l, skip, sr = ed.top, (ed.topsub or 0), 0
     while sr < textrows and l <= buf:nlines() do
-      local segs = disp.segments(buf:line(l) or "", W, ts)
-      for si = 1 + skip, #segs do
+      local orig = buf:line(l) or ""
+      local d = disp.expand(orig, ts)
+      local ivs = intervals(hidx[l], orig, ts)
+      local nseg = math.max(1, math.ceil(#d / W))
+      for si = 1 + skip, nseg do
         if sr >= textrows then break end
-        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. segs[si]:sub(1, W)
+        local pstart = (si - 1) * W
+        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. emit(d:sub(pstart + 1, pstart + W), pstart, ivs)
         if l == ed.cy and (si - 1) == ccsub then crow, ccol = sr + 1, cccol + 1 end
         sr = sr + 1
       end
@@ -58,9 +110,12 @@ function M.frame(ed)
     local left = ed.leftcol or 0
     for i = 0, textrows - 1 do
       out[#out + 1] = term.move(i + 1, 1) .. term.clr_eol
-      local ln = buf:line(ed.top + i)
+      local L = ed.top + i
+      local ln = buf:line(L)
       if ln == nil then out[#out + 1] = "~"
-      else out[#out + 1] = disp.expand(ln, ts):sub(left + 1, left + W) end
+      else
+        out[#out + 1] = emit(disp.expand(ln, ts):sub(left + 1, left + W), left, intervals(hidx[L], ln, ts))
+      end
     end
     crow = ed.cy - ed.top + 1
     ccol = disp.dispcol(buf:line(ed.cy) or "", ts, ed.cx) - left + 1

@@ -1,0 +1,23 @@
+#!/bin/sh
+# lvi-search WID PATTERN
+#
+# Search a running lvi entirely from outside it: grep the *live* buffer over the
+# control socket, highlight the matching lines, and jump to the first match.
+# Demonstrates that search needs no in-editor engine -- only highlight + jump.
+#
+# Because it reads the buffer via `%p`, it searches UNSAVED content, and the
+# line numbers map straight back. PATTERN is a POSIX grep basic regexp.
+#
+# Set LVI if `lvi` is not on your PATH (e.g. LVI="luajit /path/to/lvi").
+# This highlights whole matching lines; column-precise spans are an awk refinement.
+LVI=${LVI:-lvi}
+wid=${1:?usage: lvi-search WID PATTERN}
+pat=${2:?usage: lvi-search WID PATTERN}
+
+lines=$($LVI -w "$wid" -- '%p' | grep -n -- "$pat" | cut -d: -f1)
+[ -z "$lines" ] && { echo "lvi-search: no matches" >&2; exit 1; }
+
+# One :hl replaces the 'search' group; bare line numbers = whole-line spans.
+$LVI -w "$wid" -- "hl search $lines"
+# Jump to the first match.
+$LVI -w "$wid" -- "$(printf '%s\n' "$lines" | head -1)"
