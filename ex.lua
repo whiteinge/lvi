@@ -67,6 +67,10 @@ local function do_set(ed, args)
       if n == "wrap" then out[#out + 1] = ed.opts.wrap and "wrap" or "nowrap"
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       else return "unknown option: " .. n, "err" end
+    elseif opt:sub(-1) == "!" then                      -- toggle a boolean (vim `set wrap!`)
+      local n = opt:sub(1, -2)
+      if n == "wrap" then ed.opts.wrap = not ed.opts.wrap
+      else return "not a boolean option: " .. n, "err" end
     elseif opt == "wrap" then ed.opts.wrap = true
     elseif opt == "nowrap" then ed.opts.wrap = false
     else return "unknown option: " .. opt, "err" end
