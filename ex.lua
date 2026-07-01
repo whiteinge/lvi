@@ -404,6 +404,21 @@ function M.dispatch(ed, line)
     ed.highlights = {}
     return "", "ok"
 
+  elseif cmd == "on" then
+    -- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
+    -- but pointed at external tools). Multiple hooks per event compose; `:on
+    -- EVENT` with no command clears them. Hooks run detached and non-blocking
+    -- (editor.lua's spawn_bg). Only keyboard-initiated changes fire `change`, so
+    -- a hook's own socket-driven edits can't retrigger it (see editor.lua).
+    local event, rest = args:match("^(%S+)%s*(.-)%s*$")
+    if not event or event == "" then return "usage: on EVENT [command]", "err" end
+    if event ~= "change" then return "unknown event: " .. event, "err" end
+    ed.hooks = ed.hooks or {}
+    if rest == "" then ed.hooks[event] = nil; return "", "ok" end
+    ed.hooks[event] = ed.hooks[event] or {}
+    table.insert(ed.hooks[event], rest)
+    return "", "ok"
+
   elseif cmd == "pos" then                  -- cursor position query: line<TAB>col
     return ed.cy .. "\t" .. ed.cx, "ok"
 

@@ -19,7 +19,11 @@ hi Constant fg=magenta
 hi Preproc  fg=red
 
 " ---- trigger -----------------------------------------------------------------
-" Re-highlight the live buffer on demand. lvi-highlight self-backgrounds, so the
-" :silent ! returns at once and the colors land a moment later. Put lvi-highlight
-" (and lvi-hl-pygments) on your PATH, or set LVI_HL_BACKEND / LVI in its env.
+" Re-highlight automatically a moment after you stop typing. `on change` runs the
+" command (detached, output discarded) when a KEYBOARD edit settles -- a hook's
+" own socket edits never retrigger it, so no loops. Put lvi-highlight (and
+" lvi-hl-pygments) on your PATH, or set LVI_HL_BACKEND / LVI in its env.
+on change lvi-highlight
+
+" ...and/or a key to force a refresh on demand:
 map \h :silent !lvi-highlight<CR>

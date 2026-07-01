@@ -191,6 +191,17 @@ describe("buffer", function()
     end)
   end)
 
+  describe("rev counter", function()
+    it("starts at 0 and bumps on every mutation (incl. undo/redo)", function()
+      local b = buffer.new("a\nb")
+      expect(b.rev).to.equal(0)
+      b:set(1, "X"); expect(b.rev).to.equal(1)
+      b:insert(2, { "Y" }); expect(b.rev).to.equal(2)
+      local r = b.rev
+      b:undo(); expect(b.rev > r).to.be(true)   -- undo is a mutation too
+    end)
+  end)
+
   describe("modified flag", function()
     it("is false on a fresh buffer, true after an edit", function()
       local b = buffer.new("a")

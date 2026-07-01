@@ -81,4 +81,50 @@ describe("editor.refresh does not fight a scroll", function()
   end
 end)
 
+-- The `change` hook must fire only for KEYBOARD edits, so a hook's own
+-- socket-driven edits can't retrigger it and loop.
+describe("change-hook attribution and firing", function()
+  local function ed_hooked(text)
+    local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, topsub = 0,
+      leftcol = 0, mode = "normal", cmdline = "", rows = 12, cols = 80,
+      opts = { wrap = false, tabstop = 8 }, inject = {}, pending = {},
+      keylog = {}, regs = {}, marks = {}, running = true,
+      hooks = { change = { "lvi-highlight" } }, change_pending = false }
+    ed.interp = coroutine.create(function() normal.loop(ed) end)
+    assert(coroutine.resume(ed.interp))              -- prime to first getkey
+    local spawned = {}
+    ed.spawn_bg = function(cmd) spawned[#spawned + 1] = cmd end
+    return ed, spawned
+  end
+
+  it("note_keyboard_change arms only when the buffer actually changed", function()
+    local ed = ed_hooked("hello")
+    local pb, pr = ed.buf, ed.buf.rev
+    editor.note_keyboard_change(ed, pb, pr)          -- nothing changed
+    expect(ed.change_pending).to_not.be(true)
+    ed.buf:set(1, "world")                           -- a mutation bumps rev
+    editor.note_keyboard_change(ed, pb, pr)
+    expect(ed.change_pending).to.be(true)
+  end)
+
+  it("on_idle fires each change hook once, then disarms", function()
+    local ed, spawned = ed_hooked("x")
+    ed.change_pending = true
+    editor.on_idle(ed)
+    expect(spawned).to.equal({ "lvi-highlight" })
+    expect(ed.change_pending).to.be(false)
+    editor.on_idle(ed)                               -- disarmed: no re-fire
+    expect(#spawned).to.equal(1)
+  end)
+
+  it("a socket-sourced edit does NOT arm the hook (no loop)", function()
+    local ed, spawned = ed_hooked("hello world")
+    editor.handle_socket_command(ed, "normal dw")    -- edit via the socket path
+    expect(ed.buf:line(1)).to.equal("world")         -- it really edited
+    expect(ed.change_pending).to_not.be(true)        -- but did not arm
+    editor.on_idle(ed)
+    expect(#spawned).to.equal(0)                      -- so nothing fires
+  end)
+end)
+
 os.exit(lust.errors == 0 and 0 or 1)

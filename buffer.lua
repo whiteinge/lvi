@@ -45,7 +45,7 @@ end
 -- string is the empty file: one empty line, no final newline.
 function M.new(text)
   text = text or ""
-  local self = setmetatable({ modified = false, path = nil,
+  local self = setmetatable({ modified = false, path = nil, rev = 0,
     _undo = { done = {}, undone = {}, group = nil, sink = nil,
               seq = 0, now = 0, saved = 0 } }, Buffer)
   if text == "" then
@@ -172,6 +172,7 @@ function Buffer:splice(start, ndel, ins)
   -- fired, that region is the single guard line at 1.
   record(self, { start = guard and 1 or start, ndel = guard and 1 or nins, ins = old })
   update_modified(self)
+  self.rev = self.rev + 1   -- monotonic mutation counter (undo/redo bump it too)
 end
 
 -- Replace line n.

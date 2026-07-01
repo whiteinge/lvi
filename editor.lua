@@ -32,6 +32,20 @@ end
 -- ---- connection state -------------------------------------------------------
 local function new_conn(fd) return { fd = fd, inbuf = "", next_id = 1 } end
 
+-- Process one socket command line: dispatch it and drive any ':normal' keys it
+-- queued (so a following command in the same batch sees the result). Split out
+-- so the poll loop and tests share it. It deliberately does NOT touch
+-- ed.change_pending: socket-sourced edits must never schedule a `change` hook,
+-- or a hook's own edits (which come back over the socket) would retrigger it and
+-- loop. Only keyboard input schedules a fire, via note_keyboard_change.
+local function handle_socket_command(ed, line)
+  ed.buf:undo_checkpoint() -- each socket command is its own undo unit
+  local payload, status = ex.dispatch(ed, line)
+  if #ed.inject > 0 then pump(ed) end
+  return payload, status
+end
+M.handle_socket_command = handle_socket_command
+
 local function feed_conn(ed, c, data)
   c.inbuf = c.inbuf .. data
   while true do
@@ -40,13 +54,28 @@ local function feed_conn(ed, c, data)
     c.inbuf = rest
     local id = c.next_id
     c.next_id = id + 1
-    ed.buf:undo_checkpoint() -- each socket command is its own undo unit
-    local payload, status = ex.dispatch(ed, line)
-    -- A ':normal' pushes keys onto ed.inject; drive the coroutine to consume
-    -- them now, so a following command in this batch sees the result.
-    if #ed.inject > 0 then pump(ed) end
+    local payload, status = handle_socket_command(ed, line)
     proto.send_response(c.fd, id, payload, status)
   end
+end
+
+-- ---- change hooks (`:on change`) --------------------------------------------
+local IDLE_MS = 150 -- debounce: fire change hooks this long after the last key
+
+-- Called after a KEYBOARD pump: if it changed the buffer (a mutation bumps
+-- buf.rev; :e/:bn swaps the buffer object), arm the `change` hooks. Attributing
+-- to the keyboard is what keeps a hook's socket-driven edits from looping.
+function M.note_keyboard_change(ed, prev_buf, prev_rev)
+  if ed.buf ~= prev_buf or ed.buf.rev ~= prev_rev then ed.change_pending = true end
+end
+
+-- Called when the poll loop goes idle: run each registered `change` hook once,
+-- detached, then disarm until the next keyboard change.
+function M.on_idle(ed)
+  local hooks = ed.change_pending and ed.hooks and ed.hooks.change
+  if not hooks or #hooks == 0 then return end
+  ed.change_pending = false
+  for _, cmd in ipairs(hooks) do ed.spawn_bg(cmd) end
 end
 
 -- ---- cursor / scroll invariants ---------------------------------------------
@@ -117,7 +146,12 @@ function M.run(opts)
     mode = "normal", cmdline = "", message = nil,
     inject = {}, pending = {}, keylog = {}, regs = {},
     opts = { wrap = true, tabstop = 8 },
+    hooks = {}, change_pending = true, -- seed one fire so an opened file highlights
   }
+  -- Spawn a shell command detached and non-blocking, with its output discarded
+  -- (a hook must not write to the tty or block the poll loop). Used to fire
+  -- `:on change` hooks; the subshell backgrounds so os.execute returns at once.
+  ed.spawn_bg = function(cmd) os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
   -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
   -- is set up here and swapped by bufs on :e / buffer switch. Positional files
   -- open as buffers; the first is current.
@@ -237,7 +271,13 @@ function M.run(opts)
       for fd in pairs(conns) do fds[#fds + 1] = fd end
       if tty then fds[#fds + 1] = 0 end
 
-      local ready = sys.poll(fds, -1)
+      -- Only arm the idle timeout when a keyboard change is waiting for its
+      -- `change` hooks; otherwise block indefinitely (no idle wakeups).
+      local ch = ed.hooks.change
+      local armed = ed.change_pending and ch and #ch > 0
+      local ready = sys.poll(fds, armed and IDLE_MS or -1)
+
+      if not next(ready) then M.on_idle(ed) end -- poll timed out: idle
 
       if ready[lfd] then
         local cfd = sys.accept(lfd)
@@ -252,7 +292,13 @@ function M.run(opts)
       end
       if tty and ready[0] then
         local data = sys.read(0)
-        if not data then ed.running = false else feed(data) end
+        if not data then
+          ed.running = false
+        else
+          local pb, pr = ed.buf, ed.buf.rev
+          feed(data)
+          M.note_keyboard_change(ed, pb, pr)
+        end
       end
 
       refresh(ed)
