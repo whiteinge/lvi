@@ -14,10 +14,11 @@
 
 local M = {}
 
--- SGR: RESET turns all attributes off; REV is the default parameter set (reverse
--- video) used when a highlight group has no style of its own, so the plain
--- search/quickfix overlay looks exactly as it did before styles existed.
-local RESET, REV = "\27[0m", "7"
+-- SGR RESET turns all attributes off. A highlight interval with no style (nil
+-- sgr) renders as plain text -- an un-themed group is invisible, like every
+-- editor's un-themed token. A tool that wants to be seen without a theme sets
+-- its own style (e.g. `:hi search reverse`).
+local RESET = "\27[0m"
 
 -- Byte length of the UTF-8 char whose lead byte is b (defensive for stray
 -- continuation bytes: treat as length 1... they never start a char here).
@@ -186,18 +187,18 @@ end
 -- multibyte chars kept whole, with SGR escapes around cells inside any interval
 -- `ivs` (0-based, end-exclusive display-col ranges). Each interval is
 -- { startcol, endcol, sgr } where sgr is the group's SGR parameter string (e.g.
--- "38;5;2;1"); a nil sgr means the default reverse-video overlay. When adjacent
--- cells carry different styles we reset and re-open, so touching tokens keep
--- their own colors. Overlapping intervals: the last one in the list wins per
--- cell (tokens from one highlighter don't overlap; cross-group order is
--- unspecified). One char-aware walk serves every render path.
+-- "38;5;2;1"); a nil sgr means no styling (plain text). When adjacent cells
+-- carry different styles we reset and re-open, so touching tokens keep their own
+-- colors. Overlapping intervals: the last one in the list wins per cell (tokens
+-- from one highlighter don't overlap; cross-group order is unspecified). One
+-- char-aware walk serves every render path.
 function M.slice(s, ts, startcol, W, ivs)
   local endcol = startcol + W
   local out, col, i, n, cur = {}, 0, 1, #s, nil
   local function sgr_at(c)
     if not ivs then return nil end
     local hit
-    for _, iv in ipairs(ivs) do if c >= iv[1] and c < iv[2] then hit = iv[3] or REV end end
+    for _, iv in ipairs(ivs) do if c >= iv[1] and c < iv[2] then hit = iv[3] end end
     return hit
   end
   local function put(cell, c)

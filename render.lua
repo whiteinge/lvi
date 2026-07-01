@@ -8,7 +8,8 @@
 --- Highlights are a stateless overlay -- named groups of byte ranges in
 --- ed.highlights, set from outside (`:hl`). Each group may carry a style in
 --- ed.hlstyles (set by `:hi`, an SGR parameter string); a group with no style
---- draws in reverse video, so the plain search / quickfix overlay is unchanged.
+--- draws as plain text (an un-themed group is invisible), so a tool that wants
+--- to be seen without a theme sets its own style, e.g. `:hi search reverse`.
 --- This is the mechanism external search, quickfix, and syntax highlighting all
 --- build on.
 

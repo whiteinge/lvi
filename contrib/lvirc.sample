@@ -4,9 +4,9 @@
 
 " ---- theme -------------------------------------------------------------------
 " Define a color for every group the highlighter emits. A group with NO style
-" falls back to reverse video (the search-overlay default), so style them all
-" here unless you want that. Colors: 8 names (black red green yellow blue magenta
-" cyan white) or a 0-255 256-color index; attrs bold dim italic underline reverse.
+" renders as plain text (un-themed = invisible), so style the ones you want.
+" Colors: 8 names (black red green yellow blue magenta cyan white) or a 0-255
+" 256-color index; attrs bold dim italic underline reverse.
 hi Comment  fg=cyan italic
 hi String   fg=green
 hi Number   fg=magenta

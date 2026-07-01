@@ -84,9 +84,9 @@ describe("disp", function()
   end)
 
   describe("slice highlight overlay", function()
-    it("wraps a styleless interval in reverse video (default)", function()
-      local out = disp.slice("hello", 8, 0, 20, { { 0, 3 } })   -- cols 0..2
-      expect(out).to.equal("\27[7mhel\27[0mlo")
+    it("leaves a styleless interval as plain text (un-themed = invisible)", function()
+      local out = disp.slice("hello", 8, 0, 20, { { 0, 3 } })   -- cols 0..2, no sgr
+      expect(out).to.equal("hello")
     end)
     it("uses a group's SGR params when the interval carries them", function()
       local out = disp.slice("hello", 8, 0, 20, { { 0, 3, "38;5;2;1" } })

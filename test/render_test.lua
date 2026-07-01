@@ -59,10 +59,18 @@ describe("render.frame", function()
     expect(f:find("a   b", 1, true)).to.exist()
   end)
 
-  it("draws a highlight overlay in reverse video", function()
+  it("draws a reverse-styled overlay group (e.g. search)", function()
+    local f = render.frame(ed_with("hello world", { cols = 20,
+      highlights = { search = { { line = 1, c1 = 1, c2 = 5 } } },
+      hlstyles = { search = "7" } }))                          -- reverse video
+    expect(f:find("\27[7mhello\27[0m", 1, true)).to.exist() -- 'hello' reversed
+  end)
+
+  it("leaves an un-themed highlight group as plain text", function()
     local f = render.frame(ed_with("hello world",
       { cols = 20, highlights = { search = { { line = 1, c1 = 1, c2 = 5 } } } }))
-    expect(f:find("\27[7mhello\27[0m", 1, true)).to.exist() -- 'hello' reversed
+    expect(f:find("\27[7m", 1, true)).to_not.exist()        -- no reverse fallback
+    expect(f:find("hello world", 1, true)).to.exist()
   end)
 
   it("draws a styled group with its SGR color instead of reverse video", function()
@@ -74,14 +82,16 @@ describe("render.frame", function()
 
   it("highlights a span offset within the line (tab-aware columns)", function()
     local f = render.frame(ed_with("ab cd ef",
-      { cols = 20, highlights = { m = { { line = 1, c1 = 4, c2 = 5 } } } }))
+      { cols = 20, highlights = { m = { { line = 1, c1 = 4, c2 = 5 } } },
+        hlstyles = { m = "7" } }))
     expect(f:find("\27[7mcd\27[0m", 1, true)).to.exist()
   end)
 
   it("renders multibyte whole and highlights the right char", function()
     local E = "\195\169"                    -- 'é' at bytes 2-3, display col 1
     local f = render.frame(ed_with("a" .. E .. "b",
-      { cols = 20, highlights = { m = { { line = 1, c1 = 2, c2 = 3 } } } }))
+      { cols = 20, highlights = { m = { { line = 1, c1 = 2, c2 = 3 } } },
+        hlstyles = { m = "7" } }))
     expect(f:find("\27[7m" .. E .. "\27[0m", 1, true)).to.exist()
   end)
 end)

@@ -17,7 +17,9 @@ pat=${2:?usage: lvi-search WID PATTERN}
 lines=$($LVI -w "$wid" -- '%p' | grep -n -- "$pat" | cut -d: -f1)
 [ -z "$lines" ] && { echo "lvi-search: no matches" >&2; exit 1; }
 
-# One :hl replaces the 'search' group; bare line numbers = whole-line spans.
-$LVI -w "$wid" -- "hl search $lines"
+# Give the 'search' group a visible style (an un-themed group draws as plain
+# text), then set its ranges. One :hl replaces the group; bare line numbers =
+# whole-line spans.
+$LVI -w "$wid" -- "hi search reverse" "hl search $lines"
 # Jump to the first match.
 $LVI -w "$wid" -- "$(printf '%s\n' "$lines" | head -1)"
