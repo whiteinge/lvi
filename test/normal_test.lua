@@ -98,6 +98,26 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("UTF-8", function()
+    local E = "\195\169" -- 'é', 2 bytes, 1 cell
+    it("h and l move by character across multibyte", function()
+      local ed = make("a" .. E .. "b")
+      feed(ed, "l"); expect(ed.cx).to.equal(2)   -- onto é
+      feed(ed, "l"); expect(ed.cx).to.equal(4)   -- skipped é's 2 bytes, onto b
+      feed(ed, "h"); expect(ed.cx).to.equal(2)   -- back onto é
+    end)
+    it("x deletes a whole multibyte char", function()
+      local ed = make("a" .. E .. "b")
+      feed(ed, "lx")
+      expect(ed.buf:line(1)).to.equal("ab")
+    end)
+    it("inserts a multibyte char typed as its bytes", function()
+      local ed = make("ab")
+      feed(ed, "i" .. E .. "\27")
+      expect(ed.buf:line(1)).to.equal(E .. "ab")
+    end)
+  end)
+
   describe("| (goto column)", function()
     it("moves to a display column", function()
       local ed = make("abcdef")

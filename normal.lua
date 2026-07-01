@@ -54,15 +54,16 @@ end
 local function clamp(ed)
   local nl = ed.buf:nlines()
   ed.cy = math.max(1, math.min(ed.cy, nl))
-  local L = #line(ed, ed.cy)
-  local maxc = (ed.mode == "insert") and (L + 1) or math.max(1, L)
+  local s = line(ed, ed.cy)
+  local maxc = (ed.mode == "insert") and (#s + 1) or disp.last_char(s) -- char-aware cap
   ed.cx = math.max(1, math.min(ed.cx, maxc))
 end
 
 local function char_class(c)
   if not c or c == "" then return "none" end
   if c:match("%s") then return "blank" end
-  if c:match("[%w_]") then return "word" end
+  local b = c:byte(1)
+  if (b and b >= 128) or c:match("[%w_]") then return "word" end -- multibyte = word
   return "punct"
 end
 
@@ -94,8 +95,9 @@ end
 local function backspace(ed)
   if ed.cx > 1 then
     local s = line(ed, ed.cy)
-    ed.buf:set(ed.cy, s:sub(1, ed.cx - 2) .. s:sub(ed.cx))
-    ed.cx = ed.cx - 1
+    local pc = disp.prev_char(s, ed.cx)          -- delete the whole char before cursor
+    ed.buf:set(ed.cy, s:sub(1, pc - 1) .. s:sub(ed.cx))
+    ed.cx = pc
   elseif ed.cy > 1 then -- join with previous line
     local prev, cur = line(ed, ed.cy - 1), line(ed, ed.cy)
     ed.cx = #prev + 1
@@ -115,7 +117,7 @@ local function insert_mode(ed)
     if k == 27 then break                              -- ESC
     elseif k == 13 or k == 10 then split_line(ed)      -- CR
     elseif k == 127 or k == 8 then backspace(ed)       -- Backspace
-    elseif k == 9 or (k >= 32 and k < 127) then insert_char(ed, k)
+    elseif k == 9 or (k >= 32 and k ~= 127) then insert_char(ed, k) -- printable + UTF-8 bytes
     end
     clamp(ed)
   end
@@ -284,8 +286,16 @@ end
 local flip = { f = "F", F = "f", t = "T", T = "t" }
 
 local motions = {
-  [b("h")] = { kind = "char", move = function(ed, n) return ed.cy, ed.cx - (n or 1) end },
-  [b("l")] = { kind = "char", move = function(ed, n) return ed.cy, ed.cx + (n or 1) end },
+  [b("h")] = { kind = "char", move = function(ed, n)
+    local s, c = line(ed, ed.cy), ed.cx
+    for _ = 1, (n or 1) do c = disp.prev_char(s, c) end
+    return ed.cy, c
+  end },
+  [b("l")] = { kind = "char", move = function(ed, n)
+    local s, c = line(ed, ed.cy), ed.cx
+    for _ = 1, (n or 1) do if c <= #s then c = disp.next_char(s, c) end end
+    return ed.cy, c
+  end },
   [b("0")] = { kind = "char", move = function(ed) return ed.cy, 1 end },
   [b("^")] = { kind = "char", move = function(ed) return ed.cy, first_nonblank(line(ed, ed.cy)) end },
   [b("$")] = { kind = "char", inclusive = true, move = function(ed) return ed.cy, math.max(1, #line(ed, ed.cy)) end },
@@ -399,18 +409,20 @@ actions = {
   [b("x")] = function(ed, count, reg)
     local s = line(ed, ed.cy)
     if #s == 0 then return end
-    local a = ed.cx
-    local hi = math.min(a + (count or 1) - 1, #s)
-    set_reg(ed, reg, s:sub(a, hi), false)
-    ed.buf:set(ed.cy, s:sub(1, a - 1) .. s:sub(hi + 1))
+    local a, endb = ed.cx, ed.cx
+    for _ = 1, (count or 1) do if endb <= #s then endb = disp.next_char(s, endb) end end
+    set_reg(ed, reg, s:sub(a, endb - 1), false)
+    ed.buf:set(ed.cy, s:sub(1, a - 1) .. s:sub(endb))
     ed.changed = true
     clamp(ed)
   end,
   [b("r")] = function(ed, count)
     local ch = string.char(getkey(ed))
     local s, a, n = line(ed, ed.cy), ed.cx, (count or 1)
-    if a + n - 1 > #s then return end
-    ed.buf:set(ed.cy, s:sub(1, a - 1) .. string.rep(ch, n) .. s:sub(a + n))
+    local endb, k = a, 0
+    while k < n and endb <= #s do endb = disp.next_char(s, endb); k = k + 1 end
+    if k < n then return end                       -- not enough chars on the line
+    ed.buf:set(ed.cy, s:sub(1, a - 1) .. string.rep(ch, n) .. s:sub(endb))
     ed.cx = a + n - 1
     ed.changed = true
   end,

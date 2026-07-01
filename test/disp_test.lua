@@ -5,6 +5,9 @@ local lust = require("lust")
 local disp = require("disp")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
+local E = "\195\169"       -- 'é' U+00E9, 2 bytes, width 1
+local CJK = "\228\184\150" -- '世' U+4E16, 3 bytes, width 2
+
 describe("disp", function()
   it("expands tabs to the next tab stop", function()
     expect(disp.expand("a\tb", 4)).to.equal("a   b") -- 'a' at 0, tab -> col 4
@@ -51,6 +54,33 @@ describe("disp", function()
     expect(disp.byteat("abcdef", 3, 8, 0, 1)).to.equal(2) -- 'b'
     expect(disp.byteat("abcdef", 3, 8, 1, 5)).to.equal(6) -- past row -> last ('f')
     expect(disp.byteat("", 3, 8, 0, 0)).to.equal(1)
+  end)
+
+  describe("UTF-8", function()
+    it("measures display width (narrow vs wide)", function()
+      expect(disp.width(E, 8)).to.equal(1)          -- 'é' 2 bytes, 1 cell
+      expect(disp.width(CJK, 8)).to.equal(2)        -- '世' 3 bytes, 2 cells
+      expect(disp.width("a" .. E .. "b", 8)).to.equal(3)
+    end)
+    it("navigates by character", function()
+      local s = "a" .. E .. "b"                     -- bytes: a=1, é=2..3, b=4
+      expect(disp.next_char(s, 1)).to.equal(2)
+      expect(disp.next_char(s, 2)).to.equal(4)
+      expect(disp.prev_char(s, 4)).to.equal(2)
+      expect(disp.last_char(s)).to.equal(4)
+    end)
+    it("dispcol / byte_at_dispcol account for wide chars", function()
+      local s = "a" .. CJK .. "b"                   -- a@0, 世@1(w2), b@3
+      expect(disp.dispcol(s, 8, 5)).to.equal(3)     -- 'b' is byte 5, col 3
+      expect(disp.byte_at_dispcol(s, 8, 1)).to.equal(2) -- col 1 -> 世
+      expect(disp.byte_at_dispcol(s, 8, 3)).to.equal(5) -- col 3 -> b
+    end)
+    it("wrapping keeps multibyte chars whole", function()
+      local segs = disp.segments(E .. E .. E, 2, 8) -- three 1-cell chars, W=2
+      expect(#segs).to.equal(2)
+      expect(segs[1]).to.equal(E .. E)
+      expect(segs[2]).to.equal(E)
+    end)
   end)
 end)
 

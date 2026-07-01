@@ -70,6 +70,13 @@ describe("render.frame", function()
       { cols = 20, highlights = { m = { { line = 1, c1 = 4, c2 = 5 } } } }))
     expect(f:find("\27[7mcd\27[0m", 1, true)).to.exist()
   end)
+
+  it("renders multibyte whole and highlights the right char", function()
+    local E = "\195\169"                    -- 'é' at bytes 2-3, display col 1
+    local f = render.frame(ed_with("a" .. E .. "b",
+      { cols = 20, highlights = { m = { { line = 1, c1 = 2, c2 = 3 } } } }))
+    expect(f:find("\27[7m" .. E .. "\27[0m", 1, true)).to.exist()
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

@@ -14,8 +14,6 @@ local disp = require("disp")
 
 local M = {}
 
-local REV_ON, REV_OFF = "\27[7m", "\27[0m"
-
 -- Bucket every highlight range by line, once per frame: O(total ranges), then
 -- O(1) lookup per visible line.
 local function hl_index(ed)
@@ -41,23 +39,6 @@ local function intervals(ranges, orig, ts)
     if e > s then out[#out + 1] = { s, e } end
   end
   return (#out > 0) and out or nil
-end
-
--- Emit a display piece (starting at absolute display col `pstart`) with reverse
--- video around cells inside any interval.
-local function emit(piece, pstart, ivs)
-  if not ivs then return piece end
-  local out, on = {}, false
-  for k = 1, #piece do
-    local col = pstart + k - 1
-    local hot = false
-    for _, iv in ipairs(ivs) do if col >= iv[1] and col < iv[2] then hot = true; break end end
-    if hot and not on then out[#out + 1] = REV_ON; on = true
-    elseif not hot and on then out[#out + 1] = REV_OFF; on = false end
-    out[#out + 1] = piece:sub(k, k)
-  end
-  if on then out[#out + 1] = REV_OFF end
-  return table.concat(out)
 end
 
 -- Left (name/message) and right (position) halves of the status line.
@@ -91,13 +72,11 @@ function M.frame(ed)
     local l, skip, sr = ed.top, (ed.topsub or 0), 0
     while sr < textrows and l <= buf:nlines() do
       local orig = buf:line(l) or ""
-      local d = disp.expand(orig, ts)
       local ivs = intervals(hidx[l], orig, ts)
-      local nseg = math.max(1, math.ceil(#d / W))
+      local nseg = disp.nsegs(orig, W, ts)
       for si = 1 + skip, nseg do
         if sr >= textrows then break end
-        local pstart = (si - 1) * W
-        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. emit(d:sub(pstart + 1, pstart + W), pstart, ivs)
+        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. disp.slice(orig, ts, (si - 1) * W, W, ivs)
         if l == ed.cy and (si - 1) == ccsub then crow, ccol = sr + 1, cccol + 1 end
         sr = sr + 1
       end
@@ -113,9 +92,7 @@ function M.frame(ed)
       local L = ed.top + i
       local ln = buf:line(L)
       if ln == nil then out[#out + 1] = "~"
-      else
-        out[#out + 1] = emit(disp.expand(ln, ts):sub(left + 1, left + W), left, intervals(hidx[L], ln, ts))
-      end
+      else out[#out + 1] = disp.slice(ln, ts, left, W, intervals(hidx[L], ln, ts)) end
     end
     crow = ed.cy - ed.top + 1
     ccol = disp.dispcol(buf:line(ed.cy) or "", ts, ed.cx) - left + 1

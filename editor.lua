@@ -55,8 +55,7 @@ local function refresh(ed)
   local nl = ed.buf:nlines()
   ed.cy = math.max(1, math.min(ed.cy, nl))
   local curline = ed.buf:line(ed.cy) or ""
-  local len = #curline
-  local maxc = (ed.mode == "insert") and (len + 1) or math.max(1, len)
+  local maxc = (ed.mode == "insert") and (#curline + 1) or disp.last_char(curline)
   ed.cx = math.max(1, math.min(ed.cx, maxc))
 
   local textrows = ed.rows - 1
