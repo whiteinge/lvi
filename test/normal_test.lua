@@ -225,6 +225,24 @@ describe("normal-mode interpreter", function()
       feed(ed, "i" .. "\r" .. ESC)
       expect(ed.buf:get()).to.equal({ "", "ab" })
     end)
+    it("Ctrl-W erases the word before the cursor", function()
+      local ed = make("")
+      feed(ed, "ifoo bar\23" .. ESC)          -- type 'foo bar', Ctrl-W
+      expect(ed.buf:line(1)).to.equal("foo ")
+      feed(ed, "A baz qux\23" .. ESC)          -- again at end of line
+      expect(ed.buf:line(1)).to.equal("foo  baz ")
+    end)
+    it("Ctrl-U erases from the cursor to the start of the line", function()
+      local ed = make("")
+      feed(ed, "ihello world\21" .. ESC)       -- type then Ctrl-U
+      expect(ed.buf:line(1)).to.equal("")
+    end)
+    it("Ctrl-A / Ctrl-E jump to the line ends in insert mode", function()
+      local ed = make("")
+      feed(ed, "imiddle\1START")               -- Ctrl-A to bol, type
+      feed(ed, "\5END" .. ESC)                  -- Ctrl-E to eol, type
+      expect(ed.buf:line(1)).to.equal("STARTmiddleEND")
+    end)
     it("cc changes a whole line", function()
       local ed = make("old\nkeep")
       feed(ed, "ccnew" .. ESC)

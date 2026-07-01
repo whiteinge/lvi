@@ -146,6 +146,26 @@ local function backspace(ed)
   end
 end
 
+-- Ctrl-W: delete the whitespace + word before the cursor (like the shell).
+local function kill_word(ed)
+  local s, c = line(ed, ed.cy), ed.cx
+  local i = c - 1
+  while i >= 1 and s:sub(i, i):match("%s") do i = i - 1 end     -- skip trailing blanks
+  if i >= 1 then
+    local cls = char_class(s:sub(i, i))
+    while i >= 1 and char_class(s:sub(i, i)) == cls do i = i - 1 end
+  end
+  ed.buf:set(ed.cy, s:sub(1, i) .. s:sub(c))
+  ed.cx = i + 1
+end
+
+-- Ctrl-U: delete from the cursor back to the start of the line.
+local function kill_to_bol(ed)
+  local s = line(ed, ed.cy)
+  ed.buf:set(ed.cy, s:sub(ed.cx))
+  ed.cx = 1
+end
+
 local function insert_mode(ed)
   ed.changed = true
   ed.mode = "insert"
@@ -155,7 +175,13 @@ local function insert_mode(ed)
     local k = getkey(ed)
     if k == 27 then break                              -- ESC
     elseif k == 13 or k == 10 then split_line(ed)      -- CR
-    elseif k == 127 or k == 8 then backspace(ed)       -- Backspace
+    elseif k == 127 or k == 8 then backspace(ed)       -- Backspace / Ctrl-H
+    elseif k == 23 then kill_word(ed)                  -- Ctrl-W: erase word (POSIX vi)
+    elseif k == 21 then kill_to_bol(ed)                -- Ctrl-U: erase to line start
+    -- Ctrl-A / Ctrl-E move to line ends. Not POSIX vi (readline muscle memory);
+    -- vi's answer is <Esc> then I / A. Included by request.
+    elseif k == 1 then ed.cx = 1                       -- Ctrl-A: start of line
+    elseif k == 5 then ed.cx = #line(ed, ed.cy) + 1    -- Ctrl-E: end of line
     elseif k == 9 or (k >= 32 and k ~= 127) then insert_char(ed, k) -- printable + UTF-8 bytes
     end
     clamp(ed)
