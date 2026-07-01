@@ -21,12 +21,51 @@ local M = {}
 local b = string.byte
 
 -- ---- key input --------------------------------------------------------------
-local function getkey(ed)
+-- Pull the next raw key without logging: from the map-output queue first (so
+-- map expansions are never re-mapped -> non-recursive), else the input funnel.
+local function getkey_raw(ed)
+  if ed.pending and #ed.pending > 0 then return table.remove(ed.pending, 1) end
   while #ed.inject == 0 do coroutine.yield() end
-  local k = table.remove(ed.inject, 1)
+  return table.remove(ed.inject, 1)
+end
+
+local function logkey(ed, k)
   ed.keylog[#ed.keylog + 1] = k
   if ed.recording then ed.macro_buf[#ed.macro_buf + 1] = k end
   return k
+end
+
+local function getkey(ed) return logkey(ed, getkey_raw(ed)) end
+
+-- Does some map LHS start with the byte-string `seq`?
+local function starts_map(ed, seq)
+  for lhs in pairs(ed.maps) do
+    if lhs:sub(1, #seq) == seq then return true end
+  end
+  return false
+end
+
+-- Read the FIRST key of a command, expanding maps (non-recursive). RHS goes to
+-- ed.pending and is consumed raw; only the expanded keys are logged (so `.` and
+-- macros replay the expansion, not the LHS). Leader-style maps (LHS starting
+-- with a non-command key like '\\') avoid ambiguity; there is no timeout, so a
+-- partial LHS blocks until the next key.
+local function first_key(ed)
+  if ed.pending and #ed.pending > 0 then return getkey(ed) end -- RHS: raw, logged
+  local k = getkey_raw(ed)
+  if not ed.maps or not starts_map(ed, string.char(k)) then return logkey(ed, k) end
+  local seq = string.char(k)
+  while not ed.maps[seq] and starts_map(ed, seq) do
+    seq = seq .. string.char(getkey_raw(ed))
+  end
+  if ed.maps[seq] then
+    ed.pending = ed.pending or {}
+    local rhs = ed.maps[seq]
+    for i = 1, #rhs do ed.pending[#ed.pending + 1] = rhs:byte(i) end
+    return getkey(ed)
+  end
+  for i = #seq, 2, -1 do table.insert(ed.inject, 1, seq:byte(i)) end -- dead end: reprocess
+  return logkey(ed, k)
 end
 
 -- optional leading count: 1-9 then 0-9 ('0' alone is the ^0 motion, not a count)
@@ -523,7 +562,7 @@ local function command(ed)
   ed.changed = false
   ed.message = nil
   local reg
-  local k = getkey(ed)
+  local k = first_key(ed)                    -- map expansion happens here
   if k == b('"') then reg = string.char(getkey(ed)); k = getkey(ed) end
   local count1
   count1, k = read_count(ed, k)

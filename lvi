@@ -17,6 +17,7 @@ local parser = argparse("lvi", "A minimal vi with a control socket.")
 parser:argument("args", "file to edit, or ex commands (after --) in client mode")
       :args("*")
 parser:option("-w --wid", "send ex commands to this view's socket ('auto' = sole view)")
+parser:flag("-d --detach", "client mode: send without waiting for replies (fire-and-forget)")
 parser:flag("-l --list", "list running views and exit")
 
 local a = parser:parse()
@@ -31,7 +32,7 @@ if a.wid then
   -- Client mode.
   if #a.args == 0 then io.stderr:write("lvi: no commands given\n"); os.exit(2) end
   local client = require("client")
-  local results, err = client.send(a.wid, a.args)
+  local results, err = client.send(a.wid, a.args, a.detach)
   if not results then io.stderr:write("lvi: " .. err .. "\n"); os.exit(1) end
   local rc = 0
   for _, r in ipairs(results) do

@@ -1,0 +1,21 @@
+#!/bin/sh
+# lvi-open -- fuzzy-pick a file and open it in the running lvi view.
+#
+# The neatvi-style ECMD pattern: an external picker that drives the editor over
+# the socket. Bind it inside lvi, e.g.:
+#
+#     :map <Bslash>f :silent !lvi-open<CR>
+#
+# Run via `:silent !` so the finder gets a clean terminal (lvi hands it the tty).
+# The chosen file is sent back with --detach (fire-and-forget): a synchronous
+# callback would deadlock, since lvi is blocked while this script runs.
+#
+# LVI_WID/LVI_SOCK are exported by lvi. Set LVI if `lvi` is not on PATH; set
+# LVI_PICKER to your finder (default: fzf; fzy, sk, etc. work too).
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+[ -n "$LVI_WID" ] || { echo "lvi-open: run me from inside lvi (no LVI_WID)" >&2; exit 1; }
+
+files=$(git ls-files 2>/dev/null || find . -type f -not -path '*/.*' 2>/dev/null)
+sel=$(printf '%s\n' "$files" | "$PICKER") || exit 0
+[ -n "$sel" ] && "$LVI" -w "$LVI_WID" --detach -- "e $sel"

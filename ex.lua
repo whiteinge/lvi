@@ -151,6 +151,28 @@ local function do_filter(ed, a, b, cmd)
   return "", "ok"
 end
 
+-- Parse a key notation string into raw bytes. Names (case-insensitive):
+-- <CR> <Esc> <Space> <Tab> <Bar> <Bslash> <lt> <NL>, and <C-x> for ctrl-keys.
+-- Unknown <...> is left as a literal '<'.
+local KEYNAMES = { CR = 13, RETURN = 13, NL = 10, ESC = 27, SPACE = 32,
+                   TAB = 9, BAR = 124, BSLASH = 92, LT = 60 }
+local function parse_keys(s)
+  local out, i, n = {}, 1, #s
+  while i <= n do
+    if s:sub(i, i) == "<" then
+      local close = s:find(">", i + 1, true)
+      local tok = close and s:sub(i + 1, close - 1):upper()
+      local ctrl = tok and tok:match("^C%-(.)$")
+      if tok and KEYNAMES[tok] then out[#out + 1] = string.char(KEYNAMES[tok]); i = close + 1
+      elseif ctrl then out[#out + 1] = string.char(ctrl:byte() % 32); i = close + 1
+      else out[#out + 1] = "<"; i = i + 1 end
+    else
+      out[#out + 1] = s:sub(i, i); i = i + 1
+    end
+  end
+  return table.concat(out)
+end
+
 function M.dispatch(ed, line)
   local a, b, rest = parse_range(ed, line)
   rest = rest:gsub("^%s+", "")
@@ -255,6 +277,17 @@ function M.dispatch(ed, line)
     local at = (a or ed.cy) + 1                         -- read after the addressed line
     ed.buf:insert(at, lines)
     ed.cy, ed.cx = clampline(ed, at), 1
+    return "", "ok"
+
+  elseif cmd == "map" then
+    local lhs, rhs = args:match("^(%S+)%s+(.+)$")
+    if not lhs then return "usage: map LHS RHS", "err" end
+    ed.maps = ed.maps or {}
+    ed.maps[parse_keys(lhs)] = parse_keys(rhs)
+    return "", "ok"
+  elseif cmd == "unmap" then
+    if args == "" then return "usage: unmap LHS", "err" end
+    if ed.maps then ed.maps[parse_keys(args)] = nil end
     return "", "ok"
 
   elseif cmd == "silent" or cmd == "sil" then

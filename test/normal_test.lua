@@ -4,13 +4,14 @@ package.path = "vendor/lust/?.lua;./?.lua;" .. package.path
 local lust   = require("lust")
 local buffer = require("buffer")
 local normal = require("normal")
+local ex     = require("ex")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
 -- Build an editor state with a live interpreter coroutine, primed to getkey.
 local function make(text)
   local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, rows = 24,
     cols = 80, mode = "normal", cmdline = "", message = nil,
-    inject = {}, keylog = {}, regs = {}, marks = {}, running = true }
+    inject = {}, pending = {}, keylog = {}, regs = {}, marks = {}, running = true }
   ed.interp = coroutine.create(function() normal.loop(ed) end)
   assert(coroutine.resume(ed.interp))
   return ed
@@ -248,6 +249,37 @@ describe("normal-mode interpreter", function()
       feed(ed, "ix" .. ESC)               -- "xZ", cursor on 'x'
       feed(ed, ".")                       -- insert 'x' again before cursor
       expect(ed.buf:line(1)).to.equal("xxZ")
+    end)
+  end)
+
+  describe("maps", function()
+    it("expands a leader map to its RHS", function()
+      local ed = make("a\nb\nc")
+      ex.dispatch(ed, "map \\d dd")            -- \d -> delete line
+      feed(ed, "\\d")
+      expect(ed.buf:get()).to.equal({ "b", "c" })
+    end)
+    it("is non-recursive (RHS keys are not re-mapped)", function()
+      local ed = make("abc\ndef")
+      ex.dispatch(ed, "map d x")                -- d -> x (delete char)
+      ex.dispatch(ed, "map x dd")              -- x -> dd (should NOT fire from d's RHS)
+      feed(ed, "d")
+      expect(ed.buf:line(1)).to.equal("bc")    -- one char deleted, not the line
+      expect(ed.buf:nlines()).to.equal(2)
+    end)
+    it("parses <...> notation and unmaps", function()
+      local ed = make("hello")
+      ex.dispatch(ed, "map <Space>x x")         -- <Space>x -> delete char (proves <Space> parse)
+      feed(ed, " x")
+      expect(ed.buf:line(1)).to.equal("ello")
+      ex.dispatch(ed, "unmap <Space>x")
+      expect(ed.maps[" x"]).to_not.exist()      -- map removed
+    end)
+    it("a map RHS can drive an ex command", function()
+      local ed = make("x\ny\nz")
+      ex.dispatch(ed, "map \\l :2d<CR>")        -- \l -> :2d
+      feed(ed, "\\l")
+      expect(ed.buf:get()).to.equal({ "x", "z" })
     end)
   end)
 

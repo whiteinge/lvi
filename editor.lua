@@ -114,7 +114,7 @@ function M.run(opts)
   local ed = {
     running = true,
     mode = "normal", cmdline = "", message = nil,
-    inject = {}, keylog = {}, regs = {},
+    inject = {}, pending = {}, keylog = {}, regs = {},
     opts = { wrap = true, tabstop = 8 },
   }
   -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
@@ -124,6 +124,7 @@ function M.run(opts)
   bufs.init(ed, files[1] and buffer.open(files[1]) or buffer.new(""))
   for i = 2, #files do bufs.open(ed, files[i]) end
   if #ed.buffers > 1 then bufs.switch(ed, 1) end
+  sys.ignore_sigpipe() -- a disconnected client (e.g. --detach) must not kill us
   ed.wid = opts.wid or tostring(sys.getpid())
   ed.sock_path = path.socket(ed.wid)
   local lfd = sys.listen(ed.sock_path)

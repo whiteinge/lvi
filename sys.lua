@@ -59,6 +59,8 @@ int   getuid(void);
 int   getpid(void);
 int   isatty(int fd);
 int   setenv(const char *name, const char *value, int overwrite);
+typedef void (*lvi_sighandler)(int);
+lvi_sighandler signal(int signum, lvi_sighandler handler);
 int   close(int fd);
 long  read(int fd, void *buf, unsigned long count);        /* ssize_t/size_t */
 long  write(int fd, const void *buf, unsigned long count);
@@ -108,6 +110,10 @@ function M.isatty(fd) return C.isatty(fd) == 1 end
 -- Set an environment variable in this process, so spawned children (os.execute
 -- / io.popen) inherit it -- e.g. LVI_WID/LVI_SOCK so a picker can call back.
 function M.setenv(name, value) C.setenv(name, tostring(value), 1) end
+
+-- Ignore SIGPIPE so writing a reply to a client that already disconnected (e.g.
+-- a --detach/fire-and-forget client) returns an error instead of killing us.
+function M.ignore_sigpipe() C.signal(13, ffi.cast("lvi_sighandler", 1)) end -- SIGPIPE -> SIG_IGN
 
 -- Terminal size of fd (default stdout). struct winsize is uniform; only the
 -- request number diverges (Linux vs the BSD _IOR encoding macOS/*BSD share).

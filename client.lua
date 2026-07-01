@@ -26,20 +26,24 @@ end
 
 -- Send a list of ex command strings to the target. Returns a list of
 -- { cmd, status, payload }, or nil, err. A leading ':' is tolerated and
--- stripped so both `w` and `:w` work.
-function M.send(wid, commands)
+-- stripped so both `w` and `:w` work. With detach=true, fire-and-forget: send
+-- without awaiting replies (results is empty) -- required for a callback from a
+-- program the editor is blocked running, which would otherwise deadlock.
+function M.send(wid, commands, detach)
   local sock, err = resolve(wid)
   if not sock then return nil, err end
   local fd = sys.connect(sock)
   if not fd then return nil, "cannot connect to " .. sock end
 
-  local reader = proto.reader(function() return sys.read(fd) end)
+  local reader = (not detach) and proto.reader(function() return sys.read(fd) end)
   local results = {}
   local ok, ferr = pcall(function()
     for _, cmd in ipairs(commands) do
       sys.write(fd, (cmd:gsub("^:", "")) .. "\n")
-      local payload, status = reader:response()
-      results[#results + 1] = { cmd = cmd, status = status, payload = payload }
+      if not detach then
+        local payload, status = reader:response()
+        results[#results + 1] = { cmd = cmd, status = status, payload = payload }
+      end
     end
   end)
   sys.close(fd)
