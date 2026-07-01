@@ -58,6 +58,7 @@ typedef unsigned int  socklen_t;
 int   getuid(void);
 int   getpid(void);
 int   isatty(int fd);
+int   setenv(const char *name, const char *value, int overwrite);
 int   close(int fd);
 long  read(int fd, void *buf, unsigned long count);        /* ssize_t/size_t */
 long  write(int fd, const void *buf, unsigned long count);
@@ -103,6 +104,10 @@ M.POLLNVAL= 0x20
 function M.getuid() return tonumber(C.getuid()) end
 function M.getpid() return tonumber(C.getpid()) end
 function M.isatty(fd) return C.isatty(fd) == 1 end
+
+-- Set an environment variable in this process, so spawned children (os.execute
+-- / io.popen) inherit it -- e.g. LVI_WID/LVI_SOCK so a picker can call back.
+function M.setenv(name, value) C.setenv(name, tostring(value), 1) end
 
 -- Terminal size of fd (default stdout). struct winsize is uniform; only the
 -- request number diverges (Linux vs the BSD _IOR encoding macOS/*BSD share).

@@ -116,6 +116,20 @@ local function do_shell(ed, cmd)
   return out, "ok"
 end
 
+-- Run cmd and capture stdout. On a tty, ed._silent (set by :silent) hands the
+-- child the real terminal via ed.with_tty -- so an interactive program (fzy)
+-- can draw its UI while we still capture its selection. Otherwise a plain pipe.
+local function run_capture(ed, cmd)
+  local run = function()
+    local p = io.popen(cmd, "r")
+    local o = p and p:read("*a") or ""
+    if p then p:close() end
+    return o
+  end
+  if ed._silent and ed.with_tty then return ed.with_tty(run) end
+  return run()
+end
+
 -- Filter lines a..b through cmd (input via a temp file to avoid a bidirectional-
 -- pipe deadlock), replacing them with its stdout. One splice = one undo.
 local function do_filter(ed, a, b, cmd)
@@ -125,9 +139,7 @@ local function do_filter(ed, a, b, cmd)
   local f = io.open(tmp, "wb")
   f:write(table.concat(ed.buf:get(from, to), "\n"), "\n")
   f:close()
-  local p = io.popen(cmd .. " < " .. tmp, "r")
-  local out = p and p:read("*a") or ""
-  if p then p:close() end
+  local out = run_capture(ed, cmd .. " < " .. tmp)
   os.remove(tmp)
   local lines = {}
   if out ~= "" then
@@ -230,9 +242,7 @@ function M.dispatch(ed, line)
     if args == "" then return "No file name", "err" end
     local text
     if args:sub(1, 1) == "!" then
-      local p = io.popen(args:sub(2), "r")
-      text = p and p:read("*a") or ""
-      if p then p:close() end
+      text = run_capture(ed, args:sub(2))
     else
       local fh = io.open(args, "rb")
       if not fh then return "can't open " .. args, "err" end

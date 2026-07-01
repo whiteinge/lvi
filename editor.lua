@@ -127,6 +127,10 @@ function M.run(opts)
   ed.wid = opts.wid or tostring(sys.getpid())
   ed.sock_path = path.socket(ed.wid)
   local lfd = sys.listen(ed.sock_path)
+  -- Export the view id/socket so external programs (`:!`, pickers) can drive
+  -- this view back over the socket (`lvi -w "$LVI_WID" -- ...`).
+  sys.setenv("LVI_WID", ed.wid)
+  sys.setenv("LVI_SOCK", ed.sock_path)
 
   -- The interpreter coroutine. Prime it to the first getkey() yield.
   ed.interp = coroutine.create(function() normal.loop(ed) end)
@@ -163,21 +167,28 @@ function M.run(opts)
       sys.write(1, table.concat(out))
       sys.read(0)                                     -- any key
     end
-    -- Run an external command with the real terminal (interactive-capable:
-    -- fzf, vim, git commit). Drop to cooked mode, leave the alt screen, let the
-    -- child inherit the tty, then optionally pause before repainting. `prompt`
-    -- false = seamless resume (:silent, for full-screen programs that restore
-    -- the screen themselves); true = "Press ENTER" (to read line output).
-    ed.shell = function(cmd, prompt)
+    -- Hand the real terminal to a child (interactive programs: fzf/fzy, vim,
+    -- git commit): drop to cooked mode, leave the alt screen, run fn (which may
+    -- capture output via a pipe while the child's UI uses the tty), then resume.
+    ed.with_tty = function(fn)
       sys.restore(saved)
       sys.write(1, term.alt_off .. term.show)
-      os.execute(cmd)
-      if prompt then
-        sys.write(1, "\r\n\27[7m-- Press ENTER to continue --\27[0m")
-        sys.read(0)
-      end
+      local r = fn()
       sys.write(1, term.alt_on)
       saved = sys.raw_mode()
+      return r
+    end
+    -- Run an external command interactively. `prompt` true adds "Press ENTER"
+    -- (to read line output); false = seamless resume (:silent, for full-screen
+    -- programs that restore the screen themselves).
+    ed.shell = function(cmd, prompt)
+      ed.with_tty(function()
+        os.execute(cmd)
+        if prompt then
+          sys.write(1, "\r\n\27[7m-- Press ENTER to continue --\27[0m")
+          sys.read(0)
+        end
+      end)
     end
     refresh(ed)
     sys.write(1, render.frame(ed))
