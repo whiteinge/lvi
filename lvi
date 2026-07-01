@@ -45,6 +45,6 @@ if a.wid then
   os.exit(rc)
 end
 
--- Editor mode.
+-- Editor mode. Positional args open as buffers (first one current).
 local editor = require("editor")
-editor.run({ filename = a.args[1] })
+editor.run({ files = a.args })

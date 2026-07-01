@@ -118,8 +118,12 @@ function M.run(opts)
     opts = { wrap = true, tabstop = 8 },
   }
   -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
-  -- is set up here and swapped by bufs on :e / buffer switch.
-  bufs.init(ed, opts.filename and buffer.open(opts.filename) or buffer.new(""))
+  -- is set up here and swapped by bufs on :e / buffer switch. Positional files
+  -- open as buffers; the first is current.
+  local files = opts.files or (opts.filename and { opts.filename }) or {}
+  bufs.init(ed, files[1] and buffer.open(files[1]) or buffer.new(""))
+  for i = 2, #files do bufs.open(ed, files[i]) end
+  if #ed.buffers > 1 then bufs.switch(ed, 1) end
   ed.wid = opts.wid or tostring(sys.getpid())
   ed.sock_path = path.socket(ed.wid)
   local lfd = sys.listen(ed.sock_path)

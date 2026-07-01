@@ -185,6 +185,20 @@ function M.dispatch(ed, line)
     return "no such buffer: " .. args, "err"
   elseif cmd == "ls" or cmd == "buffers" or cmd == "files" then
     return bufs.list(ed), "ok"
+  elseif cmd == "bd" or cmd == "bdelete" then
+    local ok, err = bufs.close(ed, bang == "!", tonumber(args))
+    if not ok then return err, "err" end
+    return "", "ok"
+  elseif cmd == "qa" or cmd == "qall" or cmd == "quitall" then
+    if bang ~= "!" then
+      for _, rec in ipairs(ed.buffers or {}) do
+        if rec.buf.modified then
+          return "No write since last change in a buffer (add ! to override)", "err"
+        end
+      end
+    end
+    ed.running = false
+    return "", "ok"
 
   elseif cmd == "set" or cmd == "se" then
     return do_set(ed, args)

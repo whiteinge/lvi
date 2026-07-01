@@ -68,6 +68,27 @@ function M.reload(ed)
   return true
 end
 
+-- Close a buffer (default: current). Refuses a modified buffer unless force.
+-- Closing the last buffer leaves a fresh empty [No Name]. Returns ok, err.
+function M.close(ed, force, idx)
+  idx = idx or ed.bufidx
+  if idx < 1 or idx > #ed.buffers then return false, "no such buffer: " .. tostring(idx) end
+  if ed.buffers[idx].buf.modified and not force then
+    return false, "No write since last change (add ! to override)"
+  end
+  if #ed.buffers == 1 then
+    ed.buffers[1] = fresh(buffer.new(""))
+    load(ed, 1)
+  elseif idx == ed.bufidx then
+    table.remove(ed.buffers, idx)          -- current gone: move to a neighbor
+    load(ed, math.min(idx, #ed.buffers))
+  else
+    table.remove(ed.buffers, idx)          -- other buffer: just fix the index
+    if ed.bufidx > idx then ed.bufidx = ed.bufidx - 1 end
+  end
+  return true
+end
+
 function M.next(ed) M.switch(ed, ed.bufidx % #ed.buffers + 1) end
 function M.prev(ed) M.switch(ed, (ed.bufidx - 2) % #ed.buffers + 1) end
 
