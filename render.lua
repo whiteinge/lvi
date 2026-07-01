@@ -45,6 +45,9 @@ end
 local function status_halves(ed)
   local buf = ed.buf
   local left = ed.message or (buf.path or "[No Name]") .. (buf.modified and " [+]" or "")
+  if not ed.message and ed.buffers and #ed.buffers > 1 then
+    left = left .. "  [" .. ed.bufidx .. "/" .. #ed.buffers .. "]"
+  end
   if ed.recording then left = "recording @" .. ed.recording .. "  " .. left end
   left = left:gsub("\n", " ")                 -- never inject a newline mid-line
   local nl = buf:nlines()

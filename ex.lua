@@ -8,6 +8,8 @@
 --- navigate, mutate, and persist. A full ex address grammar (marks, /re/,
 --- +/- offsets) and the rest of the command set land later, likely on LPeg.
 
+local bufs = require("bufs")
+
 local M = {}
 
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
@@ -154,6 +156,35 @@ function M.dispatch(ed, line)
     local l = ed.buf:redo()
     if l then ed.cy, ed.cx = l, 1 end
     return "", "ok"
+
+  elseif cmd == "e" or cmd == "edit" then
+    if args ~= "" then
+      bufs.open(ed, args)
+      return "", "ok"
+    elseif ed.buf.path then
+      if ed.buf.modified and bang ~= "!" then
+        return "No write since last change (add ! to override)", "err"
+      end
+      bufs.reload(ed)
+      return "", "ok"
+    end
+    return "No file name", "err"
+
+  elseif cmd == "bn" or cmd == "bnext" then
+    bufs.next(ed); return "", "ok"
+  elseif cmd == "bp" or cmd == "bprev" or cmd == "bprevious" then
+    bufs.prev(ed); return "", "ok"
+  elseif cmd == "b" or cmd == "buffer" then
+    local n = tonumber(args)
+    if n then
+      if bufs.switch(ed, n) then return "", "ok" end
+    elseif args ~= "" then
+      local i = bufs.find(ed, args)
+      if i then bufs.switch(ed, i); return "", "ok" end
+    end
+    return "no such buffer: " .. args, "err"
+  elseif cmd == "ls" or cmd == "buffers" or cmd == "files" then
+    return bufs.list(ed), "ok"
 
   elseif cmd == "set" or cmd == "se" then
     return do_set(ed, args)

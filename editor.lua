@@ -16,6 +16,7 @@ local term   = require("term")
 local ex     = require("ex")
 local normal = require("normal")
 local disp   = require("disp")
+local bufs   = require("bufs")
 
 local M = {}
 
@@ -112,12 +113,13 @@ function M.run(opts)
   opts = opts or {}
   local ed = {
     running = true,
-    buf = opts.filename and buffer.open(opts.filename) or buffer.new(""),
-    cx = 1, cy = 1, top = 1, topsub = 0, leftcol = 0,
     mode = "normal", cmdline = "", message = nil,
-    inject = {}, keylog = {}, regs = {}, marks = {},
+    inject = {}, keylog = {}, regs = {},
     opts = { wrap = true, tabstop = 8 },
   }
+  -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
+  -- is set up here and swapped by bufs on :e / buffer switch.
+  bufs.init(ed, opts.filename and buffer.open(opts.filename) or buffer.new(""))
   ed.wid = opts.wid or tostring(sys.getpid())
   ed.sock_path = path.socket(ed.wid)
   local lfd = sys.listen(ed.sock_path)
