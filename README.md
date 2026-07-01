@@ -64,7 +64,8 @@ Modal editing: motions `h j k l 0 ^ $ w b e f t F T ; , G gg` and marks
 `` m ` ' ``; operators `d c y` with full motion composition (`dw`, `cf.`, `dgg`,
 `` y`a ``) plus `dd`/`yy`/`cc` and counts (`2d3w`); `x r p P i a o A I O`;
 registers `a`–`z` and the unnamed register; `.` repeat; macros `q`/`@`/`@@`;
-multi-level undo/redo (`u` / `Ctrl-R`). An ex layer (`:w`, `:d`, ranges, `:%p`,
+multi-level undo/redo (`u` / `Ctrl-R`); scrolling `Ctrl-F`/`Ctrl-B` (page),
+`Ctrl-D`/`Ctrl-U` (half), `Ctrl-E`/`Ctrl-Y` (line). An ex layer (`:w`, `:d`, ranges, `:%p`,
 `:normal`, `:u`/`:redo`, `:q`, and line-number goto) shared by the `:` prompt and
 the socket. A **config file** — just a file of those same ex commands, run at
 startup (`$LVIRC` → `$XDG_CONFIG_HOME/lvi/lvirc` → `~/.lvirc`; `"` begins a

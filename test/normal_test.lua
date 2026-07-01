@@ -360,6 +360,77 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("scrolling (Ctrl-F/B/D/U/E/Y)", function()
+    -- A tall nowrap window: 100 short lines, rows=12 -> textrows=11, half=5,
+    -- page=9 (11-2 overlap). One buffer line == one screen row, so top/cursor
+    -- math is exact.
+    local function tall()
+      local t = {}
+      for i = 1, 100 do t[i] = "line " .. i end
+      local ed = make(table.concat(t, "\n"))
+      ed.opts = { wrap = false, tabstop = 8 }
+      ed.rows = 12
+      return ed
+    end
+    local CF, CB, CD, CU, CE, CY = "\6", "\2", "\4", "\21", "\5", "\25"
+
+    it("Ctrl-F/Ctrl-B page down and up (cursor keeps its screen row)", function()
+      local ed = tall()
+      feed(ed, CF); expect(ed.top).to.equal(10); expect(ed.cy).to.equal(10)
+      feed(ed, CF); expect(ed.top).to.equal(19); expect(ed.cy).to.equal(19)
+      feed(ed, CB); expect(ed.top).to.equal(10); expect(ed.cy).to.equal(10)
+    end)
+
+    it("Ctrl-D/Ctrl-U scroll half a page", function()
+      local ed = tall()
+      feed(ed, CD); expect(ed.top).to.equal(6);  expect(ed.cy).to.equal(6)
+      feed(ed, CD); expect(ed.top).to.equal(11); expect(ed.cy).to.equal(11)
+      feed(ed, CU); expect(ed.top).to.equal(6);  expect(ed.cy).to.equal(6)
+    end)
+
+    it("a count sets the scroll size for Ctrl-D", function()
+      local ed = tall()
+      feed(ed, "3" .. CD); expect(ed.top).to.equal(4); expect(ed.cy).to.equal(4)
+    end)
+
+    it("Ctrl-E reveals a lower line, keeping the cursor put until it scrolls off", function()
+      local ed = tall()
+      feed(ed, "4j"); expect(ed.cy).to.equal(5)     -- cursor mid-screen (row offset 4)
+      feed(ed, CE); expect(ed.top).to.equal(2); expect(ed.cy).to.equal(5)  -- line kept
+      feed(ed, CE .. CE .. CE)                       -- top climbs to the cursor's line
+      expect(ed.top).to.equal(5); expect(ed.cy).to.equal(5)
+      feed(ed, CE); expect(ed.top).to.equal(6); expect(ed.cy).to.equal(6)  -- now dragged
+    end)
+
+    it("Ctrl-Y reveals a higher line, keeping the cursor put mid-screen", function()
+      local ed = tall()
+      feed(ed, CD); expect(ed.top).to.equal(6); expect(ed.cy).to.equal(6) -- cursor on top row
+      feed(ed, CY); expect(ed.top).to.equal(5); expect(ed.cy).to.equal(6) -- line kept, window up
+    end)
+
+    it("Ctrl-Y drags the cursor up when it sits on the bottom edge", function()
+      local ed = tall()
+      feed(ed, CD);       expect(ed.top).to.equal(6)  -- top=6
+      feed(ed, "10j");    expect(ed.cy).to.equal(16)  -- cursor on the bottom row (offset 10)
+      feed(ed, CY); expect(ed.top).to.equal(5); expect(ed.cy).to.equal(15) -- dragged up one
+    end)
+
+    it("does not scroll past the top of the buffer", function()
+      local ed = tall()
+      feed(ed, CB); expect(ed.top).to.equal(1); expect(ed.cy).to.equal(1)
+      feed(ed, CY); expect(ed.top).to.equal(1)
+    end)
+
+    it("advances the sub-row when the top line wraps (wrap mode)", function()
+      local long = string.rep("x", 200)            -- 200 cols / W=80 -> 3 sub-rows
+      local ed = make(long .. "\na\nb\nc")
+      ed.opts = { wrap = true, tabstop = 8 }
+      ed.rows = 12; ed.cols = 80; ed.top = 1; ed.topsub = 0
+      feed(ed, "\5")                                -- Ctrl-E: reveal one screen row
+      expect(ed.top).to.equal(1); expect(ed.topsub).to.equal(1)
+    end)
+  end)
+
   describe("the ':' prompt shares ex.dispatch", function()
     it("runs an ex command typed at ':'", function()
       local ed = make("a\nb\nc")

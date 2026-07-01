@@ -423,6 +423,87 @@ local function apply_operator(ed, op, m, count, reg)
   end
 end
 
+-- ---- scrolling (Ctrl-F/B/D/U/E/Y) -------------------------------------------
+-- These invert the usual model: the WINDOW drives and the cursor follows (a
+-- normal motion is the reverse). Everything is measured in SCREEN rows, so it
+-- works in both wrap (line + sub-row) and nowrap (one row per line) modes. The
+-- driver's refresh() won't fight us: we always leave the cursor on-screen, and
+-- refresh() only re-scrolls when the cursor is off-screen.
+local function textrows(ed) return (ed.rows or 24) - 1 end
+
+-- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
+-- up), honoring wrap, clamped to the buffer. In nowrap each line is one row.
+local function advance_rows(ed, l, sub, rows)
+  local N = ed.buf:nlines()
+  if not (ed.opts and ed.opts.wrap) then
+    return math.max(1, math.min(l + rows, N)), 0
+  end
+  local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+  if rows > 0 then
+    for _ = 1, rows do
+      if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
+      elseif l < N then l, sub = l + 1, 0 else break end
+    end
+  else
+    for _ = 1, -rows do
+      if sub > 0 then sub = sub - 1
+      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
+      else break end
+    end
+  end
+  return l, sub
+end
+
+-- Screen rows from the top of the window down to the cursor (0 = cursor on the
+-- top row). Assumes the cursor is at or below the top (true whenever we scroll,
+-- since the cursor is on-screen beforehand).
+local function cursor_row_offset(ed)
+  if not (ed.opts and ed.opts.wrap) then return ed.cy - (ed.top or 1) end
+  local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+  local csub = select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx))
+  local l, sub, n = ed.top or 1, ed.topsub or 0, 0
+  while l < ed.cy or (l == ed.cy and sub < csub) do
+    if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1 else l, sub = l + 1, 0 end
+    n = n + 1
+  end
+  return n
+end
+
+-- Place the cursor `off` screen rows below the (already-updated) top, holding
+-- the visual column.
+local function place_cursor_at_offset(ed, off)
+  if not (ed.opts and ed.opts.wrap) then
+    ed.cy = (ed.top or 1) + off                       -- column (ed.cx) preserved
+  else
+    local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+    local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx)
+    local cl, csub = advance_rows(ed, ed.top or 1, ed.topsub or 0, off)
+    ed.cy = cl
+    ed.cx = disp.byteat(line(ed, cl), W, ts, csub, ccol)
+  end
+  clamp(ed)
+end
+
+-- Page/half-page (Ctrl-F/B/D/U): scroll by `rows` and keep the cursor on the
+-- same screen row.
+local function scroll_page(ed, rows)
+  local off = cursor_row_offset(ed)
+  ed.top, ed.topsub = advance_rows(ed, ed.top or 1, ed.topsub or 0, rows)
+  place_cursor_at_offset(ed, off)
+end
+
+-- Line reveal (Ctrl-E/Y): scroll by `rows` but keep the cursor on its buffer
+-- line while that line stays on screen; only drag it at the window edge.
+local function scroll_reveal(ed, rows)
+  local off = cursor_row_offset(ed)
+  local nt, ns = advance_rows(ed, ed.top or 1, ed.topsub or 0, rows)
+  if nt == (ed.top or 1) and ns == (ed.topsub or 0) then return end   -- at a buffer edge
+  ed.top, ed.topsub = nt, ns
+  local noff = off - rows
+  noff = math.max(0, math.min(noff, textrows(ed) - 1))
+  place_cursor_at_offset(ed, noff)
+end
+
 -- ---- single-key actions -----------------------------------------------------
 local function do_put(ed, after, reg)
   local r = get_reg(ed, reg)
@@ -472,6 +553,15 @@ actions = {
     ed.marks[string.char(getkey(ed))] = { ed.cy, ed.cx }
   end,
   [26] = function(ed) if ed.suspend_self then ed.suspend_self() end end, -- Ctrl-Z: suspend
+  -- Scrolling. Ctrl-F/B page (count = pages, 2-row overlap like vi); Ctrl-D/U
+  -- half-page (count = the scroll size in rows); Ctrl-E/Y reveal one line
+  -- (count = rows).
+  [6]  = function(ed, count) scroll_page(ed,  (count or 1) * math.max(1, textrows(ed) - 2)) end, -- Ctrl-F
+  [2]  = function(ed, count) scroll_page(ed, -(count or 1) * math.max(1, textrows(ed) - 2)) end, -- Ctrl-B
+  [4]  = function(ed, count) scroll_page(ed,  count or math.max(1, math.floor(textrows(ed) / 2))) end, -- Ctrl-D
+  [21] = function(ed, count) scroll_page(ed, -(count or math.max(1, math.floor(textrows(ed) / 2)))) end, -- Ctrl-U
+  [5]  = function(ed, count) scroll_reveal(ed,  (count or 1)) end,   -- Ctrl-E
+  [25] = function(ed, count) scroll_reveal(ed, -(count or 1)) end,   -- Ctrl-Y
   [b("u")] = function(ed)
     local l = ed.buf:undo()
     if l then ed.cy, ed.cx = l, 1; clamp(ed) else ed.message = "Already at oldest change" end
