@@ -105,6 +105,56 @@ local function do_hl(ed, args)
   return "", "ok"
 end
 
+-- Named terminal colors -> the 0-based ANSI index; fg adds 30, bg adds 40.
+local COLORS = { black = 0, red = 1, green = 2, yellow = 3,
+                 blue = 4, magenta = 5, cyan = 6, white = 7 }
+local ATTRS  = { bold = 1, dim = 2, italic = 3, underline = 4, blink = 5, reverse = 7 }
+
+-- Parse a style spec ("fg=red bg=234 bold underline") into SGR parameters
+-- ("31;48;5;234;1;4"), or nil,err. fg/bg take a basic color name or a 0-255
+-- number (256-color palette); bare words are attributes. Order is irrelevant to
+-- the terminal (the parameters combine).
+local function parse_style(spec)
+  local params = {}
+  for tok in spec:gmatch("%S+") do
+    local key, val = tok:match("^(%a+)=(%w+)$")
+    if key == "fg" or key == "bg" then
+      if COLORS[val] then
+        params[#params + 1] = (key == "fg" and 30 or 40) + COLORS[val]
+      else
+        local n = tonumber(val)
+        if not n or n < 0 or n > 255 then return nil, "bad color: " .. val end
+        params[#params + 1] = (key == "fg" and "38;5;" or "48;5;") .. n
+      end
+    elseif key then
+      return nil, "bad style key: " .. key
+    elseif ATTRS[tok] then
+      params[#params + 1] = ATTRS[tok]
+    else
+      return nil, "bad style spec: " .. tok
+    end
+  end
+  return table.concat(params, ";")
+end
+
+-- :hi[ghlight] GROUP [fg=.. bg=.. attr..] -- define a highlight group's color
+-- (vim-style). No spec (or NONE) clears the style, reverting the group to the
+-- default reverse-video overlay. Styles are theme state (set in the rc file) and
+-- persist across :nohl, which clears only the transient ranges.
+local function do_histyle(ed, args)
+  local group, rest = args:match("^(%S+)%s*(.-)%s*$")
+  if not group or group == "" then return "usage: hi GROUP [fg=.. bg=.. bold ..]", "err" end
+  ed.hlstyles = ed.hlstyles or {}
+  if rest == "" or rest == "NONE" or rest == "none" then
+    ed.hlstyles[group] = nil
+    return "", "ok"
+  end
+  local params, err = parse_style(rest)
+  if not params then return err, "err" end
+  ed.hlstyles[group] = params
+  return "", "ok"
+end
+
 -- Run cmd and capture stdout; returns stdout, exit_code. The exit code comes via
 -- a temp file (`; echo $?`) since LuaJIT's popen:close() doesn't surface it, and
 -- WITHOUT capturing stderr (which would fight an interactive finder's UI). On a
@@ -344,8 +394,11 @@ function M.dispatch(ed, line)
   elseif cmd == "set" or cmd == "se" then
     return do_set(ed, args)
 
-  elseif cmd == "hl" or cmd == "highlight" then
-    return do_hl(ed, args)
+  elseif cmd == "hl" then
+    return do_hl(ed, args)                    -- apply a group's ranges (transient)
+
+  elseif cmd == "hi" or cmd == "highlight" then
+    return do_histyle(ed, args)               -- define a group's color (theme)
 
   elseif cmd == "nohl" or cmd == "nohlsearch" then
     ed.highlights = {}

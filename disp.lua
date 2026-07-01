@@ -14,7 +14,10 @@
 
 local M = {}
 
-local REV_ON, REV_OFF = "\27[7m", "\27[0m"
+-- SGR: RESET turns all attributes off; REV is the default parameter set (reverse
+-- video) used when a highlight group has no style of its own, so the plain
+-- search/quickfix overlay looks exactly as it did before styles existed.
+local RESET, REV = "\27[0m", "7"
 
 -- Byte length of the UTF-8 char whose lead byte is b (defensive for stray
 -- continuation bytes: treat as length 1... they never start a char here).
@@ -180,20 +183,30 @@ function M.segments(s, W, ts)
 end
 
 -- The display string covering columns [startcol, startcol+W), tabs expanded and
--- multibyte chars kept whole, with reverse-video escapes around cells inside any
--- interval `ivs` (0-based, end-exclusive display-col ranges). One char-aware walk
--- serves every render path.
+-- multibyte chars kept whole, with SGR escapes around cells inside any interval
+-- `ivs` (0-based, end-exclusive display-col ranges). Each interval is
+-- { startcol, endcol, sgr } where sgr is the group's SGR parameter string (e.g.
+-- "38;5;2;1"); a nil sgr means the default reverse-video overlay. When adjacent
+-- cells carry different styles we reset and re-open, so touching tokens keep
+-- their own colors. Overlapping intervals: the last one in the list wins per
+-- cell (tokens from one highlighter don't overlap; cross-group order is
+-- unspecified). One char-aware walk serves every render path.
 function M.slice(s, ts, startcol, W, ivs)
   local endcol = startcol + W
-  local out, col, i, n, on = {}, 0, 1, #s, false
-  local function want(c)
-    if ivs then for _, iv in ipairs(ivs) do if c >= iv[1] and c < iv[2] then return true end end end
-    return false
+  local out, col, i, n, cur = {}, 0, 1, #s, nil
+  local function sgr_at(c)
+    if not ivs then return nil end
+    local hit
+    for _, iv in ipairs(ivs) do if c >= iv[1] and c < iv[2] then hit = iv[3] or REV end end
+    return hit
   end
   local function put(cell, c)
-    local h = want(c)
-    if h and not on then out[#out + 1] = REV_ON; on = true
-    elseif not h and on then out[#out + 1] = REV_OFF; on = false end
+    local want = sgr_at(c)
+    if want ~= cur then
+      if cur then out[#out + 1] = RESET end
+      if want then out[#out + 1] = "\27[" .. want .. "m" end
+      cur = want
+    end
     out[#out + 1] = cell
   end
   while i <= n and col < endcol do
@@ -215,7 +228,7 @@ function M.slice(s, ts, startcol, W, ivs)
     end
     col = col + dw; i = i + len
   end
-  if on then out[#out + 1] = REV_OFF end
+  if cur then out[#out + 1] = RESET end
   return table.concat(out)
 end
 

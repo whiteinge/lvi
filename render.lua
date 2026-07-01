@@ -6,8 +6,11 @@
 --- design ([[lvi-rendering]] in project memory): we only ever touch the lines
 --- and columns actually visible, so cost is O(viewport), never O(buffer).
 --- Highlights are a stateless overlay -- named groups of byte ranges in
---- ed.highlights, set from outside (`:hl`), drawn here in reverse video. This is
---- the mechanism external search / quickfix build on.
+--- ed.highlights, set from outside (`:hl`). Each group may carry a style in
+--- ed.hlstyles (set by `:hi`, an SGR parameter string); a group with no style
+--- draws in reverse video, so the plain search / quickfix overlay is unchanged.
+--- This is the mechanism external search, quickfix, and syntax highlighting all
+--- build on.
 
 local term = require("term")
 local disp = require("disp")
@@ -19,24 +22,26 @@ local M = {}
 local function hl_index(ed)
   local idx = {}
   if not ed.highlights then return idx end
-  for _, ranges in pairs(ed.highlights) do
+  local styles = ed.hlstyles or {}
+  for group, ranges in pairs(ed.highlights) do
+    local sgr = styles[group]                 -- nil -> default reverse video (in slice)
     for _, r in ipairs(ranges) do
       idx[r.line] = idx[r.line] or {}
-      table.insert(idx[r.line], r)
+      table.insert(idx[r.line], { line = r.line, c1 = r.c1, c2 = r.c2, sgr = sgr })
     end
   end
   return idx
 end
 
 -- Convert a line's highlight ranges (byte columns) into 0-based, end-exclusive
--- display-column intervals.
+-- display-column intervals, carrying each range's SGR style through to slice.
 local function intervals(ranges, orig, ts)
   if not ranges then return nil end
   local out = {}
   for _, r in ipairs(ranges) do
     local s = disp.dispcol(orig, ts, r.c1)
     local e = (r.c2 >= #orig) and disp.width(orig, ts) or disp.dispcol(orig, ts, r.c2 + 1)
-    if e > s then out[#out + 1] = { s, e } end
+    if e > s then out[#out + 1] = { s, e, r.sgr } end
   end
   return (#out > 0) and out or nil
 end

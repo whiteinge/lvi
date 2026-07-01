@@ -65,6 +65,13 @@ describe("render.frame", function()
     expect(f:find("\27[7mhello\27[0m", 1, true)).to.exist() -- 'hello' reversed
   end)
 
+  it("draws a styled group with its SGR color instead of reverse video", function()
+    local f = render.frame(ed_with("hello world", { cols = 20,
+      highlights = { kw = { { line = 1, c1 = 1, c2 = 5 } } },
+      hlstyles = { kw = "38;5;4;1" } }))          -- blue, bold
+    expect(f:find("\27[38;5;4;1mhello\27[0m", 1, true)).to.exist()
+  end)
+
   it("highlights a span offset within the line (tab-aware columns)", function()
     local f = render.frame(ed_with("ab cd ef",
       { cols = 20, highlights = { m = { { line = 1, c1 = 4, c2 = 5 } } } }))

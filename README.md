@@ -69,10 +69,14 @@ multi-level undo/redo (`u` / `Ctrl-R`); scrolling `Ctrl-F`/`Ctrl-B` (page),
 `:normal`, `:u`/`:redo`, `:q`, and line-number goto) shared by the `:` prompt and
 the socket. A **config file** — just a file of those same ex commands, run at
 startup (`$LVIRC` → `$XDG_CONFIG_HOME/lvi/lvirc` → `~/.lvirc`; `"` begins a
-comment) — so `:map` and `:set` persist.
+comment) — so `:map` and `:set` persist. A **styled highlight overlay**: `:hl`
+paints named groups of ranges, `:hi GROUP fg=… bg=… bold underline` gives a
+group a color (defined in the rc file); an undefined group falls back to reverse
+video.
 
-Not yet: line wrap / horizontal scroll, syntax highlighting, and search (`/`) —
-the last of which is deliberately being reconsidered rather than reimplemented.
+Not yet: syntax highlighting and search (`/`) — both deliberately being driven
+from *outside* the editor (an external highlighter / grep feeding the `:hl`
+overlay over the control socket) rather than reimplemented as in-editor engines.
 
 ## Requirements
 
