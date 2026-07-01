@@ -1,0 +1,50 @@
+#!/usr/bin/env luajit
+--- lvi -- entry point. Dual-role, like tmux:
+---   lvi [file]                 launch the editor (optionally on a file)
+---   lvi -w <wid> -- <cmds...>  send ex commands to a running view's socket
+---   lvi -w auto -- <cmds...>   ... to the sole running view
+---   lvi -l                     list running views
+--- In client mode it is a Unix filter: ok payloads go to stdout, errors to
+--- stderr, and the exit code is non-zero if any command failed.
+
+local script = arg[0]
+local dir = script:match("^(.*)/[^/]*$") or "."
+package.path = dir .. "/?.lua;" .. dir .. "/vendor/argparse/src/?.lua;" .. package.path
+
+local argparse = require("argparse")
+
+local parser = argparse("lvi", "A minimal vi with a control socket.")
+parser:argument("args", "file to edit, or ex commands (after --) in client mode")
+      :args("*")
+parser:option("-w --wid", "send ex commands to this view's socket ('auto' = sole view)")
+parser:flag("-l --list", "list running views and exit")
+
+local a = parser:parse()
+
+if a.list then
+  local path = require("path")
+  for _, v in ipairs(path.list_sockets()) do print(v.wid .. "\t" .. v.path) end
+  os.exit(0)
+end
+
+if a.wid then
+  -- Client mode.
+  if #a.args == 0 then io.stderr:write("lvi: no commands given\n"); os.exit(2) end
+  local client = require("client")
+  local results, err = client.send(a.wid, a.args)
+  if not results then io.stderr:write("lvi: " .. err .. "\n"); os.exit(1) end
+  local rc = 0
+  for _, r in ipairs(results) do
+    if r.status == "ok" then
+      if r.payload ~= "" then io.write(r.payload, "\n") end
+    else
+      io.stderr:write("lvi: " .. r.cmd .. ": " .. r.payload .. "\n")
+      rc = 1
+    end
+  end
+  os.exit(rc)
+end
+
+-- Editor mode.
+local editor = require("editor")
+editor.run({ filename = a.args[1] })

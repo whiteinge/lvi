@@ -1,0 +1,311 @@
+-- Tests for normal.lua (the coroutine interpreter). Run: luajit test/normal_test.lua
+package.path = "vendor/lust/?.lua;./?.lua;" .. package.path
+
+local lust   = require("lust")
+local buffer = require("buffer")
+local normal = require("normal")
+local describe, it, expect = lust.describe, lust.it, lust.expect
+
+-- Build an editor state with a live interpreter coroutine, primed to getkey.
+local function make(text)
+  local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, rows = 24,
+    cols = 80, mode = "normal", cmdline = "", message = nil,
+    inject = {}, keylog = {}, regs = {}, marks = {}, running = true }
+  ed.interp = coroutine.create(function() normal.loop(ed) end)
+  assert(coroutine.resume(ed.interp))
+  return ed
+end
+
+-- Feed a string of keys and let the coroutine drain them.
+local function feed(ed, s)
+  for i = 1, #s do ed.inject[#ed.inject + 1] = s:byte(i) end
+  assert(coroutine.resume(ed.interp))
+  return ed
+end
+
+local ESC = "\27"
+
+describe("normal-mode interpreter", function()
+  describe("motions", function()
+    it("h j k l 0 $ move the cursor", function()
+      local ed = make("abc\ndef")
+      feed(ed, "ll"); expect(ed.cx).to.equal(3)
+      feed(ed, "0");  expect(ed.cx).to.equal(1)
+      feed(ed, "$");  expect(ed.cx).to.equal(3)
+      feed(ed, "j");  expect(ed.cy).to.equal(2)
+      feed(ed, "k");  expect(ed.cy).to.equal(1)
+    end)
+    it("honors a count", function()
+      local ed = make("abcdef")
+      feed(ed, "3l"); expect(ed.cx).to.equal(4)
+    end)
+    it("G goes to a line or the last line", function()
+      local ed = make("a\nb\nc\nd")
+      feed(ed, "G");  expect(ed.cy).to.equal(4)
+      feed(ed, "2G"); expect(ed.cy).to.equal(2)
+    end)
+    it("w b e move by word within a line", function()
+      local ed = make("foo bar baz")
+      feed(ed, "w"); expect(ed.cx).to.equal(5)   -- start of 'bar'
+      feed(ed, "e"); expect(ed.cx).to.equal(7)   -- end of 'bar'
+      feed(ed, "b"); expect(ed.cx).to.equal(5)   -- back to start of 'bar'
+    end)
+  end)
+
+  describe("find motions f t F T ; ,", function()
+    it("f moves to the char; ; and , repeat", function()
+      local ed = make("a.b.c")
+      feed(ed, "f."); expect(ed.cx).to.equal(2)
+      feed(ed, ";"); expect(ed.cx).to.equal(4)
+      feed(ed, ","); expect(ed.cx).to.equal(2)
+    end)
+    it("t moves till before the char", function()
+      local ed = make("xxx.y")
+      feed(ed, "t."); expect(ed.cx).to.equal(3)
+    end)
+    it("F searches backward", function()
+      local ed = make("a.b.c")
+      feed(ed, "$F."); expect(ed.cx).to.equal(4)
+    end)
+    it("df deletes through the char (inclusive)", function()
+      local ed = make("hello")
+      feed(ed, "dfl"); expect(ed.buf:line(1)).to.equal("lo")
+    end)
+  end)
+
+  describe("gg and marks", function()
+    it("G then gg", function()
+      local ed = make("a\nb\nc\nd")
+      feed(ed, "G"); expect(ed.cy).to.equal(4)
+      feed(ed, "gg"); expect(ed.cy).to.equal(1)
+    end)
+    it("dgg deletes to the first line (linewise)", function()
+      local ed = make("a\nb\nc")
+      feed(ed, "jdgg")                       -- from line 2, delete lines 1..2
+      expect(ed.buf:get()).to.equal({ "c" })
+    end)
+    it("sets and jumps to a mark exactly (`)", function()
+      local ed = make("hello\nworld")
+      feed(ed, "ma"); feed(ed, "jl")
+      expect(ed.cy).to.equal(2)
+      feed(ed, "`a")
+      expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(1)
+    end)
+    it("'mark jumps to the mark's line", function()
+      local ed = make("one\ntwo\nthree")
+      feed(ed, "jma"); feed(ed, "G")         -- mark a at line 2, cursor to line 3
+      feed(ed, "'a"); expect(ed.cy).to.equal(2)
+    end)
+  end)
+
+  describe("gj / gk (screen-line motion)", function()
+    it("gj == j when wrap is off", function()
+      local ed = make("a\nb\nc")               -- no opts -> nowrap
+      feed(ed, "gj"); expect(ed.cy).to.equal(2)
+    end)
+    it("gj/gk move by sub-row within a wrapped line", function()
+      local ed = make("abcdefgh\nxyz")
+      ed.opts = { wrap = true, tabstop = 8 }; ed.cols = 4  -- "abcdefgh" -> abcd/efgh
+      feed(ed, "gj")                                       -- into the 2nd sub-row
+      expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(5) -- 'e'
+      feed(ed, "gj")                                       -- across to the next line
+      expect(ed.cy).to.equal(2); expect(ed.cx).to.equal(1)
+      feed(ed, "gk")                                       -- back up one screen row
+      expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(5)
+    end)
+  end)
+
+  describe("cross-line word motion", function()
+    it("w crosses to the next line", function()
+      local ed = make("foo\nbar")
+      feed(ed, "w"); expect(ed.cy).to.equal(2); expect(ed.cx).to.equal(1)
+    end)
+    it("b crosses to the previous line", function()
+      local ed = make("foo\nbar")
+      feed(ed, "j0b"); expect(ed.cy).to.equal(1)
+    end)
+    it("dw on the last word of a line stops at the newline", function()
+      local ed = make("foo\nbar")
+      feed(ed, "dw"); expect(ed.buf:get()).to.equal({ "", "bar" })
+    end)
+  end)
+
+  describe("operator + motion composition", function()
+    it("dw deletes to the next word", function()
+      local ed = make("foo bar")
+      feed(ed, "dw")
+      expect(ed.buf:line(1)).to.equal("bar")
+      expect(ed.regs['"'].text).to.equal("foo ")
+    end)
+    it("d$ deletes to end of line (inclusive)", function()
+      local ed = make("hello")
+      feed(ed, "lld$")                            -- from col 3
+      expect(ed.buf:line(1)).to.equal("he")
+    end)
+    it("dd / 2dd delete whole lines (linewise)", function()
+      local ed = make("a\nb\nc\nd")
+      feed(ed, "dd")
+      expect(ed.buf:get()).to.equal({ "b", "c", "d" })
+      feed(ed, "2dd")
+      expect(ed.buf:get()).to.equal({ "d" })
+      expect(ed.regs['"'].linewise).to.be(true)
+    end)
+  end)
+
+  describe("edit + registers + put", function()
+    it("x deletes the char under the cursor", function()
+      local ed = make("abc")
+      feed(ed, "x")
+      expect(ed.buf:line(1)).to.equal("bc")
+      expect(ed.regs['"'].text).to.equal("a")
+    end)
+    it("yy then p duplicates a line below", function()
+      local ed = make("a\nb")
+      feed(ed, "yyp")
+      expect(ed.buf:get()).to.equal({ "a", "a", "b" })
+      expect(ed.cy).to.equal(2)
+    end)
+    it("uses a named register", function()
+      local ed = make("keep\ntoss")
+      feed(ed, '"ayy')
+      expect(ed.regs['a'].text).to.equal("keep\n")
+      feed(ed, 'j"ap')                            -- put reg a below line 2
+      expect(ed.buf:get()).to.equal({ "keep", "toss", "keep" })
+    end)
+  end)
+
+  describe("insert mode", function()
+    it("i inserts before the cursor", function()
+      local ed = make("bc")
+      feed(ed, "iA" .. ESC)
+      expect(ed.buf:line(1)).to.equal("Abc")
+      expect(ed.mode).to.equal("normal")
+    end)
+    it("a appends after the cursor", function()
+      local ed = make("ac")
+      feed(ed, "ab" .. ESC)
+      expect(ed.buf:line(1)).to.equal("abc")
+    end)
+    it("o opens a line below and inserts", function()
+      local ed = make("a\nc")
+      feed(ed, "ob" .. ESC)
+      expect(ed.buf:get()).to.equal({ "a", "b", "c" })
+    end)
+    it("<CR> in insert mode splits the line", function()
+      local ed = make("ab")
+      feed(ed, "i" .. "\r" .. ESC)
+      expect(ed.buf:get()).to.equal({ "", "ab" })
+    end)
+    it("cc changes a whole line", function()
+      local ed = make("old\nkeep")
+      feed(ed, "ccnew" .. ESC)
+      expect(ed.buf:get()).to.equal({ "new", "keep" })
+    end)
+    it("records the last change for a future '.'", function()
+      local ed = make("x")
+      feed(ed, "iZ" .. ESC)
+      expect(ed.last_change).to.exist()
+    end)
+  end)
+
+  describe("'.' repeat", function()
+    it("repeats the last change (delete)", function()
+      local ed = make("abcde")
+      feed(ed, "x")                       -- delete 'a' -> "bcde"
+      feed(ed, ".")                       -- repeat -> "cde"
+      expect(ed.buf:line(1)).to.equal("cde")
+    end)
+    it("repeats an insertion", function()
+      local ed = make("Z")
+      feed(ed, "ix" .. ESC)               -- "xZ", cursor on 'x'
+      feed(ed, ".")                       -- insert 'x' again before cursor
+      expect(ed.buf:line(1)).to.equal("xxZ")
+    end)
+  end)
+
+  describe("undo / redo", function()
+    it("u undoes the last change; Ctrl-R redoes it", function()
+      local ed = make("abc")
+      feed(ed, "x"); expect(ed.buf:line(1)).to.equal("bc")
+      feed(ed, "u"); expect(ed.buf:line(1)).to.equal("abc")
+      feed(ed, "\18"); expect(ed.buf:line(1)).to.equal("bc")  -- Ctrl-R
+    end)
+    it("undoes a whole insert session as one change", function()
+      local ed = make("x")
+      feed(ed, "iAB" .. ESC); expect(ed.buf:line(1)).to.equal("ABx")
+      feed(ed, "u"); expect(ed.buf:line(1)).to.equal("x")
+    end)
+    it("undoes commands one at a time", function()
+      local ed = make("abc")
+      feed(ed, "xx"); expect(ed.buf:line(1)).to.equal("c")
+      feed(ed, "u"); expect(ed.buf:line(1)).to.equal("bc")
+      feed(ed, "u"); expect(ed.buf:line(1)).to.equal("abc")
+    end)
+    it("undoes a dd", function()
+      local ed = make("a\nb\nc")
+      feed(ed, "dd"); expect(ed.buf:get()).to.equal({ "b", "c" })
+      feed(ed, "u"); expect(ed.buf:get()).to.equal({ "a", "b", "c" })
+    end)
+  end)
+
+  describe("macros", function()
+    it("records into a register and replays with @", function()
+      local ed = make("a\nb\nc\nd")
+      feed(ed, "qaddq")                    -- record 'dd' into reg a (deletes 'a')
+      expect(ed.regs['a'].text).to.equal("dd")
+      expect(ed.buf:get()).to.equal({ "b", "c", "d" })
+      feed(ed, "@a")                       -- replay -> deletes 'b'
+      expect(ed.buf:get()).to.equal({ "c", "d" })
+    end)
+    it("honors a count on @", function()
+      local ed = make("1\n2\n3\n4\n5")
+      feed(ed, "qxddq")                    -- reg x = 'dd', deletes '1'
+      feed(ed, "2@x")                      -- delete two more lines
+      expect(ed.buf:get()).to.equal({ "4", "5" })
+    end)
+    it("@@ repeats the last macro", function()
+      local ed = make("1\n2\n3\n4")
+      feed(ed, "qaddq")                    -- {2,3,4}
+      feed(ed, "@a")                       -- {3,4}
+      feed(ed, "@@")                       -- {4}
+      expect(ed.buf:get()).to.equal({ "4" })
+    end)
+    it("records a multi-key edit macro", function()
+      local ed = make("x\nx\nx")
+      feed(ed, "qbA!" .. ESC .. "jq")      -- append '!' to a line, go down; reg b
+      expect(ed.regs['b'].text).to.equal("A!" .. ESC .. "j")
+      feed(ed, "@b@b")                      -- apply to the next two lines
+      expect(ed.buf:get()).to.equal({ "x!", "x!", "x!" })
+    end)
+  end)
+
+  describe(":normal send-keys", function()
+    it("runs normal-mode keys given at the ':' prompt", function()
+      local ed = make("foo bar")
+      feed(ed, ":normal dw\r")            -- dw over the send-keys hatch
+      expect(ed.buf:line(1)).to.equal("bar")
+    end)
+    it("leaves last_change set so '.' can repeat send-keys", function()
+      local ed = make("one two three")
+      feed(ed, ":normal dw\r")            -- "two three"
+      feed(ed, ".")                       -- dw again -> "three"
+      expect(ed.buf:line(1)).to.equal("three")
+    end)
+  end)
+
+  describe("the ':' prompt shares ex.dispatch", function()
+    it("runs an ex command typed at ':'", function()
+      local ed = make("a\nb\nc")
+      feed(ed, ":2d\r")
+      expect(ed.buf:get()).to.equal({ "a", "c" })
+      expect(ed.mode).to.equal("normal")
+    end)
+    it(":q sets running=false", function()
+      local ed = make("a")
+      feed(ed, ":q\r")
+      expect(ed.running).to.be(false)
+    end)
+  end)
+end)
+
+os.exit(lust.errors == 0 and 0 or 1)
