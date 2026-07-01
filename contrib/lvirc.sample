@@ -1,0 +1,25 @@
+" lvirc.sample -- a starting ~/.lvirc for external syntax highlighting.
+" Copy the parts you want into $XDG_CONFIG_HOME/lvi/lvirc or ~/.lvirc.
+" The rc file is just ex commands (see :hi / :map); " begins a comment.
+
+" ---- theme -------------------------------------------------------------------
+" Define a color for every group the highlighter emits. A group with NO style
+" falls back to reverse video (the search-overlay default), so style them all
+" here unless you want that. Colors: 8 names (black red green yellow blue magenta
+" cyan white) or a 0-255 256-color index; attrs bold dim italic underline reverse.
+hi Comment  fg=cyan italic
+hi String   fg=green
+hi Number   fg=magenta
+hi Keyword  fg=blue bold
+hi Operator fg=red
+hi Function fg=yellow
+hi Type     fg=cyan
+hi Builtin  fg=yellow
+hi Constant fg=magenta
+hi Preproc  fg=red
+
+" ---- trigger -----------------------------------------------------------------
+" Re-highlight the live buffer on demand. lvi-highlight self-backgrounds, so the
+" :silent ! returns at once and the colors land a moment later. Put lvi-highlight
+" (and lvi-hl-pygments) on your PATH, or set LVI_HL_BACKEND / LVI in its env.
+map \h :silent !lvi-highlight<CR>

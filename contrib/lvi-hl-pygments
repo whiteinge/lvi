@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+# lvi-hl-pygments -- Pygments syntax-highlighting adapter for lvi-highlight.
+#
+# Adapter contract (shared by every backend): read the buffer text on stdin,
+# take the filename as argv[1] (may be empty), and print `hl GROUP L:C1-C2 ...`
+# ex commands on stdout -- byte columns, 1-based, one line per group. Columns
+# are BYTES so they map straight onto lvi's :hl overlay (which is byte-indexed).
+#
+# It always prints EVERY canonical group, emitting a bare `hl GROUP` (no spans)
+# for the empty ones. That makes a re-highlight a clean replace of exactly the
+# syntax groups, leaving other overlay groups (e.g. `search`) untouched.
+#
+# Pygments is a natural positional backend: get_tokens_unprocessed tiles the
+# input exactly, so walking the tokens in order gives precise offsets -- and a
+# multi-line token (an unclosed string, a block comment) is split into one span
+# per line automatically, which is exactly what colors the "rest of the file" in
+# the unclosed-string case.
+import sys
+from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, guess_lexer
+from pygments.util import ClassNotFound
+from pygments.token import Token
+
+# Canonical lvi groups, styled in the rc file with :hi. Order here is the
+# priority order for mapping a Pygments token type to a group (first match in
+# GROUP_MAP wins); GROUPS is the full set we always (re)send.
+GROUP_MAP = [
+    (Token.Comment.Preproc, "Preproc"),
+    (Token.Comment,         "Comment"),
+    (Token.String,          "String"),
+    (Token.Number,          "Number"),
+    (Token.Keyword,         "Keyword"),
+    (Token.Operator,        "Operator"),
+    (Token.Name.Function,   "Function"),
+    (Token.Name.Class,      "Type"),
+    (Token.Name.Builtin,    "Builtin"),
+    (Token.Name.Constant,   "Constant"),
+    (Token.Name.Decorator,  "Preproc"),
+]
+GROUPS = ["Comment", "String", "Number", "Keyword", "Operator",
+          "Function", "Type", "Builtin", "Constant", "Preproc"]
+
+
+def group_for(ttype):
+    for tt, g in GROUP_MAP:
+        if ttype in tt:
+            return g
+    return None
+
+
+def pick_lexer(text, fname):
+    if fname:
+        try:
+            return get_lexer_for_filename(fname)
+        except ClassNotFound:
+            try:
+                return guess_lexer_for_filename(fname, text)
+            except ClassNotFound:
+                pass
+    try:
+        return guess_lexer(text)
+    except ClassNotFound:
+        return None
+
+
+def add_span(spans, g, line, c1, c2):
+    # Append [line,c1,c2], merging with the previous span of this group when it
+    # is contiguous on the same line (so adjacent tokens like a string's open
+    # quote + body + close quote collapse to one span).
+    lst = spans[g]
+    if lst and lst[-1][0] == line and c1 == lst[-1][2] + 1:
+        lst[-1][2] = c2
+    else:
+        lst.append([line, c1, c2])
+
+
+def main():
+    text = sys.stdin.read()
+    fname = sys.argv[1] if len(sys.argv) > 1 else ""
+    spans = {g: [] for g in GROUPS}
+
+    lexer = pick_lexer(text, fname)
+    if lexer is not None:
+        line, col = 1, 1            # 1-based line and BYTE column
+        for _, ttype, value in lexer.get_tokens_unprocessed(text):
+            g = group_for(ttype)
+            parts = value.split("\n")
+            for k, part in enumerate(parts):
+                nb = len(part.encode("utf-8"))
+                if g is not None and nb > 0:
+                    add_span(spans, g, line, col, col + nb - 1)
+                if k < len(parts) - 1:  # a newline followed this part
+                    line, col = line + 1, 1
+                else:
+                    col += nb
+
+    out = []
+    for g in GROUPS:
+        s = spans[g]
+        specs = " ".join("%d:%d-%d" % (l, c1, c2) for l, c1, c2 in s)
+        out.append(("hl %s %s" % (g, specs)) if s else ("hl %s" % g))
+    sys.stdout.write("\n".join(out) + "\n")
+
+
+if __name__ == "__main__":
+    main()

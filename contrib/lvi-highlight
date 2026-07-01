@@ -1,0 +1,69 @@
+#!/bin/sh
+# lvi-highlight [WID] -- syntax-highlight a running lvi from the outside.
+#
+# The same bet as lvi-search: no in-editor language engine. This pulls the LIVE
+# buffer over the control socket (so it highlights UNSAVED content), runs an
+# external highlighter, and paints the result through lvi's styled :hl overlay.
+# Because whole tokens (including a still-open string or block comment) come back
+# as spans, an unclosed quote colors the rest of the file until you close it.
+#
+# Bind it inside lvi (styles + a trigger key), e.g. in ~/.lvirc:
+#
+#     hi Comment  fg=cyan italic      " define the theme once
+#     hi String   fg=green
+#     hi Keyword  fg=blue bold
+#     hi Number   fg=magenta
+#     hi Function fg=yellow
+#     hi Type     fg=cyan
+#     map \h :silent !lvi-highlight<CR>   " re-highlight on demand
+#
+# It self-backgrounds so the `:silent !` returns at once: reading the buffer
+# needs lvi's event loop, which is frozen while it waits on the child, so a
+# foreground read would deadlock (the same reason lvi-open uses --detach). Run
+# the worker directly for measuring/debugging:  lvi-highlight --worker WID
+#
+# Config (env): LVI (client, default `lvi`), LVI_HL_BACKEND (adapter, default
+# `pygments` -> contrib/lvi-hl-pygments), LVI_HL_MAXBYTES (skip buffers larger
+# than this; whole-buffer lex is O(size); default 262144), LVI_HL_DEBUG (a file
+# to capture the worker's stderr).
+LVI=${LVI:-lvi}
+BACKEND=${LVI_HL_BACKEND:-pygments}
+MAXBYTES=${LVI_HL_MAXBYTES:-262144}
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# First entry: detach a worker (double-fork -> no zombie for the calling lvi)
+# and return immediately so lvi can resume and service the worker's socket I/O.
+if [ "$1" != "--worker" ]; then
+  ("$0" --worker "$@" >"${LVI_HL_DEBUG:-/dev/null}" 2>&1 &)
+  exit 0
+fi
+shift
+
+wid=${1:-$LVI_WID}
+[ -n "$wid" ] || { echo "lvi-highlight: no WID (pass one or run from inside lvi)" >&2; exit 1; }
+
+adapter="$DIR/lvi-hl-$BACKEND"
+[ -x "$adapter" ] || { echo "lvi-highlight: no adapter for backend '$BACKEND' ($adapter)" >&2; exit 1; }
+
+# Live buffer + its filename (for language detection). Works on unsaved content.
+text=$("$LVI" -w "$wid" -- '%p') || { echo "lvi-highlight: cannot read view $wid" >&2; exit 1; }
+fname=$("$LVI" -w "$wid" -- 'f' | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
+case "$fname" in "[No File]" | "[No Name]") fname= ;; esac
+
+# Size cap: skip a buffer too big to lex on every trigger.
+nbytes=$(printf '%s' "$text" | wc -c)
+if [ "$nbytes" -gt "$MAXBYTES" ]; then
+  echo "lvi-highlight: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_HL_MAXBYTES)" >&2
+  exit 0
+fi
+
+# Adapter: buffer on stdin, filename as $1, emits one `hl GROUP specs` per group.
+# Collect the lines into args and apply them in one socket round-trip.
+set --
+while IFS= read -r cmd; do
+  [ -n "$cmd" ] && set -- "$@" "$cmd"
+done <<EOF
+$(printf '%s' "$text" | "$adapter" "$fname")
+EOF
+
+[ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"
