@@ -70,13 +70,21 @@ multi-level undo/redo (`u` / `Ctrl-R`); scrolling `Ctrl-F`/`Ctrl-B` (page),
 the socket. A **config file** — just a file of those same ex commands, run at
 startup (`$LVIRC` → `$XDG_CONFIG_HOME/lvi/lvirc` → `~/.lvirc`; `"` begins a
 comment) — so `:map` and `:set` persist. A **styled highlight overlay**: `:hl`
-paints named groups of ranges, `:hi GROUP fg=… bg=… bold underline` gives a
-group a color (defined in the rc file); an undefined group falls back to reverse
-video.
+paints named groups of ranges, `:hi GROUP fg=… bg=… bold underline` (or a raw
+`sgr=…`) gives a group a color; an un-themed group renders as plain text.
+**Change hooks**: `:on change <cmd>` runs an external command a beat after you
+stop typing (debounced, non-blocking, loop-safe).
 
-Not yet: syntax highlighting and search (`/`) — both deliberately being driven
-from *outside* the editor (an external highlighter / grep feeding the `:hl`
-overlay over the control socket) rather than reimplemented as in-editor engines.
+**Syntax highlighting**, built entirely from those pieces — no language engine
+in the editor. `contrib/lvi-highlight` pulls the live buffer over the socket,
+runs an external highlighter, and paints the tokens through `:hl`; `on change
+lvi-highlight` in your rc keeps it live. Two backends ship: **Pygments**
+(positional — you theme token types with `:hi`) and **bat** (brings its own
+theme). See `contrib/README.md`.
+
+Not reimplemented, by design: search (`/`). Like highlighting, it's driven from
+*outside* — `contrib/lvi-search` greps the live buffer and feeds `:hl` over the
+socket — rather than grown into the editor as another engine.
 
 ## Requirements
 

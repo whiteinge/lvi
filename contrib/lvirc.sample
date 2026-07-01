@@ -2,11 +2,14 @@
 " Copy the parts you want into $XDG_CONFIG_HOME/lvi/lvirc or ~/.lvirc.
 " The rc file is just ex commands (see :hi / :map); " begins a comment.
 
-" ---- theme -------------------------------------------------------------------
-" Define a color for every group the highlighter emits. A group with NO style
-" renders as plain text (un-themed = invisible), so style the ones you want.
-" Colors: 8 names (black red green yellow blue magenta cyan white) or a 0-255
-" 256-color index; attrs bold dim italic underline reverse.
+" ---- theme (Pygments backend) ------------------------------------------------
+" These :hi lines color the token groups the Pygments backend emits. They do
+" NOT apply to the bat backend, which brings its own theme (set BAT_THEME or
+" `bat --theme`); with bat you can skip this whole section.
+"
+" A group with NO style renders as plain text (un-themed = invisible), so style
+" the ones you want. Colors: 8 names (black red green yellow blue magenta cyan
+" white) or a 0-255 256-color index; attrs bold dim italic underline reverse.
 hi Comment  fg=cyan italic
 hi String   fg=green
 hi Number   fg=magenta
