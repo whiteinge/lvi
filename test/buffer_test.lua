@@ -190,6 +190,32 @@ describe("buffer", function()
       expect(buffer.new("a"):undo()).to_not.exist()
     end)
   end)
+
+  describe("modified flag", function()
+    it("is false on a fresh buffer, true after an edit", function()
+      local b = buffer.new("a")
+      expect(b.modified).to.be(false)
+      b:set(1, "b")
+      expect(b.modified).to.be(true)
+    end)
+    it("clears when undoing back to the original, sets again on redo", function()
+      local b = buffer.new("a")
+      b:set(1, "b")
+      b:undo(); expect(b.modified).to.be(false)
+      b:redo(); expect(b.modified).to.be(true)
+    end)
+    it("tracks the last-saved state across undo/redo", function()
+      local tmp = os.tmpname()
+      local b = buffer.new("a\nb")
+      b:set(1, "X"); b:write(tmp)         -- save at this state
+      expect(b.modified).to.be(false)
+      b:set(2, "Y")                       -- edit past the saved point
+      expect(b.modified).to.be(true)
+      b:undo(); expect(b.modified).to.be(false)  -- back to saved -> clean
+      b:undo(); expect(b.modified).to.be(true)   -- before saved -> dirty
+      os.remove(tmp)
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1) -- non-zero exit on any failure (for CI)

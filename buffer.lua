@@ -46,7 +46,8 @@ end
 function M.new(text)
   text = text or ""
   local self = setmetatable({ modified = false, path = nil,
-    _undo = { done = {}, undone = {}, group = nil, sink = nil } }, Buffer)
+    _undo = { done = {}, undone = {}, group = nil, sink = nil,
+              seq = 0, now = 0, saved = 0 } }, Buffer)
   if text == "" then
     self.lines, self.noeol = { "" }, true
     return self
@@ -120,15 +121,28 @@ end
 -- is redirected to u.sink; a fresh edit instead lands in the open group and
 -- invalidates the redo stack. Multi-level, vim-style (POSIX's u is a single-
 -- level toggle; that would be a one-line change here if ever wanted).
+--
+-- `modified` is derived, not sticky: each change group gets a monotonic id;
+-- `now` is the id of the current state (top of `done`, or 0 = original), `saved`
+-- is `now` at the last write. modified = now ~= saved, so undoing back to the
+-- saved state clears the flag and redoing past it sets it again.
 local function record(self, inv)
   local u = self._undo
   if u.sink then
     u.sink[#u.sink + 1] = inv
   else
-    u.group = u.group or {}
+    if not u.group then
+      u.seq = u.seq + 1
+      u.group = { id = u.seq } -- new user change: fresh id, becomes current state
+      u.now = u.seq
+      u.undone = {}            -- a new edit invalidates redo
+    end
     u.group[#u.group + 1] = inv
-    u.undone = {} -- a new edit invalidates redo
   end
+end
+
+local function update_modified(self)
+  self.modified = self._undo.now ~= self._undo.saved
 end
 
 -- The single fundamental mutator: at line `start`, remove `ndel` lines and
@@ -154,10 +168,10 @@ function Buffer:splice(start, ndel, ins)
   end
   local guard = false
   if #lines == 0 then lines[1] = ""; guard = true end
-  self.modified = true
   -- Inverse: replace the region now holding `ins` with `old`. If the guard
   -- fired, that region is the single guard line at 1.
   record(self, { start = guard and 1 or start, ndel = guard and 1 or nins, ins = old })
+  update_modified(self)
 end
 
 -- Replace line n.
@@ -208,8 +222,11 @@ function Buffer:undo()
   if not g then return nil end
   u.sink = {}
   local line = apply_group(self, g)
+  u.sink.id = g.id                                    -- redo restores state g.id
   u.undone[#u.undone + 1] = u.sink
   u.sink = nil
+  u.now = (#u.done > 0) and u.done[#u.done].id or 0   -- back to the prior state
+  update_modified(self)
   return line
 end
 
@@ -220,8 +237,11 @@ function Buffer:redo()
   if not g then return nil end
   u.sink = {}
   local line = apply_group(self, g)
+  u.sink.id = g.id
   u.done[#u.done + 1] = u.sink
   u.sink = nil
+  u.now = g.id
+  update_modified(self)
   return line
 end
 
@@ -237,6 +257,8 @@ function Buffer:write(path)
   f:write(body)
   f:close()
   self.path = path
+  self:undo_checkpoint()                 -- close the open group so the next edit is new
+  self._undo.saved = self._undo.now      -- mark this state as saved
   self.modified = false
   return #body
 end
