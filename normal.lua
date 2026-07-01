@@ -497,7 +497,11 @@ actions = {
         local cmd = ed.cmdline
         ed.mode = "normal"; ed.cmdline = ""
         local payload, status = ex.dispatch(ed, cmd)
-        if status == "err" or (payload and payload ~= "") then
+        if status == "err" then
+          ed.message = payload:gsub("\n", " ")
+        elseif payload and payload:find("\n", 1, true) and ed.suspend then
+          ed.suspend(payload)                     -- multi-line output -> the terminal
+        elseif payload and payload ~= "" then
           ed.message = payload:gsub("\n", " ")
         end
         return

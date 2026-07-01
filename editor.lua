@@ -142,6 +142,23 @@ function M.run(opts)
     if not ed.rows or ed.rows == 0 then ed.rows, ed.cols = 24, 80 end
     saved = sys.raw_mode()
     sys.write(1, term.alt_on)
+    -- Show multi-line command output on a cleared page WITHIN the alt screen, so
+    -- the normal terminal is never touched (clean exit) and each invocation
+    -- shows only the current output. Wait for a key; the main loop repaints
+    -- after. (Long output that truly needs scrolling can defer to $PAGER later.)
+    ed.suspend = function(text)
+      local lines = {}
+      for ln in (text .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = ln end
+      local rows, cols, ts = ed.rows, ed.cols, ed.opts.tabstop
+      local out = { term.clear, term.show }
+      for i = 1, math.min(#lines, rows - 1) do
+        out[#out + 1] = term.move(i, 1) .. disp.expand(lines[i], ts):sub(1, cols)
+      end
+      local extra = (#lines > rows - 1) and (" +" .. (#lines - rows + 1) .. " more") or ""
+      out[#out + 1] = term.move(rows, 1) .. "\27[7m-- Press any key" .. extra .. " --\27[0m"
+      sys.write(1, table.concat(out))
+      sys.read(0)                                     -- any key
+    end
     refresh(ed)
     sys.write(1, render.frame(ed))
   else
