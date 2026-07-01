@@ -17,6 +17,7 @@ local ex     = require("ex")
 local normal = require("normal")
 local disp   = require("disp")
 local bufs   = require("bufs")
+local config = require("config")
 
 local M = {}
 
@@ -145,6 +146,23 @@ function M.run(opts)
   end
 
   local tty = sys.isatty(0)
+
+  -- Load the rc file: a file of ex commands, run once through the shared
+  -- dispatcher (the payoff of "ex is the config language"). Done here -- ed is
+  -- fully built, but before the first paint -- so `:set`/`:map`/... take effect
+  -- immediately. (ed.shell isn't wired yet, so an interactive `:!` in the rc
+  -- would run headless; the rc is not the place for interactive shell-outs.)
+  do
+    local rc, errs = config.load(ed)
+    if #ed.inject > 0 then pump(ed) end          -- config may queue :normal keys
+    if #errs > 0 then
+      local last = errs[#errs]
+      local msg = ("%s: %d error%s (line %d: %s)"):format(
+        rc, #errs, #errs > 1 and "s" or "", last.lnum, last.err)
+      if tty then ed.message = msg else io.stderr:write("lvi: " .. msg .. "\n") end
+    end
+  end
+
   local saved
   if tty then
     ed.rows, ed.cols = sys.winsize(1)

@@ -66,7 +66,9 @@ Modal editing: motions `h j k l 0 ^ $ w b e f t F T ; , G gg` and marks
 registers `a`–`z` and the unnamed register; `.` repeat; macros `q`/`@`/`@@`;
 multi-level undo/redo (`u` / `Ctrl-R`). An ex layer (`:w`, `:d`, ranges, `:%p`,
 `:normal`, `:u`/`:redo`, `:q`, and line-number goto) shared by the `:` prompt and
-the socket.
+the socket. A **config file** — just a file of those same ex commands, run at
+startup (`$LVIRC` → `$XDG_CONFIG_HOME/lvi/lvirc` → `~/.lvirc`; `"` begins a
+comment) — so `:map` and `:set` persist.
 
 Not yet: line wrap / horizontal scroll, syntax highlighting, and search (`/`) —
 the last of which is deliberately being reconsidered rather than reimplemented.
@@ -107,8 +109,7 @@ version and nothing else in the codebase notices.
 ### One command dispatcher, three front doors
 
 `ex.dispatch(command) → payload, status` is the single core that executes ex
-commands. The `:` prompt, the control socket, and (eventually) the config file
-all call it. This is the property that makes `tmux` so pleasant — the same tight
+commands. The `:` prompt, the control socket, and the config file all call it. This is the property that makes `tmux` so pleasant — the same tight
 vocabulary at the CLI, in the config, and at the command prompt — and vi already
 *had* that vocabulary in the form of ex.
 
