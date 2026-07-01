@@ -231,6 +231,47 @@ local function do_filter(ed, a, b, cmd)
   return "", "ok"
 end
 
+-- Delegate a command lvi does not implement itself to the system ex (the whole
+-- of vi's line-editing -- :s, :g, :m, :t, :j, full addressing -- for free, using
+-- whatever ex is installed). Mechanism: the do_filter pattern over the WHOLE
+-- buffer -- write it to a temp file, drive `ex -s` with a script, read it back.
+--
+-- The script is a PREAMBLE that mirrors lvi's state into ex, then the user's
+-- command verbatim (so ex parses its own addresses), then wq!: we recreate each
+-- lvi mark (so `:'a,'bs/...` resolves) and set ex's current line to lvi's cursor
+-- (so a bare `:s` acts on the right line). No parsing of the user command needed.
+--
+-- Limits (documented, by design): output is discarded (this is for buffer edits,
+-- not `:g//p`); ex errors are not reliably reportable (Vim's `ex -s` returns 1
+-- even on success and hides stderr), so a bad command is a safe no-op rather than
+-- a message -- reach for ex directly if you need to see why. The one hard failure
+-- we do catch is ex being unrunnable. One splice = one undo.
+local function do_ex(ed, line)
+  local exe = os.getenv("LVI_EX") or "ex"
+  local src = ed.buf:text()
+  local pre = {}
+  for m, pos in pairs(ed.marks or {}) do
+    if m:match("^%l$") then pre[#pre + 1] = clampline(ed, pos[1]) .. "mark " .. m end
+  end
+  pre[#pre + 1] = tostring(clampline(ed, ed.cy))      -- set ex's current line to ours
+  pre[#pre + 1] = line                                -- the user's command, addresses and all
+  pre[#pre + 1] = "wq!"
+  local tmp, sf = os.tmpname(), os.tmpname()
+  local wf = io.open(tmp, "wb"); wf:write(src); wf:close()
+  wf = io.open(sf, "wb"); wf:write(table.concat(pre, "\n"), "\n"); wf:close()
+  local _, code = run_capture(ed, ("%s -s '%s' < '%s'"):format(exe, tmp, sf))
+  local result = slurp(tmp)
+  os.remove(tmp); os.remove(sf)
+  if code == 127 then
+    return ("cannot run '%s': not found (set $LVI_EX)"):format(exe), "err"
+  end
+  if result ~= src then                               -- skip a no-op (e.g. read-only cmd)
+    ed.buf:splice(1, ed.buf:nlines(), buffer.split((result:gsub("\n$", ""))))
+    ed.cy, ed.cx = clampline(ed, ed.cy), 1
+  end
+  return "", "ok"
+end
+
 -- Parse a key notation string into raw bytes. Names (case-insensitive):
 -- <CR> <Esc> <Space> <Tab> <Bar> <Bslash> <lt> <NL>, and <C-x> for ctrl-keys.
 -- Unknown <...> is left as a literal '<'.
@@ -264,6 +305,10 @@ function M.dispatch(ed, line)
       if a then return do_filter(ed, a, b, args)        -- filter the range
       else return do_shell(ed, args) end                -- :!cmd -- run it
     end
+    -- A non-empty remainder with no recognized command word means the address
+    -- itself uses syntax lvi does not parse (a mark like 'a, a /re/ search):
+    -- hand the whole line to ex, which understands the full address grammar.
+    if rest ~= "" then return do_ex(ed, line) end
     if a then ed.cy = clampline(ed, b); ed.cx = 1 end   -- bare address: goto line
     return "", "ok"
   end
@@ -440,7 +485,9 @@ function M.dispatch(ed, line)
     return "", "ok"
   end
 
-  return "unknown command: " .. cmd, "err"
+  -- Anything lvi does not handle itself is delegated to the system ex, so vi's
+  -- full line-editing vocabulary works without reimplementing it here.
+  return do_ex(ed, line)
 end
 
 return M

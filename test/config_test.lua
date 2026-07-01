@@ -47,7 +47,9 @@ describe("config", function()
     end)
 
     it("collects errors without aborting later lines", function()
-      local p = writerc("set nowrap\nboguscmd\nset ts=4\n")
+      -- Use a natively-failing command (a bad :set option); an unknown command
+      -- word is delegated to ex, not treated as an error.
+      local p = writerc("set nowrap\nset bogusopt\nset ts=4\n")
       sys.setenv("LVIRC", p)
       local ed = fake_ed()
       local _, errs = config.load(ed)

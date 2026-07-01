@@ -240,11 +240,43 @@ describe("ex.dispatch", function()
     end)
   end)
 
-  it("reports unknown commands", function()
-    local ed = ed_with("a")
-    local p, s = ex.dispatch(ed, "frobnicate")
-    expect(s).to.equal("err")
-    expect(p:find("unknown", 1, true)).to.exist()
+  -- Commands lvi does not implement are delegated to the system ex. These
+  -- shell out, so they only run where an `ex` is installed; skip otherwise so
+  -- the suite stays dependency-free.
+  describe("delegation to /bin/ex", function()
+    local have_ex = os.execute("command -v '" .. (os.getenv("LVI_EX") or "ex")
+                               .. "' >/dev/null 2>&1") == 0
+
+    it("runs :s (substitute) through ex", function()
+      if not have_ex then return end
+      local ed = ed_with("foo one\nfoo two\nbar")
+      local _, s = ex.dispatch(ed, "%s/foo/X/")
+      expect(s).to.equal("ok")
+      expect(ed.buf:get()).to.equal({ "X one", "X two", "bar" })
+    end)
+
+    it("runs :g (global) through ex", function()
+      if not have_ex then return end
+      local ed = ed_with("keep\ndrop me\nkeep2\ndrop again")
+      ex.dispatch(ed, "g/drop/d")
+      expect(ed.buf:get()).to.equal({ "keep", "keep2" })
+    end)
+
+    it("injects lvi marks so a mark-addressed range resolves", function()
+      if not have_ex then return end
+      local ed = ed_with("a\nb\nc\nd")
+      ed.marks = { a = { 2, 1 } }
+      ex.dispatch(ed, "'a,$s/^/> /")
+      expect(ed.buf:get()).to.equal({ "a", "> b", "> c", "> d" })
+    end)
+
+    it("leaves the buffer untouched on a bogus command (safe no-op)", function()
+      if not have_ex then return end
+      local ed = ed_with("x\ny\nz")
+      local _, s = ex.dispatch(ed, "totalgibberish")
+      expect(s).to.equal("ok")
+      expect(ed.buf:get()).to.equal({ "x", "y", "z" })
+    end)
   end)
 end)
 
