@@ -112,13 +112,17 @@ local ATTRS  = { bold = 1, dim = 2, italic = 3, underline = 4, blink = 5, revers
 
 -- Parse a style spec ("fg=red bg=234 bold underline") into SGR parameters
 -- ("31;48;5;234;1;4"), or nil,err. fg/bg take a basic color name or a 0-255
--- number (256-color palette); bare words are attributes. Order is irrelevant to
--- the terminal (the parameters combine).
+-- number (256-color palette); bare words are attributes; `sgr=<params>` passes
+-- raw SGR through verbatim (how ANSI backends carry their own colors, incl.
+-- truecolor). Order is irrelevant to the terminal (the parameters combine).
 local function parse_style(spec)
   local params = {}
   for tok in spec:gmatch("%S+") do
+    local raw = tok:match("^sgr=([%d;]+)$")           -- raw SGR passthrough
     local key, val = tok:match("^(%a+)=(%w+)$")
-    if key == "fg" or key == "bg" then
+    if raw then
+      params[#params + 1] = raw
+    elseif key == "fg" or key == "bg" then
       if COLORS[val] then
         params[#params + 1] = (key == "fg" and 30 or 40) + COLORS[val]
       else

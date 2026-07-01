@@ -1,0 +1,24 @@
+#!/bin/sh
+# lvi-hl-bat -- bat syntax-highlighting adapter for lvi-highlight (ANSI backend).
+#
+# Contract: buffer text on stdin, filename as $1; emits ex commands (produced by
+# the shared lvi-hl-ansi parser). Unlike the Pygments (positional) adapter, the
+# COLORS come from bat's own theme, not lvi's :hi -- an ANSI backend brings its
+# theme and lvi reproduces it. Choose the theme with BAT_THEME (or LVI_BAT flags).
+#
+# Flags matter for column accuracy: --style=plain (no gutter/grid), --wrap=never
+# (don't insert soft newlines) and --tabs=0 (don't expand tabs) keep bat's byte
+# columns identical to the buffer's, which is what lvi-hl-ansi relies on.
+BAT=${LVI_BAT:-}
+if [ -z "$BAT" ]; then
+  if   command -v batcat >/dev/null 2>&1; then BAT=batcat   # Debian/Ubuntu name
+  elif command -v bat    >/dev/null 2>&1; then BAT=bat
+  else echo "lvi-hl-bat: need bat (apt install bat, binary 'batcat')" >&2; exit 1; fi
+fi
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+fname=$1
+
+set -- --color=always --style=plain --paging=never --wrap=never --tabs=0
+[ -n "$fname" ] && set -- "$@" --file-name "$fname"     # bat detects syntax from it
+
+"$BAT" "$@" | "$DIR/lvi-hl-ansi"
