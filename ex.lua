@@ -106,20 +106,34 @@ end
 -- WITHOUT capturing stderr (which would fight an interactive finder's UI). On a
 -- tty, ed._silent hands the child the real terminal (ed.with_tty) so fzy/fzf can
 -- draw while we still capture its selection.
+local function slurp(path)
+  local h = io.open(path, "r"); if not h then return "" end
+  local s = h:read("*a") or ""; h:close(); return s
+end
+
+-- Returns stdout, exit_code, stderr. stderr is captured to a temp file ONLY for
+-- non-interactive commands (so it can go in an error message and not flash onto
+-- the alt screen); an interactive finder keeps its stderr (that's its UI).
 local function run_capture(ed, cmd)
-  local codef = os.tmpname()
+  local interactive = ed._silent and ed.with_tty
+  local codef, errf = os.tmpname(), os.tmpname()
+  local redir = interactive and "" or (" 2>" .. errf)
   local run = function()
-    local p = io.popen(cmd .. "; echo $? >" .. codef, "r")
+    local p = io.popen(cmd .. redir .. "; echo $? >" .. codef, "r")
     local o = p and p:read("*a") or ""
     if p then p:close() end
     return o
   end
-  local out = (ed._silent and ed.with_tty) and ed.with_tty(run) or run()
-  local cf = io.open(codef, "r")
-  local code = cf and tonumber(((cf:read("*a") or ""):match("%d+"))) or 0
-  if cf then cf:close() end
-  os.remove(codef)
-  return out, code
+  local out = interactive and ed.with_tty(run) or run()
+  local code = tonumber((slurp(codef):match("%d+"))) or 0
+  local err = interactive and "" or slurp(errf)
+  os.remove(codef); os.remove(errf)
+  return out, code, err
+end
+
+-- First non-blank line of stderr, else "exit N" -- a concise failure reason.
+local function fail_reason(err, code)
+  return err:match("%S[^\n]*") or ("exit " .. code)
 end
 
 -- Run a shell command. On a tty (ed.shell present) it runs interactively with
@@ -132,8 +146,8 @@ local function do_shell(ed, cmd)
     if code ~= 0 then return ("shell failed: exit %d"):format(code), "err" end
     return "", "ok"
   end
-  local out, code = run_capture(ed, cmd)              -- socket/headless: capture
-  if code ~= 0 then return (out ~= "" and out or ("exit " .. code)), "err" end
+  local out, code, err = run_capture(ed, cmd)         -- socket/headless: capture
+  if code ~= 0 then return ("!" .. cmd .. ": " .. fail_reason(err, code)), "err" end
   return out, "ok"
 end
 
@@ -146,9 +160,9 @@ local function do_filter(ed, a, b, cmd)
   local f = io.open(tmp, "wb")
   f:write(table.concat(ed.buf:get(from, to), "\n"), "\n")
   f:close()
-  local out, code = run_capture(ed, cmd .. " < " .. tmp)
+  local out, code, err = run_capture(ed, cmd .. " < " .. tmp)
   os.remove(tmp)
-  if code ~= 0 then return ("filter failed: exit %d (buffer unchanged)"):format(code), "err" end
+  if code ~= 0 then return "filter failed: " .. fail_reason(err, code) .. " (unchanged)", "err" end
   local lines = {}
   if out ~= "" then
     local body = (out:sub(-1) == "\n") and out:sub(1, -2) or out
@@ -272,9 +286,9 @@ function M.dispatch(ed, line)
     if args == "" then return "No file name", "err" end
     local text
     if args:sub(1, 1) == "!" then
-      local code
-      text, code = run_capture(ed, args:sub(2))
-      if code ~= 0 then return ("read failed: exit %d"):format(code), "err" end
+      local code, err
+      text, code, err = run_capture(ed, args:sub(2))
+      if code ~= 0 then return "read failed: " .. fail_reason(err, code), "err" end
     else
       local fh = io.open(args, "rb")
       if not fh then return "can't open " .. args, "err" end

@@ -561,9 +561,9 @@ local function command(ed)
   ed.buf:undo_checkpoint() -- one undo reverts one user-level command
   ed.keylog = {}
   ed.changed = false
-  ed.message = nil
   local reg
-  local k = first_key(ed)                    -- map expansion happens here
+  local k = first_key(ed)                    -- parks here; prior message stays visible
+  ed.message = nil                           -- clear only once a new command's key arrives
   if k == b('"') then reg = string.char(getkey(ed)); k = getkey(ed) end
   local count1
   count1, k = read_count(ed, k)

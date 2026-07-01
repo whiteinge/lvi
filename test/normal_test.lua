@@ -306,6 +306,13 @@ describe("normal-mode interpreter", function()
       feed(ed, "dd"); expect(ed.buf:get()).to.equal({ "b", "c" })
       feed(ed, "u"); expect(ed.buf:get()).to.equal({ "a", "b", "c" })
     end)
+    it("a status message survives until the next command's key", function()
+      local ed = make("a")
+      feed(ed, "u")                              -- nothing to undo -> sets a message
+      expect(ed.message).to.equal("Already at oldest change")
+      feed(ed, "j")                              -- next command clears it
+      expect(ed.message).to_not.exist()
+    end)
   end)
 
   describe("macros", function()
