@@ -127,6 +127,21 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("cword (word under cursor)", function()
+    it("returns the word class run around the cursor, else empty", function()
+      local ed = make("foo bar_baz, qux")
+      ed.cx = 5;  expect(normal.cword(ed)).to.equal("bar_baz")  -- _ is a word char
+      ed.cx = 1;  expect(normal.cword(ed)).to.equal("foo")
+      ed.cx = 4;  expect(normal.cword(ed)).to.equal("")         -- on the space
+      ed.cx = 12; expect(normal.cword(ed)).to.equal("")         -- on the comma
+      ed.cx = 14; expect(normal.cword(ed)).to.equal("qux")
+    end)
+    it("captures a whole multibyte word", function()
+      local ed = make("héllo wörld")
+      ed.cx = 1; expect(normal.cword(ed)).to.equal("héllo")
+    end)
+  end)
+
   describe("gj / gk (screen-line motion)", function()
     it("gj == j when wrap is off", function()
       local ed = make("a\nb\nc")               -- no opts -> nowrap

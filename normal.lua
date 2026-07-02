@@ -106,6 +106,20 @@ local function char_class(c)
   return "punct"
 end
 
+-- The word under the cursor (Vim's <cword>), using the same word class as
+-- w/b/e -- so lvi exports a value it already knows how to compute rather than
+-- inventing a second notion of "word". Empty when the cursor isn't on a word
+-- char. Expanding byte-by-byte still captures a whole multibyte word (each
+-- continuation byte is >=128, hence "word").
+function M.cword(ed)
+  local s, cx = line(ed, ed.cy), ed.cx
+  if cx < 1 or cx > #s or char_class(s:sub(cx, cx)) ~= "word" then return "" end
+  local i, j = cx, cx
+  while i > 1     and char_class(s:sub(i - 1, i - 1)) == "word" do i = i - 1 end
+  while j < #s    and char_class(s:sub(j + 1, j + 1)) == "word" do j = j + 1 end
+  return s:sub(i, j)
+end
+
 -- ---- registers --------------------------------------------------------------
 -- A register is { text = string, linewise = bool }. The unnamed register '"'
 -- always mirrors the last delete/yank; a named register also updates it.

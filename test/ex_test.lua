@@ -232,6 +232,18 @@ describe("ex.dispatch", function()
       local _, s = ex.dispatch(ed_with("x"), "!false")
       expect(s).to.equal("err")
     end)
+    it("stamps the cursor context into a spawned command's environment", function()
+      local sys = require("sys")
+      local normal = require("normal")
+      local ed = ed_with("alpha beta"); ed.buf.path = "dir/file.txt"; ed.cy, ed.cx = 1, 7
+      ed.export_context = function()                     -- as editor.lua wires it
+        sys.setenv("LVI_FILE", ed.buf.path or "")
+        sys.setenv("LVI_LINE", ed.cy); sys.setenv("LVI_COL", ed.cx)
+        sys.setenv("LVI_CWORD", normal.cword(ed))
+      end
+      local out = (ex.dispatch(ed, [[!printf '%s\n' "$LVI_LINE:$LVI_COL $LVI_CWORD ${LVI_FILE##*/}"]]))
+      expect(out).to.equal("1:7 beta file.txt\n")        -- col 7 is inside 'beta'
+    end)
     it("a failed :r !cmd inserts nothing", function()
       local ed = ed_with("a\nb")
       local _, s = ex.dispatch(ed, "r !false")

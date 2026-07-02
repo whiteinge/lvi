@@ -172,7 +172,9 @@ moves the cursor to that line.
 	Filter the range through shell _cmd_, replacing it with the output.
 
 *!*_cmd_
-	Run a shell _cmd_ with the terminal (interactive programs work).
+	Run a shell _cmd_ with the terminal (interactive programs work). The
+	cursor's context is in the environment (*LVI_FILE*/*LINE*/*COL*/*CWORD*; see
+	*ENVIRONMENT*), so e.g. *!grep -n "$LVI_CWORD" "$LVI_FILE"*.
 
 *normal* _keys_
 	Feed _keys_ as normal-mode keystrokes -- the escape hatch that gives the
@@ -264,7 +266,17 @@ socket, run an external tool, and paint the result through the *hl* overlay:
 	Locate the rc file (see *CONFIGURATION*).
 
 *LVI_WID*, *LVI_SOCK*
-	The current view's id and socket path, exported to child processes.
+	The current view's id and socket path, exported to child processes (static
+	for the life of the view).
+
+*LVI_FILE*, *LVI_LINE*, *LVI_COL*, *LVI_CWORD*
+	The cursor's world -- current file path, 1-based line and byte column, and
+	the word under the cursor -- refreshed into the environment before every
+	shell-out (*:!* commands and *:on* hooks). A command can read them inline
+	with no wrapper, and a POSIX shell slices them further, e.g.
+	*:!ctags* _--_ *"${LVI_FILE%/\*}"* for the directory or *"${LVI_FILE##\*/}"*
+	for the basename. *LVI_CWORD* uses the same word definition as *w*/*b*/*e*
+	and is empty when the cursor is not on a word character.
 
 *XDG_RUNTIME_DIR*, *TMPDIR*
 	Preferred locations for the socket directory (else _/tmp_).

@@ -148,10 +148,21 @@ function M.run(opts)
     opts = { wrap = true, tabstop = 8 },
     hooks = {}, change_pending = true, -- seed one fire so an opened file highlights
   }
+  -- Refresh the per-spawn context env vars, so a child (a `:!` command, a hook)
+  -- reads the cursor's world straight from its environment -- no expansion
+  -- mini-language in the editor, just values a POSIX shell can slice
+  -- (`${LVI_FILE##*/}` etc.). LVI_WID/LVI_SOCK are set once (static per view);
+  -- these change with the cursor, so they're stamped right before each spawn.
+  ed.export_context = function()
+    sys.setenv("LVI_FILE", ed.buf.path or "")
+    sys.setenv("LVI_LINE", ed.cy)
+    sys.setenv("LVI_COL", ed.cx)
+    sys.setenv("LVI_CWORD", normal.cword(ed))
+  end
   -- Spawn a shell command detached and non-blocking, with its output discarded
   -- (a hook must not write to the tty or block the poll loop). Used to fire
   -- `:on change` hooks; the subshell backgrounds so os.execute returns at once.
-  ed.spawn_bg = function(cmd) os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
+  ed.spawn_bg = function(cmd) ed.export_context(); os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
   -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
   -- is set up here and swapped by bufs on :e / buffer switch. Positional files
   -- open as buffers; the first is current.
@@ -235,6 +246,7 @@ function M.run(opts)
     -- true adds "Press ENTER" (to read line output, with the code on failure);
     -- false = seamless resume (:silent, for full-screen programs).
     ed.shell = function(cmd, prompt)
+      ed.export_context()
       return ed.with_tty(function()
         local st = os.execute(cmd)
         local code = (type(st) == "number") and math.floor(st / 256) or (st and 0 or 1)

@@ -173,6 +173,7 @@ end
 -- non-interactive commands (so it can go in an error message and not flash onto
 -- the alt screen); an interactive finder keeps its stderr (that's its UI).
 local function run_capture(ed, cmd)
+  if ed.export_context then ed.export_context() end    -- stamp LVI_FILE/LINE/COL/CWORD
   local interactive = ed._silent and ed.with_tty
   local codef, errf = os.tmpname(), os.tmpname()
   local redir = interactive and "" or (" 2>" .. errf)
