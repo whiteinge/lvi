@@ -21,6 +21,10 @@ local function fresh(buf)
 end
 
 local function save(ed)
+  -- Fire bufleave while the buffer being left is still current, so the hook's
+  -- context env vars (LVI_FILE ...) name it. ed.fire_event is injected by the
+  -- editor and absent in headless/unit contexts, so guard every call.
+  if ed.fire_event then ed.fire_event("bufleave") end
   local rec = ed.buffers[ed.bufidx]
   rec.buf = ed.buf
   for _, k in ipairs(VIEW) do rec[k] = ed[k] end
@@ -38,6 +42,9 @@ local function load(ed, i)
   local rec = ed.buffers[i]
   ed.buf = rec.buf
   for _, k in ipairs(VIEW) do ed[k] = rec[k] end
+  -- bufenter fires after the entered buffer is current, so the hook (a list
+  -- repaint) sees it in LVI_FILE and paints the right buffer's subset.
+  if ed.fire_event then ed.fire_event("bufenter") end
 end
 
 -- Start the list with one buffer and make it current.
@@ -88,6 +95,10 @@ function M.close(ed, force, idx)
   if ed.buffers[idx].buf.modified and not force then
     return false, "No write since last change (add ! to override)"
   end
+  -- bufdelete fires before the buffer goes, carrying its path (not the current
+  -- one's -- :bd N deletes a buffer that may not be current) so a hook can drop
+  -- the list tied to that file.
+  if ed.fire_event then ed.fire_event("bufdelete", ed.buffers[idx].buf) end
   if #ed.buffers == 1 then
     ed.buffers[1] = fresh(buffer.new(""))
     load(ed, 1)

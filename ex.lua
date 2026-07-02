@@ -13,6 +13,10 @@ local buffer = require("buffer")
 
 local M = {}
 
+-- Events an `:on` hook may bind to. `change` fires (debounced) after a keyboard
+-- edit settles; the buf* events fire on buffer switches (editor.lua/bufs.lua).
+local EVENTS = { change = true, bufenter = true, bufleave = true, bufdelete = true }
+
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
 -- as shorthand for 1,$.
@@ -463,13 +467,16 @@ function M.dispatch(ed, line)
 
   elseif cmd == "on" then
     -- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
-    -- but pointed at external tools). Multiple hooks per event compose; `:on
-    -- EVENT` with no command clears them. Hooks run detached and non-blocking
-    -- (editor.lua's spawn_bg). Only keyboard-initiated changes fire `change`, so
-    -- a hook's own socket-driven edits can't retrigger it (see editor.lua).
+    -- but pointed at external tools). EVENT is change|bufenter|bufleave|bufdelete.
+    -- Multiple hooks per event compose; `:on EVENT` with no command clears them.
+    -- Hooks run detached and non-blocking (editor.lua's spawn_bg). Only
+    -- keyboard-initiated changes fire `change`, so a hook's own socket-driven
+    -- edits can't retrigger it (see editor.lua). The buf* events fire on buffer
+    -- switches with that buffer's path in LVI_FILE -- the glue that lets a
+    -- cross-file list repaint the current buffer's subset on arrival.
     local event, rest = args:match("^(%S+)%s*(.-)%s*$")
     if not event or event == "" then return "usage: on EVENT [command]", "err" end
-    if event ~= "change" then return "unknown event: " .. event, "err" end
+    if not EVENTS[event] then return "unknown event: " .. event, "err" end
     ed.hooks = ed.hooks or {}
     if rest == "" then ed.hooks[event] = nil; return "", "ok" end
     ed.hooks[event] = ed.hooks[event] or {}
@@ -478,6 +485,18 @@ function M.dispatch(ed, line)
 
   elseif cmd == "pos" then                  -- cursor position query: line<TAB>col
     return ed.cy .. "\t" .. ed.cx, "ok"
+
+  elseif cmd == "status" then
+    -- :status NAME [TEXT] -- set (or clear, if TEXT is empty) a named segment in
+    -- the status line. Generic: the editor knows nothing about what fills it --
+    -- an external list tool drives "[3/57] search", git a branch, etc. -- the
+    -- same relationship :hl has with the highlight overlay. Segments render in
+    -- name order (see render.lua).
+    local name, text = args:match("^(%S+)%s*(.-)%s*$")
+    if not name then return "usage: status NAME [TEXT]", "err" end
+    ed.status = ed.status or {}
+    ed.status[name] = (text ~= "") and text or nil
+    return "", "ok"
 
   elseif cmd == "echo" then
     return args, "ok"

@@ -47,6 +47,19 @@ local function intervals(ranges, orig, ts)
   return (#out > 0) and out or nil
 end
 
+-- The named status segments (set via :status), joined in name order into one
+-- middle string. Generic: the editor doesn't know a list from a clock; a tool
+-- fills them. Empty when nothing is set.
+local function status_mid(ed)
+  if not ed.status then return "" end
+  local names = {}
+  for name in pairs(ed.status) do names[#names + 1] = name end
+  table.sort(names)
+  local segs = {}
+  for _, name in ipairs(names) do segs[#segs + 1] = ed.status[name] end
+  return (table.concat(segs, "  "):gsub("\n", " "))
+end
+
 -- Left (name/message) and right (position) halves of the status line.
 local function status_halves(ed)
   local buf = ed.buf
@@ -114,9 +127,23 @@ function M.frame(ed)
     crow, ccol = rows, math.min(cols, 2 + #ed.cmdline)
   else
     local left_s, right = status_halves(ed)
-    local pad = cols - #left_s - #right
-    local line = (pad >= 1) and (left_s .. string.rep(" ", pad) .. right)
-                             or  (left_s .. " " .. right)
+    local mid = status_mid(ed)
+    local line
+    if mid ~= "" then
+      -- left ... mid ... right, centering the middle in the slack; overflow is
+      -- truncated by the :sub below (position on the right is the first to go).
+      local room = cols - #left_s - #mid - #right
+      if room >= 2 then
+        local lpad = math.floor(room / 2)
+        line = left_s .. string.rep(" ", lpad) .. mid .. string.rep(" ", room - lpad) .. right
+      else
+        line = left_s .. "  " .. mid .. "  " .. right
+      end
+    else
+      local pad = cols - #left_s - #right
+      line = (pad >= 1) and (left_s .. string.rep(" ", pad) .. right)
+                         or  (left_s .. " " .. right)
+    end
     out[#out + 1] = line:sub(1, cols)
   end
 

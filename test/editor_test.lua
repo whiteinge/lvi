@@ -117,6 +117,18 @@ describe("change-hook attribution and firing", function()
     expect(#spawned).to.equal(1)
   end)
 
+  it("M.fire runs each hook for an event, passing the buf override through", function()
+    local ed, spawned = ed_hooked("x")
+    ed.hooks.bufdelete = { "lvi-list drop" }
+    local got_buf
+    ed.spawn_bg = function(cmd, buf) spawned[#spawned + 1] = cmd; got_buf = buf end
+    editor.fire(ed, "bufdelete", { path = "gone.txt" })
+    expect(spawned).to.equal({ "lvi-list drop" })
+    expect(got_buf.path).to.equal("gone.txt")           -- buf threaded to spawn_bg -> export_context
+    editor.fire(ed, "bufenter")                          -- no hooks registered -> no-op
+    expect(#spawned).to.equal(1)
+  end)
+
   it("a socket-sourced edit does NOT arm the hook (no loop)", function()
     local ed, spawned = ed_hooked("hello world")
     editor.handle_socket_command(ed, "normal dw")    -- edit via the socket path

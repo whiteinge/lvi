@@ -67,6 +67,36 @@ describe("bufs", function()
     os.remove(p)
   end)
 
+  describe("event firing", function()
+    -- Record (event, reported-path) as bufs fires through the injected hook.
+    local function traced_ed(text)
+      local ed = make_ed(); bufs.init(ed, buffer.new(text))
+      local ev = {}
+      ed.fire_event = function(event, buf)
+        ev[#ev + 1] = { event, buf and buf.path or "current" }
+      end
+      return ed, ev
+    end
+    it("fires bufleave then bufenter on a switch", function()
+      local ed, ev = traced_ed("A")
+      local p = tmpfile("B"); bufs.open(ed, p)          -- leave A, enter B
+      expect(ev[1]).to.equal({ "bufleave", "current" })
+      expect(ev[2]).to.equal({ "bufenter", "current" })
+      os.remove(p)
+    end)
+    it("fires bufdelete with the closed (non-current) buffer's path", function()
+      local pa = tmpfile("A"); local ed, ev = make_ed(), nil
+      bufs.init(ed, buffer.open(pa)); ev = {}
+      ed.fire_event = function(event, buf) ev[#ev + 1] = { event, buf and buf.path } end
+      local pb = tmpfile("B"); bufs.open(ed, pb)         -- current is now pb (idx 2)
+      for i = #ev, 1, -1 do ev[i] = nil end              -- drop the switch events
+      bufs.close(ed, false, 1)                           -- close pa, which is NOT current
+      expect(ev[1][1]).to.equal("bufdelete")             -- fired before removal
+      expect(ev[1][2]).to.equal(pa)                      -- carries the deleted buffer's path
+      os.remove(pa); os.remove(pb)
+    end)
+  end)
+
   describe("alternate buffer (#)", function()
     it("toggles between the two most recent buffers", function()
       local ed = make_ed(); bufs.init(ed, buffer.new("A"))

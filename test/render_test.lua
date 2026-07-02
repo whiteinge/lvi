@@ -31,6 +31,14 @@ describe("render.frame", function()
     expect(render.frame(ed):find("%[%+%]")).to.exist()
   end)
 
+  it("shows :status segments in name order in the status line", function()
+    local ed = ed_with("x", { cols = 60, status = { zeb = "Z", abc = "A" } })
+    local f = render.frame(ed)
+    local ia, iz = f:find("A", 1, true), f:find("Z", 1, true)
+    expect(ia).to.exist(); expect(iz).to.exist()
+    expect(ia < iz).to.be.truthy()                 -- abc's "A" before zeb's "Z"
+  end)
+
   it("truncates long lines to the width (nowrap)", function()
     local f = render.frame(ed_with("0123456789ABCDEF"))  -- cols = 12
     expect(f:find("012345678", 1, true)).to.exist()

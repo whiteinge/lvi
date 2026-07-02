@@ -69,13 +69,23 @@ function M.note_keyboard_change(ed, prev_buf, prev_rev)
   if ed.buf ~= prev_buf or ed.buf.rev ~= prev_rev then ed.change_pending = true end
 end
 
+-- Fire every hook registered for an event, each detached. `buf` (optional)
+-- overrides the buffer reported in the context env vars (for bufdelete). The
+-- generic firer behind both the idle `change` hook and the buffer events; bufs
+-- calls it through the injected ed.fire_event so it needn't require editor.
+function M.fire(ed, event, buf)
+  local hooks = ed.hooks and ed.hooks[event]
+  if not hooks then return end
+  for _, cmd in ipairs(hooks) do ed.spawn_bg(cmd, buf) end
+end
+
 -- Called when the poll loop goes idle: run each registered `change` hook once,
 -- detached, then disarm until the next keyboard change.
 function M.on_idle(ed)
   local hooks = ed.change_pending and ed.hooks and ed.hooks.change
   if not hooks or #hooks == 0 then return end
   ed.change_pending = false
-  for _, cmd in ipairs(hooks) do ed.spawn_bg(cmd) end
+  M.fire(ed, "change")
 end
 
 -- ---- cursor / scroll invariants ---------------------------------------------
@@ -153,16 +163,20 @@ function M.run(opts)
   -- mini-language in the editor, just values a POSIX shell can slice
   -- (`${LVI_FILE##*/}` etc.). LVI_WID/LVI_SOCK are set once (static per view);
   -- these change with the cursor, so they're stamped right before each spawn.
-  ed.export_context = function()
-    sys.setenv("LVI_FILE", ed.buf.path or "")
+  -- `buf` overrides the buffer whose path is reported (line/col/cword only make
+  -- sense for the current buffer, so they blank out for an override -- used by
+  -- the bufdelete hook, which fires about a buffer that is NOT current).
+  ed.export_context = function(buf)
+    buf = buf or ed.buf
+    sys.setenv("LVI_FILE", buf.path or "")
     sys.setenv("LVI_LINE", ed.cy)
     sys.setenv("LVI_COL", ed.cx)
-    sys.setenv("LVI_CWORD", normal.cword(ed))
+    sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
   end
   -- Spawn a shell command detached and non-blocking, with its output discarded
   -- (a hook must not write to the tty or block the poll loop). Used to fire
-  -- `:on change` hooks; the subshell backgrounds so os.execute returns at once.
-  ed.spawn_bg = function(cmd) ed.export_context(); os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
+  -- event hooks; the subshell backgrounds so os.execute returns at once.
+  ed.spawn_bg = function(cmd, buf) ed.export_context(buf); os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
   -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
   -- is set up here and swapped by bufs on :e / buffer switch. Positional files
   -- open as buffers; the first is current.
@@ -207,6 +221,13 @@ function M.run(opts)
       if tty then ed.message = msg else io.stderr:write("lvi: " .. msg .. "\n") end
     end
   end
+
+  -- Now that ed is fully built and the rc has registered any hooks, arm buffer
+  -- events. Doing it here keeps startup buffer construction (and rc-time :e)
+  -- silent; from now on every switch fires bufleave/bufenter through bufs. One
+  -- initial bufenter lets lists paint the starting buffer.
+  ed.fire_event = function(event, buf) M.fire(ed, event, buf) end
+  ed.fire_event("bufenter")
 
   local saved
   if tty then

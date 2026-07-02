@@ -203,10 +203,17 @@ moves the cursor to that line.
 *nohl*
 	Clear all highlight ranges (styles set by *hi* persist).
 
-*on change* _cmd_
-	Run shell _cmd_ shortly after a keyboard edit settles (debounced,
-	non-blocking). Used for live syntax highlighting; *on change* with no _cmd_
-	clears the hooks.
+*on* _event_ [_cmd_]
+	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears
+	that event's hooks. _event_ is *change* (a keyboard edit settled -- for live
+	highlighting), or *bufenter*/*bufleave*/*bufdelete* (buffer switches, with
+	that buffer's path in *LVI_FILE* -- the glue for repainting per-buffer list
+	overlays; see *contrib/lvi-list*).
+
+*status* _name_ [_text_]
+	Set (or clear, if _text_ is empty) a named segment shown in the status line;
+	segments render in _name_ order. Generic -- an external tool drives it (a
+	list's *[3/57]* counter, a git branch), the way *hl* drives highlights.
 
 *f*, *pos*, *echo* _text_, *silent* _cmd_
 	Show the file name and line count; report the cursor as _line_<TAB>_col_;
