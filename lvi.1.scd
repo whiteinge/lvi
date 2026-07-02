@@ -118,6 +118,10 @@ just register text, so a yanked register can be replayed with *@*.
 *:*
 	Begin an ex command (see *EX COMMANDS*).
 
+*Ctrl-^*
+	Switch to the alternate buffer -- the one edited before the current (same as
+	*:b #*).
+
 *Ctrl-Z*
 	Suspend the editor to the shell (resume with fg).
 
@@ -150,12 +154,13 @@ moves the cursor to that line.
 *q*, *q!*, *qa*[*!*]
 	Quit (current view / all views); *!* discards unsaved changes.
 
-*e*[*!*] [_file_]
-	Edit _file_ (or reload the current one).
+*e*[*!*] [_file_|*#*]
+	Edit _file_, reload the current one (no argument), or switch to the alternate
+	buffer (*#*).
 
-*bn*, *bp*, *b* {_N_|_name_}, *ls*, *bd*[*!*]
-	Next/previous buffer, switch to buffer _N_ or by name, list buffers, delete
-	the current buffer.
+*bn*, *bp*, *b* {_N_|_name_|*#*}, *ls*, *bd*[*!*]
+	Next/previous buffer, switch to buffer _N_, by name, or the alternate (*#*),
+	list buffers, delete the current buffer.
 
 *d*, *p*
 	Delete, print the addressed lines.

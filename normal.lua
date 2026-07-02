@@ -579,6 +579,10 @@ actions = {
     ed.marks[string.char(getkey(ed))] = { ed.cy, ed.cx }
   end,
   [26] = function(ed) if ed.suspend_self then ed.suspend_self() end end, -- Ctrl-Z: suspend
+  [30] = function(ed)               -- Ctrl-^: switch to the alternate buffer (:e #)
+    local payload, status = ex.dispatch(ed, "b #")
+    if status == "err" then ed.message = payload end
+  end,
   -- Scrolling. Ctrl-F/B page (count = pages, 2-row overlap like vi); Ctrl-D/U
   -- half-page (count = the scroll size in rows); Ctrl-E/Y reveal one line
   -- (count = rows).

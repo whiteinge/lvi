@@ -24,6 +24,13 @@ local function save(ed)
   local rec = ed.buffers[ed.bufidx]
   rec.buf = ed.buf
   for _, k in ipairs(VIEW) do rec[k] = ed[k] end
+  ed.altbuf = ed.bufidx     -- the buffer we're leaving becomes the alternate (#)
+end
+
+-- Keep ed.altbuf pointing at the same buffer after index `idx` is removed.
+local function drop_alt(ed, idx)
+  if ed.altbuf == idx then ed.altbuf = nil
+  elseif ed.altbuf and ed.altbuf > idx then ed.altbuf = ed.altbuf - 1 end
 end
 
 local function load(ed, i)
@@ -47,6 +54,11 @@ function M.switch(ed, i)
   end
   save(ed); load(ed, i)
   return true
+end
+
+-- Switch to the alternate buffer (#, the last one visited). Returns success.
+function M.alt(ed)
+  return (ed.altbuf and M.switch(ed, ed.altbuf)) or false
 end
 
 -- :e path -- switch to the buffer for `path` if resident, else open it.
@@ -79,13 +91,17 @@ function M.close(ed, force, idx)
   if #ed.buffers == 1 then
     ed.buffers[1] = fresh(buffer.new(""))
     load(ed, 1)
+    ed.altbuf = nil
   elseif idx == ed.bufidx then
     table.remove(ed.buffers, idx)          -- current gone: move to a neighbor
+    drop_alt(ed, idx)
     load(ed, math.min(idx, #ed.buffers))
   else
     table.remove(ed.buffers, idx)          -- other buffer: just fix the index
     if ed.bufidx > idx then ed.bufidx = ed.bufidx - 1 end
+    drop_alt(ed, idx)
   end
+  if ed.altbuf == ed.bufidx then ed.altbuf = nil end
   return true
 end
 

@@ -360,7 +360,10 @@ function M.dispatch(ed, line)
     return "", "ok"
 
   elseif cmd == "e" or cmd == "edit" then
-    if args ~= "" then
+    if args == "#" then                                 -- :e # -- the alternate buffer
+      if bufs.alt(ed) then return "", "ok" end
+      return "No alternate file", "err"
+    elseif args ~= "" then
       bufs.open(ed, args)
       return "", "ok"
     elseif ed.buf.path then
@@ -377,6 +380,10 @@ function M.dispatch(ed, line)
   elseif cmd == "bp" or cmd == "bprev" or cmd == "bprevious" then
     bufs.prev(ed); return "", "ok"
   elseif cmd == "b" or cmd == "buffer" then
+    if args == "#" then                                 -- :b # -- the alternate buffer
+      if bufs.alt(ed) then return "", "ok" end
+      return "No alternate file", "err"
+    end
     local n = tonumber(args)
     if n then
       if bufs.switch(ed, n) then return "", "ok" end
