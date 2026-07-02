@@ -48,8 +48,18 @@ A Pygments theme + trigger to copy into `~/.lvirc` is in `lvirc.sample`.
 
 ## Search
 
-`lvi-search WID PATTERN` — greps the live buffer, highlights matches, jumps to
+`lvi-search [WID] PATTERN` — greps the live buffer, highlights matches, jumps to
 the first. No search engine in the editor; the results also live in your shell.
+Bind it inside lvi (WID comes from `$LVI_WID`), or pass a WID from another
+terminal:
+
+    map \s :silent !lvi-search TODO<CR>   " or prompt for a pattern in your shell
+
+Like `lvi-highlight`, the bound form self-backgrounds — reading the buffer needs
+lvi's event loop, which is frozen while the `:silent !` child runs — so set
+`LVI_SEARCH_DEBUG` to a file if you need to see the worker's errors. Run with an
+explicit `WID` from another terminal and it stays in the foreground (match count
+and exit status reach your shell).
 
 ## Open a file
 

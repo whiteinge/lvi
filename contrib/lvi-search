@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-search WID PATTERN
+# lvi-search [WID] PATTERN
 #
 # Search a running lvi entirely from outside it: grep the *live* buffer over the
 # control socket, highlight the matching lines, and jump to the first match.
@@ -8,11 +8,41 @@
 # Because it reads the buffer via `%p`, it searches UNSAVED content, and the
 # line numbers map straight back. PATTERN is a POSIX grep basic regexp.
 #
-# Set LVI if `lvi` is not on your PATH (e.g. LVI="luajit /path/to/lvi").
+# Two ways to run it, matching the other contrib tools:
+#   * from INSIDE lvi, bound to a key -- pass just PATTERN; the WID comes from
+#     $LVI_WID (which lvi exports into its `!` children). E.g. in ~/.lvirc:
+#         map \s :silent !lvi-search TODO<CR>
+#   * from ANOTHER terminal -- pass `WID PATTERN` explicitly.
+#
+# Set LVI if `lvi` is not on your PATH (e.g. LVI="luajit /path/to/lvi"); set
+# LVI_SEARCH_DEBUG to a file to capture the detached worker's stderr.
 # This highlights whole matching lines; column-precise spans are an awk refinement.
 LVI=${LVI:-lvi}
-wid=${1:?usage: lvi-search WID PATTERN}
-pat=${2:?usage: lvi-search WID PATTERN}
+
+# --worker is the re-exec of the detached branch below (see the deadlock note).
+worker=
+case "$1" in --worker) worker=1; shift ;; esac
+
+# Resolve the target. An explicit WID (two args) means an external caller; a
+# lone PATTERN means we were bound inside lvi and inherit $LVI_WID.
+if [ -n "$2" ]; then
+  wid=$1; pat=$2; detach=
+else
+  wid=$LVI_WID; pat=$1; detach=1
+fi
+[ -n "$wid" ] || { echo "lvi-search: no WID (pass one or run from inside lvi)" >&2; exit 1; }
+[ -n "$pat" ] || { echo "usage: lvi-search [WID] PATTERN" >&2; exit 1; }
+
+# Bound inside lvi, a foreground read would deadlock: lvi's event loop is frozen
+# while it waits on this `:silent !` child, so the `%p` read never gets serviced.
+# Detach a worker and return at once -- the same self-backgrounding lvi-highlight
+# uses, for the same reason lvi-open passes --detach. An explicit WID means an
+# external caller whose loop is live, so we stay in the foreground and let the
+# match count / exit status reach the shell.
+if [ -n "$detach" ] && [ -z "$worker" ]; then
+  ("$0" --worker "$wid" "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 &)
+  exit 0
+fi
 
 lines=$($LVI -w "$wid" -- '%p' | grep -n -- "$pat" | cut -d: -f1)
 [ -z "$lines" ] && { echo "lvi-search: no matches" >&2; exit 1; }
