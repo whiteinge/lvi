@@ -251,18 +251,26 @@ So *map* and *set* persist by putting them in the rc file; a color theme is a se
 of *hi* lines, and live syntax highlighting is one *on change* line. See
 *contrib/README.md* and *contrib/lvirc.sample*.
 
-# SYNTAX HIGHLIGHTING AND SEARCH
+# SYNTAX HIGHLIGHTING, SEARCH, AND LISTS
 
-Both are provided from *outside* the editor -- no language or search engine
-lives in *lvi*. Helper programs in _contrib_ pull the live buffer over the
-socket, run an external tool, and paint the result through the *hl* overlay:
+These are provided from *outside* the editor -- no language engine, search
+engine, or quickfix machinery lives in *lvi*. Helper programs in _contrib_ pull
+the live buffer over the socket, run an external tool, and drive the view back
+through *hl*/*status* and cursor jumps:
 
 *lvi-highlight*
 	Syntax highlighting via an external highlighter (Pygments or bat). Enable
 	it with *on change lvi-highlight* in the rc file.
 
-*lvi-search* _wid_ _pattern_
-	Grep the live buffer, highlight matches, jump to the first.
+*lvi-list*
+	Quickfix/location lists, external and file-backed. A list is a file of
+	_file_:_line_:_text_ entries (grep/compiler/linter output); *lvi-list* steps
+	the focused one, jumps the cursor, and paints *hl*/*status*. Any number
+	coexist -- one stepping interface for search, grep, lint, git hunks.
+
+*lvi-search* [*-w* _auto_|_wid_] [_pattern_]
+	Grep the live buffer into the *search* list and jump to the first match; a
+	*lvi-list* producer. Steps with *n*/*N* like any list.
 
 *lvi-open*
 	Fuzzy-pick a file and open it in the running view.

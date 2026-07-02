@@ -1,55 +1,61 @@
 #!/bin/sh
-# lvi-search [WID] PATTERN
+# lvi-search [-w auto|WID] [PATTERN]
 #
-# Search a running lvi entirely from outside it: grep the *live* buffer over the
-# control socket, highlight the matching lines, and jump to the first match.
-# Demonstrates that search needs no in-editor engine -- only highlight + jump.
+# Search a running lvi from outside it, as a `lvi-list` producer: grep the *live*
+# buffer over the control socket, build the `search` list, focus it, and jump to
+# the first match. `n`/`N` then step it like any other list -- search is just a
+# degenerate quickfix. Because it reads the buffer via `%p` it searches UNSAVED
+# content, and the line numbers map straight back. PATTERN is a POSIX grep BRE.
 #
-# Because it reads the buffer via `%p`, it searches UNSAVED content, and the
-# line numbers map straight back. PATTERN is a POSIX grep basic regexp.
+# Bind it inside lvi (WID comes from $LVI_WID):
+#     map / :silent !lvi-search<CR>                 " prompt for a pattern
+#     map * :silent !lvi-search "$LVI_CWORD"<CR>    " search the word under the cursor
+#     map n :silent !lvi-list next<CR>              " step the focused list
+#     map N :silent !lvi-list prev<CR>
+# From another terminal, pass a WID: `lvi-search -w auto foo`.
 #
-# Two ways to run it, matching the other contrib tools:
-#   * from INSIDE lvi, bound to a key -- pass just PATTERN; the WID comes from
-#     $LVI_WID (which lvi exports into its `!` children). E.g. in ~/.lvirc:
-#         map \s :silent !lvi-search TODO<CR>
-#   * from ANOTHER terminal -- pass `WID PATTERN` explicitly.
+# It self-backgrounds a --worker: reading the buffer needs lvi's event loop,
+# which is frozen while this `:silent !` child runs, so a foreground read would
+# deadlock (same reason lvi-highlight self-backgrounds). The pattern PROMPT,
+# though, runs in the foreground -- a backgrounded worker has no tty.
 #
-# Set LVI if `lvi` is not on your PATH (e.g. LVI="luajit /path/to/lvi"); set
-# LVI_SEARCH_DEBUG to a file to capture the detached worker's stderr.
-# This highlights whole matching lines; column-precise spans are an awk refinement.
+# Config: LVI (client, default `lvi`), LVI_SEARCH_DEBUG (capture worker stderr).
+# Needs lvi-list on PATH.
 LVI=${LVI:-lvi}
 
-# --worker is the re-exec of the detached branch below (see the deadlock note).
-worker=
-case "$1" in --worker) worker=1; shift ;; esac
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+pat=${1:-}
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 
-# Resolve the target. An explicit WID (two args) means an external caller; a
-# lone PATTERN means we were bound inside lvi and inherit $LVI_WID.
-if [ -n "$2" ]; then
-  wid=$1; pat=$2; detach=
-else
-  wid=$LVI_WID; pat=$1; detach=1
+# Prompt in the foreground (where `:!` handed us the tty). Skip when a pattern
+# was supplied (e.g. `*` passes $LVI_CWORD) or when we are already the worker.
+if [ -z "$worker" ] && [ -z "$pat" ]; then
+  printf '/' >&2
+  IFS= read -r pat || exit 0
+  [ -n "$pat" ] || exit 0
 fi
-[ -n "$wid" ] || { echo "lvi-search: no WID (pass one or run from inside lvi)" >&2; exit 1; }
-[ -n "$pat" ] || { echo "usage: lvi-search [WID] PATTERN" >&2; exit 1; }
 
-# Bound inside lvi, a foreground read would deadlock: lvi's event loop is frozen
-# while it waits on this `:silent !` child, so the `%p` read never gets serviced.
-# Detach a worker and return at once -- the same self-backgrounding lvi-highlight
-# uses, for the same reason lvi-open passes --detach. An explicit WID means an
-# external caller whose loop is live, so we stay in the foreground and let the
-# match count / exit status reach the shell.
-if [ -n "$detach" ] && [ -z "$worker" ]; then
-  ("$0" --worker "$wid" "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 &)
+# Detach the buffer-reading half; return at once so lvi's loop resumes and can
+# service the worker's socket traffic.
+if [ -z "$worker" ]; then
+  ( "$0" --worker $wflag "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
   exit 0
 fi
 
-lines=$($LVI -w "$wid" -- '%p' | grep -n -- "$pat" | cut -d: -f1)
-[ -z "$lines" ] && { echo "lvi-search: no matches" >&2; exit 1; }
+# --- worker ------------------------------------------------------------------
+# The buffer's filename (entries are file:line:text so cross-file tools share the
+# format; an unsaved buffer yields an empty file, which jumps stay-in-place on).
+file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+case "$file" in "[No File]"|"[No Name]") file= ;; esac
 
-# Give the 'search' group a visible style (an un-themed group draws as plain
-# text), then set its ranges. One :hl replaces the group; bare line numbers =
-# whole-line spans.
-$LVI -w "$wid" -- "hi search reverse" "hl search $lines"
-# Jump to the first match.
-$LVI -w "$wid" -- "$(printf '%s\n' "$lines" | head -1)"
+matches=$($LVI -w "$target" -- '%p' | grep -n -- "$pat")
+if [ -z "$matches" ]; then
+  $LVI -w "$target" --detach -- "hl search" "status search /$pat/ no match"
+  exit 0
+fi
+# search owns its look so it shows without a theme (see CLAUDE.md); rc may override.
+$LVI -w "$target" --detach -- "hi search reverse"
+printf '%s\n' "$matches" | awk -v f="$file" '{print f":"$0}' | lvi-list $wflag put search --focus
+lvi-list $wflag next

@@ -46,20 +46,42 @@ A Pygments theme + trigger to copy into `~/.lvirc` is in `lvirc.sample`.
   style is that SGR. `source-highlight`, `tree-sitter highlight`, etc. are thin
   wrappers around `lvi-hl-ansi`.
 
-## Search
+## Lists (quickfix / location) and search
 
-`lvi-search [WID] PATTERN` — greps the live buffer, highlights matches, jumps to
-the first. No search engine in the editor; the results also live in your shell.
-Bind it inside lvi (WID comes from `$LVI_WID`), or pass a WID from another
-terminal:
+A **list** is a plain file of `file:line[:col]:text` entries — grep, a compiler,
+a linter, or `git diff` output (the `vim -q` format). lvi knows nothing about
+lists: `lvi-list` owns them and drives lvi over the socket — jumping the cursor,
+painting the `:hl` overlay, and setting a `:status` counter. Any number of named
+lists coexist; one is **focused**, and the bare step commands act on it, so a
+single pair of keys (`n`/`N`) steps search, grep, lint, and git hunks alike.
 
-    map \s :silent !lvi-search TODO<CR>   " or prompt for a pattern in your shell
+    producer | lvi-list put NAME [--focus]   # grep-style entries on stdin → a list
+    lvi-list next|prev|nfile|pfile [NAME]     # step (NAME defaults to focused)
+    lvi-list here|goto|switch|focus|ls|paint  # jump-at-cursor / fzf / focus / list / repaint
+    lvi-list save NAME PATH | load PATH [NAME] [--focus] | drop NAME | clear NAME
 
-Like `lvi-highlight`, the bound form self-backgrounds — reading the buffer needs
-lvi's event loop, which is frozen while the `:silent !` child runs — so set
-`LVI_SEARCH_DEBUG` to a file if you need to see the worker's errors. Run with an
-explicit `WID` from another terminal and it stays in the foreground (match count
-and exit status reach your shell).
+Lists live beside the view's socket (derived from `$LVI_SOCK`, so per-view and
+auto-cleaned); `save`/`load` promote one to any durable path — that's `vim -q`
+and "save this quickfix for later" in one file. Run from inside lvi (a map) and
+it reads `$LVI_WID`/`$LVI_SOCK` from the env; from another terminal pass
+`-w auto|WID`. Bind `:on bufenter lvi-list paint` so cross-file lists repaint the
+current buffer's matches on arrival.
+
+**`lvi-search`** is the first producer: it greps the live buffer (so it searches
+*unsaved* content) into the `search` list, focuses it, and jumps to the first
+match — `n`/`N` do the rest. Bind `/` to prompt and `*` to search the word under
+the cursor:
+
+    map / :silent !lvi-search<CR>
+    map * :silent !lvi-search "$LVI_CWORD"<CR>
+    map n :silent !lvi-list next<CR>
+    map N :silent !lvi-list prev<CR>
+
+Like `lvi-highlight`, `lvi-search` self-backgrounds (reading the buffer needs
+lvi's event loop, frozen while the `:silent !` child runs) — set
+`LVI_SEARCH_DEBUG` to see a worker's errors. `lvi-list` never reads the buffer,
+so its steps stay in the foreground and fire jumps with `lvi -w --detach`. Copy
+the search/list bindings from `lvirc.sample`.
 
 ## Open a file
 

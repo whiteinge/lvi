@@ -1,0 +1,186 @@
+#!/bin/sh
+# lvi-list -- external quickfix/location lists for lvi.
+#
+# A "list" is a plain file of `file:line[:col]:text` entries (grep -Hn / compiler
+# / linter output -- the vim -q format). lvi itself knows nothing about lists:
+# this script owns them, and drives lvi purely through the socket -- jumping the
+# cursor, painting the :hl overlay, and setting a :status segment. Multiple named
+# lists coexist; one is "focused" and the bare step commands act on it.
+#
+#   producer | lvi-list put NAME [--focus]   grep-style entries on stdin -> a list
+#   lvi-list next|prev|nfile|pfile [NAME]     step (NAME defaults to the focused list)
+#   lvi-list here [NAME]                       jump to the first entry at/after the cursor
+#   lvi-list goto|switch                       fzf over entries / over list names
+#   lvi-list focus [NAME] | ls | paint [NAME]
+#   lvi-list save NAME PATH | load PATH [NAME] [--focus] | drop NAME | clear NAME | path NAME
+#
+# WHERE LISTS LIVE: beside the view's socket, derived from $LVI_SOCK
+# (`.../lvi-$uid/$wid`) so the path can never drift from the one the editor chose:
+#   $LVI_SOCK.lists/<name>        the entries        (per view)
+#   $LVI_SOCK.lists/<name>.cur    the current index  (1-based; 0 = before first)
+#   $LVI_SOCK.focus               the focused list name
+# $wid.lists is a directory, so socket discovery (which filters `[ -S ]`) skips it.
+# Persistent lists escape this disposable tree via `save`/`load` to any path.
+#
+# THREE SPAWN DISCIPLINES (why the callbacks all use --detach):
+#   * stepping is bound to a key and runs under `:silent !` -- lvi's loop is
+#     FROZEN waiting on us, so a call that *awaited* a reply would deadlock. We
+#     never read editor state while stepping (the cursor lives in our sidecar,
+#     the cursor's world in $LVI_* env), and every jump/paint is fire-and-forget
+#     (`lvi -w --detach`): it buffers on the socket and lands the instant lvi
+#     resumes. Same shape as lvi-open.
+#   * `paint` is also run from `:on bufenter` (via spawn_bg -- loop stays live),
+#     where --detach is simply harmless.
+#   * producers that must READ the buffer (grep %p) self-background instead; see
+#     lvi-search. lvi-list never reads the buffer.
+#
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
+# Run from inside lvi (a map) and $LVI_WID/$LVI_SOCK are already in the env; from
+# another terminal, pass `-w auto|WID`.
+
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+
+die() { echo "lvi-list: $*" >&2; exit 1; }
+usage() { echo "usage: lvi-list [-w auto|WID] SUBCOMMAND [args]" >&2; exit 2; }
+
+# ---- resolve the target view + its list directory ---------------------------
+want_wid=
+[ "${1:-}" = "-w" ] && { want_wid=${2:-}; shift 2; }
+sub=${1:-}; [ -n "$sub" ] || usage; shift
+
+target=${want_wid:-${LVI_WID:-auto}}          # what we hand to `lvi -w`
+if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK                              # inside lvi: trust the exported socket
+elif [ "$target" = auto ]; then
+  n=$($LVI -l | grep -c .)
+  [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+  sock=$($LVI -l | cut -f2)
+else
+  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || die "no running view '$target'"
+fi
+listdir="$sock.lists"
+focusfile="$sock.focus"
+
+# ---- small helpers ----------------------------------------------------------
+send()      { $LVI -w "$target" --detach -- "$@"; }         # fire-and-forget (see header)
+lf()        { printf '%s\n' "$listdir/$1"; }
+count()     { grep -c . "$listdir/$1" 2>/dev/null || echo 0; }
+nth()       { sed -n "${2}p" "$listdir/$1" 2>/dev/null; }   # $1=name $2=index (1-based)
+getcur()    { c=$(cat "$listdir/$1.cur" 2>/dev/null); case "$c" in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
+setcur()    { printf '%s\n' "$2" > "$listdir/$1.cur"; }
+focus_get() { cat "$focusfile" 2>/dev/null; }
+focus_set() { printf '%s\n' "$1" > "$focusfile"; }
+names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
+
+# Current file: from the env when we were spawned by lvi (a map/hook), else ask.
+curfile() {
+  if [ -n "${LVI_FILE+x}" ]; then printf '%s\n' "$LVI_FILE"
+  else $LVI -w "$target" -- f 2>/dev/null | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; fi
+}
+
+# Jump the editor to an entry (file:line[:col]:...). Skips :e when already there.
+jump() {
+  f=${1%%:*}; r=${1#*:}; ln=${r%%:*}; r=${r#*:}; c=${r%%:*}
+  case "$c"  in ''|*[!0-9]*) c=1 ;; esac
+  case "$ln" in ''|*[!0-9]*) return 0 ;; esac
+  if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then send "e $f" "$ln" "|$c"
+  else send "$ln" "|$c"; fi
+}
+
+# Repaint NAME's entries for the CURRENT buffer (whole-line :hl), mark the current
+# entry, and set the status counter. Bound to :on bufenter for cross-file lists.
+paint() {
+  name=$1; [ -f "$listdir/$name" ] || return 0
+  cf=$(curfile)
+  lines=$(awk -F: -v f="$cf" '$1==f{printf "%s ", $2}' "$listdir/$name")
+  [ -n "$lines" ] && send "hl $name $lines" || send "hl $name"
+  cur=$(getcur "$name"); total=$(count "$name")
+  ce=$(nth "$name" "$cur")
+  if [ -n "$ce" ] && [ "${ce%%:*}" = "$cf" ]; then
+    send "hl $name-cur $(printf '%s' "$ce" | awk -F: '{print $2}')"
+  else send "hl $name-cur"; fi
+  send "status $name [$cur/$total] $name"
+}
+
+# ---- subcommands ------------------------------------------------------------
+need_name() { n=$(if [ -n "${1:-}" ]; then printf '%s\n' "$1"; else focus_get; fi); [ -n "$n" ] || die "no list (name one, or focus one first)"; printf '%s\n' "$n"; }
+
+case "$sub" in
+  put)
+    dofocus=; [ "${2:-}" = "--focus" ] && { dofocus=1; set -- "$1"; }
+    name=${1:?usage: lvi-list put NAME [--focus]}
+    mkdir -p "$listdir"; grep . > "$listdir/$name" || true    # drop blank lines
+    setcur "$name" 0                                          # a following `next` lands on 1
+    [ -n "$dofocus" ] && focus_set "$name"
+    paint "$name" ;;
+
+  next|prev)
+    name=$(need_name "${1:-}") || exit 1; total=$(count "$name")
+    [ "$total" -gt 0 ] || die "$name is empty"
+    cur=$(getcur "$name"); [ "$sub" = next ] && cur=$((cur+1)) || cur=$((cur-1))
+    [ "$cur" -lt 1 ] && cur=1; [ "$cur" -gt "$total" ] && cur=$total
+    setcur "$name" "$cur"; jump "$(nth "$name" "$cur")"; paint "$name" ;;
+
+  nfile|pfile)
+    name=$(need_name "${1:-}") || exit 1; total=$(count "$name")
+    [ "$total" -gt 0 ] || die "$name is empty"
+    cur=$(getcur "$name"); [ "$cur" -ge 1 ] || cur=1
+    curf=$(nth "$name" "$cur"); curf=${curf%%:*}
+    dir=1; [ "$sub" = pfile ] && dir=-1
+    i=$cur; target_i=
+    while :; do
+      i=$((i+dir)); [ "$i" -lt 1 ] && break; [ "$i" -gt "$total" ] && break
+      ef=$(nth "$name" "$i"); ef=${ef%%:*}
+      [ "$ef" != "$curf" ] && { target_i=$i; break; }
+    done
+    [ -n "$target_i" ] || { send "status $name [$cur/$total] $name (no more files)"; exit 0; }
+    setcur "$name" "$target_i"; jump "$(nth "$name" "$target_i")"; paint "$name" ;;
+
+  here)
+    name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
+    cf=$(curfile); cl=${LVI_LINE:-$($LVI -w "$target" -- pos | cut -f1)}
+    i=$(awk -F: -v f="$cf" -v l="$cl" '$1==f && ($2+0)>=(l+0){print NR; exit}' "$listdir/$name")
+    [ -n "$i" ] || i=1
+    setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name" ;;
+
+  goto)
+    name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
+    sel=$(cat -n "$listdir/$name" | "$PICKER" --with-nth=2..) || exit 0
+    i=$(printf '%s' "$sel" | awk '{print $1}')
+    [ -n "$i" ] && { setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; } ;;
+
+  switch)
+    name=$(names | "$PICKER") || exit 0
+    [ -n "$name" ] && { focus_set "$name"; paint "$name"; } ;;
+
+  focus)
+    if [ -n "${1:-}" ]; then focus_set "$1"; paint "$1"; else focus_get; fi ;;
+
+  paint)                                     # :on bufenter -> repaint all lists
+    if [ -n "${1:-}" ]; then paint "$1"; else names | while IFS= read -r nm; do paint "$nm"; done; fi ;;
+
+  ls)
+    f=$(focus_get); names | while IFS= read -r nm; do
+      mark=" "; [ "$nm" = "$f" ] && mark="*"
+      printf '%s %s\t%s\n' "$mark" "$(count "$nm")" "$nm"
+    done ;;
+
+  save) name=${1:?usage: save NAME PATH}; dest=${2:?usage: save NAME PATH}; cp "$listdir/$name" "$dest" ;;
+  load)
+    src=${1:?usage: load PATH [NAME] [--focus]}
+    name=${2:-$(basename "$src")}; case "$name" in --focus) name=$(basename "$src");; esac
+    mkdir -p "$listdir"; cp "$src" "$listdir/$name"; setcur "$name" 0
+    case " $* " in *" --focus "*) focus_set "$name" ;; esac
+    paint "$name" ;;
+
+  drop|clear)
+    name=$(need_name "${1:-}") || exit 1
+    [ "$sub" = drop ] && rm -f "$listdir/$name" "$listdir/$name.cur" || { : > "$listdir/$name"; setcur "$name" 0; }
+    send "hl $name"; send "hl $name-cur"; send "status $name" ;;
+
+  path) name=${1:?usage: path NAME}; printf '%s\n' "$listdir/$name" ;;
+
+  *) usage ;;
+esac
