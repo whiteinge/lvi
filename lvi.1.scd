@@ -176,6 +176,12 @@ moves the cursor to that line.
 	cursor's context is in the environment (*LVI_FILE*/*LINE*/*COL*/*CWORD*; see
 	*ENVIRONMENT*), so e.g. *!grep -n "$LVI_CWORD" "$LVI_FILE"*.
 
+*bg* _cmd_
+	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the
+	terminal -- so, unlike *!*/*silent !*, no alt-screen flash. For
+	non-interactive tools driven by a map that may fire repeatedly (e.g.
+	*map n :bg lvi-list next<CR>*); a _cmd_ needing the tty must use *!*.
+
 *normal* _keys_
 	Feed _keys_ as normal-mode keystrokes -- the escape hatch that gives the
 	socket full editing power (e.g. *normal 2dw*).

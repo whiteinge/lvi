@@ -35,10 +35,13 @@ map \h :silent !lvi-highlight<CR>
 " lvi has no built-in search; lvi-search greps the live buffer into a `lvi-list`
 " list and lvi-list steps it. Every list works the same way, so one set of step
 " keys serves search, grep, lint, git hunks -- whichever list is *focused*.
+" `/` prompts, so it needs the terminal (:silent !). The rest touch no tty, so
+" they use :bg -- a detached spawn with NO terminal handover, which avoids the
+" alt-screen flash that :! causes when you hold down n/N.
 map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus it
-map * :silent !lvi-search "$LVI_CWORD"<CR>    " search the word under the cursor
-map n :silent !lvi-list next<CR>              " step the focused list...
-map N :silent !lvi-list prev<CR>              " ...forward / back
+map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
+map n :bg lvi-list next<CR>                   " step the focused list...
+map N :bg lvi-list prev<CR>                   " ...forward / back
 
 " Repaint the current buffer's matches when you switch into it (the glue that
 " makes cross-file lists -- project grep, a compiler -- highlight per file).
@@ -46,8 +49,8 @@ on bufenter lvi-list paint
 
 " Always-on lists get their own keys so stepping them never steals focus, e.g.
 " a git-hunk list produced by your own `git-quickfix | lvi-list put hunks`:
-"   map ]c :silent !lvi-list next hunks<CR>
-"   map [c :silent !lvi-list prev hunks<CR>
+"   map ]c :bg lvi-list next hunks<CR>
+"   map [c :bg lvi-list prev hunks<CR>
 " A group with no style is invisible; lvi-search styles `search` itself, but you
 " can theme any list's group (and its -cur current-entry group), e.g.:
 "   hi hunks bg=22

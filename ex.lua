@@ -435,6 +435,18 @@ function M.dispatch(ed, line)
     ed._silent = nil
     return p, s
 
+  elseif cmd == "bg" then
+    -- :bg CMD -- run a shell command detached, output discarded, WITHOUT handing
+    -- over the terminal (unlike :!/:silent !, which drop out of and back into the
+    -- alt screen -- a full-screen flash that is jarring when a map fires it
+    -- repeatedly, e.g. n/N stepping a list). Same mechanism as :on hooks; the
+    -- poll loop stays live, so the command's socket callbacks are serviced at
+    -- once. For non-interactive tools only -- a command that needs the tty (a
+    -- prompt, a pager) must use :! / :silent !.
+    if args == "" then return "no command", "err" end
+    if ed.spawn_bg then ed.spawn_bg(args) end
+    return "", "ok"
+
   elseif cmd == "ls" or cmd == "buffers" or cmd == "files" then
     return bufs.list(ed), "ok"
   elseif cmd == "bd" or cmd == "bdelete" then

@@ -246,6 +246,14 @@ describe("ex.dispatch", function()
       local _, s = ex.dispatch(ed_with("x"), "!false")
       expect(s).to.equal("err")
     end)
+    it(":bg spawns detached via spawn_bg (no tty handover)", function()
+      local ed = ed_with("x"); local got
+      ed.spawn_bg = function(cmd) got = cmd end
+      local _, s = ex.dispatch(ed, "bg lvi-list next")
+      expect(s).to.equal("ok")
+      expect(got).to.equal("lvi-list next")            -- ran through spawn_bg, not with_tty
+      expect(select(2, ex.dispatch(ed, "bg"))).to.equal("err")   -- empty command
+    end)
     it("stamps the cursor context into a spawned command's environment", function()
       local sys = require("sys")
       local normal = require("normal")

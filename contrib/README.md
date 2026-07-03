@@ -73,15 +73,20 @@ match — `n`/`N` do the rest. Bind `/` to prompt and `*` to search the word und
 the cursor:
 
     map / :silent !lvi-search<CR>
-    map * :silent !lvi-search "$LVI_CWORD"<CR>
-    map n :silent !lvi-list next<CR>
-    map N :silent !lvi-list prev<CR>
+    map * :bg lvi-search "$LVI_CWORD"<CR>
+    map n :bg lvi-list next<CR>
+    map N :bg lvi-list prev<CR>
+
+The step keys use **`:bg`**, not `:silent !`. `:bg CMD` runs a command detached
+with no terminal handover; `:!`/`:silent !` drop out of and back into the alt
+screen around every run, which flashes when you hold down `n`/`N`. `:bg` is for
+non-interactive tools (it's the same spawn `:on` hooks use); only `/`, which
+*prompts*, needs the terminal and so stays `:silent !`.
 
 Like `lvi-highlight`, `lvi-search` self-backgrounds (reading the buffer needs
-lvi's event loop, frozen while the `:silent !` child runs) — set
-`LVI_SEARCH_DEBUG` to see a worker's errors. `lvi-list` never reads the buffer,
-so its steps stay in the foreground and fire jumps with `lvi -w --detach`. Copy
-the search/list bindings from `lvirc.sample`.
+lvi's event loop); set `LVI_SEARCH_DEBUG` to see a worker's errors. `lvi-list`
+never reads the buffer, so it fires jumps with `lvi -w --detach`. Copy the
+search/list bindings from `lvirc.sample`.
 
 ## Open a file
 
