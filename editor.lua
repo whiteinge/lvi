@@ -155,7 +155,7 @@ function M.run(opts)
     running = true,
     mode = "normal", cmdline = "", message = nil,
     inject = {}, pending = {}, keylog = {}, regs = {},
-    opts = { wrap = true, tabstop = 8 },
+    opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false },
     hooks = {}, change_pending = true, -- seed one fire so an opened file highlights
   }
   -- Refresh the per-spawn context env vars, so a child (a `:!` command, a hook)

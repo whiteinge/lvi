@@ -206,10 +206,74 @@ local function insert_mode(ed)
   clamp(ed)
 end
 
+-- R: overwrite mode. Reuses insert's cursor semantics (mode == "insert" lets the
+-- cursor sit at #s+1 so typing past EOL extends the line). Each printable key
+-- replaces the char under the cursor (or appends at/after EOL); <CR> splits like
+-- insert; backspace just moves left (no original-char restore -- retype to fix).
+-- Overwrite is byte-oriented, matching the rest of lvi's minimal input handling:
+-- ASCII is exact; a typed multibyte char is not specially reassembled.
+local function replace_mode(ed)
+  ed.changed = true
+  ed.mode = "insert"
+  ed.message = "-- REPLACE --"
+  clamp(ed)
+  while true do
+    local k = getkey(ed)
+    if k == 27 then break                              -- ESC
+    elseif k == 13 or k == 10 then split_line(ed)      -- CR
+    elseif k == 127 or k == 8 then                     -- Backspace: move left only
+      if ed.cx > 1 then ed.cx = disp.prev_char(line(ed, ed.cy), ed.cx) end
+    elseif k == 9 or (k >= 32 and k ~= 127) then
+      local s = line(ed, ed.cy)
+      if ed.cx > #s then insert_char(ed, k)            -- past EOL: extend
+      else
+        local nc = disp.next_char(s, ed.cx)
+        ed.buf:set(ed.cy, s:sub(1, ed.cx - 1) .. string.char(k) .. s:sub(nc))
+        ed.cx = ed.cx + 1
+      end
+    end
+    clamp(ed)
+  end
+  ed.mode = "normal"
+  ed.message = nil
+  ed.cx = math.max(1, ed.cx - 1)
+  clamp(ed)
+end
+
 -- ---- operators over ranges --------------------------------------------------
+-- Re-indent a line by `delta` display columns (>/< shift). Only the leading
+-- <blank> run is touched; the rest of the line is preserved. The new indent is
+-- emitted as spaces when `et` (expandtab), else tab-optimized to `ts`. A blank or
+-- empty line is left unchanged on a right shift and cleared on a left shift
+-- (matching ex: "empty lines shall not be changed" by >).
+local function reindent(s, delta, et, ts)
+  local lead, rest = s:match("^([ \t]*)(.*)$")
+  if rest == "" then return (delta < 0) and "" or s end
+  local w = 0
+  for i = 1, #lead do
+    if lead:sub(i, i) == "\t" then w = w + (ts - w % ts) else w = w + 1 end
+  end
+  local nw = math.max(0, w + delta)
+  local indent = et and string.rep(" ", nw)
+    or (string.rep("\t", math.floor(nw / ts)) .. string.rep(" ", nw % ts))
+  return indent .. rest
+end
+
 local function op_lines(ed, op, a, c, reg)
   a = math.max(1, a); c = math.min(c, ed.buf:nlines())
   if a > c then return end
+  if op == "shift_r" or op == "shift_l" then
+    local sw = (ed.opts and ed.opts.shiftwidth) or 8
+    local ts = (ed.opts and ed.opts.tabstop) or 8
+    local et = ed.opts and ed.opts.expandtab
+    local delta = (op == "shift_r" and 1 or -1) * sw
+    local out = {}
+    for i = a, c do out[#out + 1] = reindent(line(ed, i), delta, et, ts) end
+    ed.buf:splice(a, c - a + 1, out)                    -- one splice = one undo
+    ed.cy = a; ed.cx = first_nonblank(line(ed, a)); ed.changed = true
+    clamp(ed)
+    return
+  end
   local text = table.concat(ed.buf:get(a, c), "\n") .. "\n" -- linewise regs end in \n
   set_reg(ed, reg, text, true)
   if op == "y" then
@@ -443,6 +507,24 @@ local motions = {
     t = math.max(1, math.min(t, ed.buf:nlines()))
     return t, first_nonblank(line(ed, t))
   end },
+  -- H/M/L: top/middle/bottom of the screen (linewise, so they compose with
+  -- operators). Measured in buffer lines from ed.top -- exact in nowrap (the
+  -- render reality); in wrap they approximate by line rather than screen row.
+  [b("H")] = { kind = "line", move = function(ed, n)
+    local l = math.min((ed.top or 1) + (n or 1) - 1, ed.buf:nlines())
+    return l, first_nonblank(line(ed, l))
+  end },
+  [b("L")] = { kind = "line", move = function(ed, n)
+    local bottom = math.min((ed.top or 1) + (ed.rows or 24) - 2, ed.buf:nlines())
+    local l = math.max(ed.top or 1, bottom - (n or 1) + 1)
+    return l, first_nonblank(line(ed, l))
+  end },
+  [b("M")] = { kind = "line", move = function(ed)
+    local top = ed.top or 1
+    local bottom = math.min(top + (ed.rows or 24) - 2, ed.buf:nlines())
+    local l = math.floor((top + bottom) / 2)
+    return l, first_nonblank(line(ed, l))
+  end },
 }
 
 local function do_motion(ed, m, count)
@@ -451,10 +533,14 @@ local function do_motion(ed, m, count)
   clamp(ed)
 end
 
+-- Shift operators are always linewise, even over a charwise motion (>w shifts
+-- the lines the motion spans), so they route to op_lines regardless of m.kind.
+local SHIFT = { shift_r = true, shift_l = true }
+
 local function apply_operator(ed, op, m, count, reg)
   local tl, tc, inc = m.move(ed, count)
   if inc == nil then inc = m.inclusive end
-  if m.kind == "line" then
+  if m.kind == "line" or SHIFT[op] then
     local a, c = ed.cy, tl
     if a > c then a, c = c, a end
     op_lines(ed, op, a, c, reg)
@@ -576,6 +662,123 @@ actions = {
     ed.changed = true
     clamp(ed)
   end,
+  -- X: delete `count` chars BEFORE the cursor (the backward x). Char-aware, so a
+  -- multibyte char counts as one; a no-op at column 1.
+  [b("X")] = function(ed, count, reg)
+    local s, a = line(ed, ed.cy), ed.cx
+    local start = a
+    for _ = 1, (count or 1) do start = disp.prev_char(s, start) end
+    if start >= a then return end
+    set_reg(ed, reg, s:sub(start, a - 1), false)
+    ed.buf:set(ed.cy, s:sub(1, start - 1) .. s:sub(a))
+    ed.cx = start
+    ed.changed = true
+    clamp(ed)
+  end,
+  -- D / C: operate from the cursor to end-of-line, plus count-1 whole following
+  -- lines (= d$ / c$ with the vi count semantics). Reuse the charwise range core.
+  [b("D")] = function(ed, count, reg)
+    local last = math.min(ed.cy + (count or 1) - 1, ed.buf:nlines())
+    op_chars_range(ed, "d", ed.cy, ed.cx, last, math.max(1, #line(ed, last)), true, reg)
+  end,
+  [b("C")] = function(ed, count, reg)
+    local last = math.min(ed.cy + (count or 1) - 1, ed.buf:nlines())
+    op_chars_range(ed, "c", ed.cy, ed.cx, last, math.max(1, #line(ed, last)), true, reg)
+  end,
+  -- Y: yank `count` whole lines (= yy). Linewise.
+  [b("Y")] = function(ed, count, reg)
+    op_lines(ed, "y", ed.cy, math.min(ed.cy + (count or 1) - 1, ed.buf:nlines()), reg)
+  end,
+  -- s / S: substitute. s = change `count` chars (cl) but always enters insert
+  -- (even on an empty line); S = change `count` whole lines (cc).
+  [b("s")] = function(ed, count, reg)
+    local s, a, endb = line(ed, ed.cy), ed.cx, ed.cx
+    for _ = 1, (count or 1) do if endb <= #s then endb = disp.next_char(s, endb) end end
+    set_reg(ed, reg, s:sub(a, endb - 1), false)
+    ed.buf:set(ed.cy, s:sub(1, a - 1) .. s:sub(endb))
+    ed.changed = true
+    insert_mode(ed)
+  end,
+  [b("S")] = function(ed, count, reg)
+    op_lines(ed, "c", ed.cy, math.min(ed.cy + (count or 1) - 1, ed.buf:nlines()), reg)
+  end,
+  -- J: join `count` lines (default 2) onto the current one. A single space is
+  -- inserted at each join unless the left side already ends in a blank or the
+  -- (leading-blank-stripped) right side starts with ')' -- the classic vi rule.
+  -- The cursor lands at the first join point (after the initial line's text).
+  [b("J")] = function(ed, count)
+    local n = math.max(2, count or 2)
+    local last = math.min(ed.cy + n - 1, ed.buf:nlines())
+    if last <= ed.cy then return end
+    local cur = line(ed, ed.cy)
+    local joincol = math.max(1, #cur + 1)
+    for _ = ed.cy + 1, last do
+      local nxt = line(ed, ed.cy + 1):gsub("^%s+", "")
+      local sep = (cur ~= "" and not cur:match("%s$") and nxt ~= "" and nxt:sub(1, 1) ~= ")") and " " or ""
+      cur = cur .. sep .. nxt
+      ed.buf:delete(ed.cy + 1, ed.cy + 1)
+    end
+    ed.buf:set(ed.cy, cur)
+    ed.cx = math.min(joincol, math.max(1, #cur))
+    ed.changed = true
+    clamp(ed)
+  end,
+  -- ~: toggle the case of `count` chars at the cursor, advancing over them.
+  -- Char-aware; only single-byte ASCII letters flip (multibyte passes through).
+  [b("~")] = function(ed, count)
+    local s = line(ed, ed.cy)
+    if #s == 0 or ed.cx > #s then return end
+    local i, parts = ed.cx, {}
+    for _ = 1, (count or 1) do
+      if i > #s then break end
+      local j = disp.next_char(s, i)
+      local ch = s:sub(i, j - 1)
+      if #ch == 1 then
+        if ch:match("%l") then ch = ch:upper() elseif ch:match("%u") then ch = ch:lower() end
+      end
+      parts[#parts + 1] = ch
+      i = j
+    end
+    ed.buf:set(ed.cy, s:sub(1, ed.cx - 1) .. table.concat(parts) .. s:sub(i))
+    ed.cx = i
+    ed.changed = true
+    clamp(ed)
+  end,
+  -- z{CR|.|-}: reposition the window so the current (or [count]) line sits at the
+  -- top / center / bottom. Cursor moves to that line's first non-blank. We always
+  -- leave the cursor on-screen, so refresh() won't re-scroll and fight us.
+  [b("z")] = function(ed, count)
+    local k = getkey(ed)
+    local tr = (ed.rows or 24) - 1
+    local target = count and math.max(1, math.min(count, ed.buf:nlines())) or ed.cy
+    local top
+    if k == 13 or k == 10 then top = target
+    elseif k == b(".") then top = target - math.floor(tr / 2)
+    elseif k == b("-") then top = target - (tr - 1)
+    else return end
+    ed.top = math.max(1, math.min(top, ed.buf:nlines()))
+    ed.topsub = 0
+    ed.cy, ed.cx = target, first_nonblank(line(ed, target))
+    clamp(ed)
+  end,
+  -- ZZ: write (if modified) and quit; ZQ: quit without writing. Both go through
+  -- ex so they mean exactly what `:x` / `:q!` do.
+  [b("Z")] = function(ed)
+    local k = getkey(ed)
+    if k == b("Z") then
+      local payload, status = ex.dispatch(ed, "x")
+      if status == "err" then ed.message = payload:gsub("\n", " ") end
+    elseif k == b("Q") then
+      ex.dispatch(ed, "q!")
+    end
+  end,
+  -- Ctrl-G: show file info on the message line (name, modified, position, %).
+  [7] = function(ed)
+    local n = ed.buf:nlines()
+    local pct = (n > 0) and math.floor((ed.cy / n) * 100) or 0
+    ed.message = ('"%s"%s line %d of %d --%d%%-- col %d'):format(
+      ed.buf.path or "[No File]", ed.buf.modified and " [Modified]" or "", ed.cy, n, pct, ed.cx)
+  end,
   [b("r")] = function(ed, count)
     local key = getkey(ed)
     if key == 27 then return end                   -- r<ESC>: cancel, no replacement
@@ -666,6 +869,7 @@ actions = {
     ed.inject = merged
   end,
   [b("i")] = function(ed) insert_mode(ed) end,
+  [b("R")] = function(ed) replace_mode(ed) end,
   [b("a")] = function(ed)
     if #line(ed, ed.cy) > 0 then ed.cx = ed.cx + 1 end
     insert_mode(ed)
@@ -709,7 +913,8 @@ actions = {
   end,
 }
 
-local operators = { [b("d")] = "d", [b("c")] = "c", [b("y")] = "y" }
+local operators = { [b("d")] = "d", [b("c")] = "c", [b("y")] = "y",
+                    [b(">")] = "shift_r", [b("<")] = "shift_l" }
 
 -- ---- the command loop -------------------------------------------------------
 local function command(ed)

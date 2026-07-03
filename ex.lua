@@ -58,25 +58,32 @@ end
 -- Numerics: `tabstop=4` (alias `ts`) / `tabstop?`. Space-separated options are
 -- each applied; queries are collected into the reply.
 local function do_set(ed, args)
-  ed.opts = ed.opts or { wrap = true, tabstop = 8 }
+  ed.opts = ed.opts or { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false }
   local out = {}
   for opt in args:gmatch("%S+") do
     local name, val = opt:match("^(%a+)=(.+)$")
     if name then
       if name == "tabstop" or name == "ts" then
         ed.opts.tabstop = tonumber(val) or ed.opts.tabstop
+      elseif name == "shiftwidth" or name == "sw" then
+        ed.opts.shiftwidth = tonumber(val) or ed.opts.shiftwidth
       else return "unknown option: " .. name, "err" end
     elseif opt:sub(-1) == "?" then
       local n = opt:sub(1, -2)
       if n == "wrap" then out[#out + 1] = ed.opts.wrap and "wrap" or "nowrap"
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
+      elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. (ed.opts.shiftwidth or 8)
+      elseif n == "expandtab" or n == "et" then out[#out + 1] = ed.opts.expandtab and "expandtab" or "noexpandtab"
       else return "unknown option: " .. n, "err" end
     elseif opt:sub(-1) == "!" then                      -- toggle a boolean (vim `set wrap!`)
       local n = opt:sub(1, -2)
       if n == "wrap" then ed.opts.wrap = not ed.opts.wrap
+      elseif n == "expandtab" or n == "et" then ed.opts.expandtab = not ed.opts.expandtab
       else return "not a boolean option: " .. n, "err" end
     elseif opt == "wrap" then ed.opts.wrap = true
     elseif opt == "nowrap" then ed.opts.wrap = false
+    elseif opt == "expandtab" or opt == "et" then ed.opts.expandtab = true
+    elseif opt == "noexpandtab" or opt == "noet" then ed.opts.expandtab = false
     else return "unknown option: " .. opt, "err" end
   end
   return table.concat(out, "\n"), "ok"
