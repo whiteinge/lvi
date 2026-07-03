@@ -58,6 +58,7 @@ single pair of keys (`n`/`N`) steps search, grep, lint, and git hunks alike.
     producer | lvi-list put NAME [--focus]   # grep-style entries on stdin → a list
     lvi-list next|prev|nfile|pfile [NAME]     # step (NAME defaults to focused)
     lvi-list here|goto|switch|focus|ls|paint  # jump-at-cursor / fzf / focus / list / repaint
+    lvi-list hide [NAME]                       # unpaint but keep the list (n/N re-show it)
     lvi-list save NAME PATH | load PATH [NAME] [--focus] | drop NAME | clear NAME
 
 Lists live beside the view's socket (derived from `$LVI_SOCK`, so per-view and

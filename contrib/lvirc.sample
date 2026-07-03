@@ -42,6 +42,7 @@ map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus
 map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
 map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
+map \/ :bg lvi-list hide<CR>                  " :nohl-style -- hide it; next n/N re-shows
 
 " Repaint the current buffer's matches when you switch into it (the glue that
 " makes cross-file lists -- project grep, a compiler -- highlight per file).

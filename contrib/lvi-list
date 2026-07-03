@@ -12,6 +12,7 @@
 #   lvi-list here [NAME]                       jump to the first entry at/after the cursor
 #   lvi-list goto|switch                       fzf over entries / over list names
 #   lvi-list focus [NAME] | ls | paint [NAME]
+#   lvi-list hide [NAME]                       stop showing a list (keep it; n/N re-show)
 #   lvi-list save NAME PATH | load PATH [NAME] [--focus] | drop NAME | clear NAME | path NAME
 #
 # WHERE LISTS LIVE: beside the view's socket, derived from $LVI_SOCK
@@ -175,9 +176,16 @@ case "$sub" in
     case " $* " in *" --focus "*) focus_set "$name" ;; esac
     paint "$name" ;;
 
-  drop|clear)
+  drop|clear|hide)
+    # All three unpaint (clear the :hl groups + status); they differ in what they
+    # do to the stored list: drop removes it, clear empties it, hide keeps it
+    # whole (cursor + focus intact) so `n`/`N` re-show it -- a per-list :nohl.
     name=$(need_name "${1:-}") || exit 1
-    [ "$sub" = drop ] && rm -f "$listdir/$name" "$listdir/$name.cur" || { : > "$listdir/$name"; setcur "$name" 0; }
+    case "$sub" in
+      drop)  rm -f "$listdir/$name" "$listdir/$name.cur" ;;
+      clear) : > "$listdir/$name"; setcur "$name" 0 ;;
+      hide)  : ;;
+    esac
     send "hl $name"; send "hl $name-cur"; send "status $name" ;;
 
   path) name=${1:?usage: path NAME}; printf '%s\n' "$listdir/$name" ;;
