@@ -593,6 +593,10 @@ actions = {
     ed.marks[string.char(getkey(ed))] = { ed.cy, ed.cx }
   end,
   [26] = function(ed) if ed.suspend_self then ed.suspend_self() end end, -- Ctrl-Z: suspend
+  -- Ctrl-L: force a full redraw (classic vi). The driver clears the screen
+  -- before the next frame; because this key is itself an event, it also picks up
+  -- any pending terminal resize -- the manual escape hatch for the idle case.
+  [12] = function(ed) ed.force_clear = true end,
   [30] = function(ed)               -- Ctrl-^: switch to the alternate buffer (:e #)
     local payload, status = ex.dispatch(ed, "b #")
     if status == "err" then ed.message = payload end

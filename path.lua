@@ -58,17 +58,34 @@ end
 -- Discover existing view sockets. Uses a POSIX shell glob with only builtins
 -- (for / [ / printf) so there is no dependency on `ls` (which the user may have
 -- shadowed on PATH) and no divergent struct dirent in our tree. Returns a list
--- of { wid = ..., path = ... }.
+-- of { wid = ..., path = ... } for the LIVE views only.
+--
+-- Each candidate is liveness-probed by try-connect -- the same test sys.listen
+-- uses, and for the same reason: a crashed view leaves its socket file behind,
+-- and errno is not portable, so "does someone answer?" is the reliable signal.
+-- A socket nothing answers on is stale garbage, so we reap it (unlink) as we go.
+-- This is race-free against a starting view: connect only fails when no one is
+-- listening, and a view mid-bind has no file yet (or will unlink+rebind its own
+-- stale path anyway). Both callers -- `-l` and `auto` resolution -- want live
+-- views, so the filtering lives here rather than being duplicated in each.
 function M.list_sockets()
   local cmd = ('for f in "%s"/*; do [ -S "$f" ] && printf "%%s\\n" "$f"; done')
               :format(M.socket_dir())
-  local out = {}
   local p = io.popen(cmd)
-  if not p then return out end
-  for line in p:lines() do
-    out[#out + 1] = { wid = line:match("([^/]+)$"), path = line }
-  end
+  if not p then return {} end
+  local paths = {}
+  for line in p:lines() do paths[#paths + 1] = line end -- drain before probing
   p:close()
+  local out = {}
+  for _, sock in ipairs(paths) do
+    local fd = sys.connect(sock)                   -- liveness probe (try-connect)
+    if fd then
+      sys.close(fd)                                -- alive: keep it
+      out[#out + 1] = { wid = sock:match("([^/]+)$"), path = sock }
+    else
+      sys.unlink(sock)                             -- dead: reap the stale socket
+    end
+  end
   return out
 end
 

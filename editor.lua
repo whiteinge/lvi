@@ -312,6 +312,25 @@ function M.run(opts)
 
       if not next(ready) then M.on_idle(ed) end -- poll timed out: idle
 
+      -- Terminal resize handling without SIGWINCH. The alternative -- a signal
+      -- handler -- is a poor fit under LuaJIT (an FFI callback reentering the VM
+      -- from a signal is unsafe; the safe self-pipe trick needs a native handler
+      -- we can't express as a cdef; signal() restart semantics diverge). Instead
+      -- we re-read the winsize on every wakeup: it's one cheap ioctl, and since
+      -- the loop already wakes and repaints on every key/socket event, the view
+      -- follows a resize on the next event. The renderer is viewport-bounded and
+      -- clr_eol's every row it paints, so updating rows/cols is the whole fix;
+      -- the force_clear discards any reflow artifacts the terminal left behind.
+      -- The idle gap (resized while nothing arrives) is closed by Ctrl-L, which
+      -- is itself an event. :redraw does the same over the socket.
+      if tty then
+        local r, c = sys.winsize(1)
+        if r and r > 0 and (r ~= ed.rows or c ~= ed.cols) then
+          ed.rows, ed.cols = r, c
+          ed.force_clear = true
+        end
+      end
+
       if ready[lfd] then
         local cfd = sys.accept(lfd)
         if cfd then conns[cfd] = new_conn(cfd) end
@@ -335,7 +354,14 @@ function M.run(opts)
       end
 
       refresh(ed)
-      if tty and ed.running then sys.write(1, render.frame(ed)) end
+      if tty and ed.running then
+        -- A full clear precedes the frame only when something requested it (a
+        -- resize, Ctrl-L, or :redraw); normal repaints stay incremental via the
+        -- renderer's per-row clr_eol.
+        local pre = ed.force_clear and term.clear or ""
+        ed.force_clear = false
+        sys.write(1, pre .. render.frame(ed))
+      end
     end
   end)
 

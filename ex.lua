@@ -501,6 +501,13 @@ function M.dispatch(ed, line)
   elseif cmd == "echo" then
     return args, "ok"
 
+  elseif cmd == "redraw" then
+    -- Force a full-screen redraw on the next paint (the driver honors
+    -- ed.force_clear). Same gesture as Ctrl-L, reachable over the socket so a
+    -- tool can repair the screen -- e.g. after a resize while the view is idle.
+    ed.force_clear = true
+    return "", "ok"
+
   elseif cmd == "normal" or cmd == "norm" then
     -- The send-keys escape hatch: feed the argument as normal-mode keystrokes
     -- into the interpreter's input funnel. This is what gives the socket (and
