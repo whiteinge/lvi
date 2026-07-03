@@ -46,6 +46,32 @@ describe("config", function()
       os.remove(p)
     end)
 
+    it("strips a trailing comment, incl. after a map whose RHS ends in <CR>", function()
+      -- Regression: a trailing '"' comment used to be left on the line, so the
+      -- map RHS swallowed it -- the keys after <CR> (`" step...`) ran as normal
+      -- mode and dropped the editor into insert. The RHS must be exactly the
+      -- command plus the <CR>, with no comment text and no trailing space keys.
+      local p = writerc('map n :silent !lvi-list next<CR>        " step the list\n')
+      sys.setenv("LVIRC", p)
+      local ed = fake_ed()
+      local _, errs = config.load(ed)
+      expect(#errs).to.equal(0)
+      expect(ed.maps["n"]).to.equal(":silent !lvi-list next\r")
+      os.remove(p)
+    end)
+
+    it("leaves a '\"' inside a command alone (register, not a comment)", function()
+      -- A '"' abutting a non-blank (a register ref) is not a comment, even with
+      -- a trailing comment also present on the line.
+      local p = writerc('map Q "ayy        " yank the line into register a\n')
+      sys.setenv("LVIRC", p)
+      local ed = fake_ed()
+      local _, errs = config.load(ed)
+      expect(#errs).to.equal(0)
+      expect(ed.maps["Q"]).to.equal('"ayy')
+      os.remove(p)
+    end)
+
     it("collects errors without aborting later lines", function()
       -- Use a natively-failing command (a bad :set option); an unknown command
       -- word is delegated to ex, not treated as an error.

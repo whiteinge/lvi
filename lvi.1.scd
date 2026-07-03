@@ -240,7 +240,9 @@ launched from *:!* can drive the same view back (see *contrib/lvi-open*).
 
 At startup *lvi* reads an rc file -- simply a file of ex commands, one per line,
 run through the same dispatcher; there is no separate configuration language. A
-line whose first non-blank character is *"* is a comment. The first of these that
+*"* begins a comment when it stands alone -- at the start of a line, or mid-line
+with whitespace on both sides -- so a *"* inside a command (a register like
+_"ayy_, a _/"/_ search, an _:echo "text"_) is left intact. The first rc file that
 exists is used:
 
 - *$LVIRC* (an empty value or *NONE* disables the rc file)

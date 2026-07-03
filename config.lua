@@ -21,6 +21,27 @@ local function readable(p)
   return nil
 end
 
+-- Strip an ex-style comment and surrounding blanks from an rc line. The comment
+-- char is '"', but a '"' occurs legitimately mid-command -- a register (`"ayy`),
+-- a search or substitute (`/"/`), an `:echo "text"` -- so we cannot just cut at
+-- the first one. A comment begins at a '"' that is EITHER preceded only by
+-- whitespace (a full-line comment, `"like this`) OR "lone" mid-line: preceded by
+-- whitespace and followed by whitespace or end-of-line. That leaves `"a`, `/"/`,
+-- and `"str"` untouched (their '"' abuts a non-blank) while catching a trailing
+-- `   " comment`. Both ends are then trimmed, so a stripped comment can't leave
+-- dangling spaces that would be fed as stray keystrokes into a map's RHS.
+local function strip_comment(line)
+  for i = 1, #line do
+    if line:sub(i, i) == '"' then
+      local at_start = line:sub(1, i - 1):match("^%s*$") ~= nil
+      local prev_ws  = i == 1 or line:sub(i - 1, i - 1):match("%s") ~= nil
+      local next_ws  = i == #line or line:sub(i + 1, i + 1):match("%s") ~= nil
+      if at_start or (prev_ws and next_ws) then line = line:sub(1, i - 1); break end
+    end
+  end
+  return (line:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
 -- Resolve the rc file path, or nil to load none. Precedence:
 --   $LVIRC                       explicit override ("" or "NONE" disables config)
 --   $XDG_CONFIG_HOME/lvi/lvirc   (default $HOME/.config/lvi/lvirc)
@@ -41,7 +62,8 @@ function M.rc_path()
 end
 
 -- Load and run the rc file (if any) through ex.dispatch. Blank lines and '"'
--- comment lines are skipped. A failing command does NOT abort the rest; instead
+-- comments (whole-line or trailing; see strip_comment) are skipped. A failing
+-- command does NOT abort the rest; instead
 -- it is collected. Returns the path loaded (or nil if none) and a list of
 -- { lnum = N, line = "...", err = "..." } for the caller to surface.
 function M.load(ed)
@@ -52,11 +74,11 @@ function M.load(ed)
   local errs, lnum = {}, 0
   for line in f:lines() do
     lnum = lnum + 1
-    local trimmed = line:gsub("^%s+", "")
-    if trimmed ~= "" and trimmed:sub(1, 1) ~= '"' then
-      local payload, status = ex.dispatch(ed, trimmed)
+    local cmd = strip_comment(line)
+    if cmd ~= "" then
+      local payload, status = ex.dispatch(ed, cmd)
       if status == "err" then
-        errs[#errs + 1] = { lnum = lnum, line = trimmed, err = payload }
+        errs[#errs + 1] = { lnum = lnum, line = cmd, err = payload }
       end
     end
   end
