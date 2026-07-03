@@ -12,11 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 luajit lvi <file>              # launch the editor (interactive; needs a tty)
 luajit lvi -l                  # list running views:  <wid>\t<socket-path>
 luajit lvi -w <wid> -- <cmds>  # send ex commands to a running view; -w auto = sole view
-luajit test/buffer_test.lua    # run one test file (repeat per file)
-for t in buffer ex render proto normal; do luajit test/${t}_test.lua; done   # all tests
+luajit test/buffer_test.lua    # run one test file
+make test                      # run all tests (auto-discovers test/*_test.lua)
 ```
 
-- Tests use the vendored `lust` framework (`vendor/lust`); each spec calls `os.exit(lust.errors==0 and 0 or 1)`, so a non-zero exit means failures. There is no separate lint/build step.
+- `make test` is the way to run the whole suite — it globs `test/*_test.lua`, so new test files are picked up automatically and nothing is missed. Tests use the vendored `lust` framework (`vendor/lust`); each spec calls `os.exit(lust.errors==0 and 0 or 1)`, so a non-zero exit means failures (and `make test` stops on the first failing file). There is no separate lint/build step.
 - `lvi -w` is a Unix filter: `ok` payloads go to stdout, errors to stderr, exit code reflects failure. Over the socket, send ex commands **without** the leading `:` (a leading `:` is tolerated/stripped by the client).
 - The dev shell runs zsh with `noclobber`; overwrite redirects need `>!` (e.g. `foo >! out`).
 - There is no in-process way to test the tty/render path headlessly (no tty in most harnesses); drive behavior over the socket, or unit-test `render.frame(ed)` (pure) and `normal.lua` (feed keys to the coroutine).
