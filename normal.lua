@@ -577,13 +577,30 @@ actions = {
     clamp(ed)
   end,
   [b("r")] = function(ed, count)
-    local ch = string.char(getkey(ed))
+    local key = getkey(ed)
+    if key == 27 then return end                   -- r<ESC>: cancel, no replacement
     local s, a, n = line(ed, ed.cy), ed.cx, (count or 1)
     local endb, k = a, 0
     while k < n and endb <= #s do endb = disp.next_char(s, endb); k = k + 1 end
     if k < n then return end                       -- not enough chars on the line
-    ed.buf:set(ed.cy, s:sub(1, a - 1) .. string.rep(ch, n) .. s:sub(endb))
-    ed.cx = a + n - 1
+    if key == 13 or key == 10 then
+      -- r<CR>/<NL>: split the line (POSIX). Enter in raw mode arrives as a
+      -- carriage-return byte; replacing a char with a literal \r would embed an
+      -- invalid byte that breaks rendering, so the only correct reading is a
+      -- line break. Discard the count chars at/after the cursor, keep the prefix,
+      -- and push the remainder onto a new line -- with count-1 empty lines before
+      -- it. Cursor lands on the first non-blank of that new last line.
+      local prefix, suffix = s:sub(1, a - 1), s:sub(endb)
+      local newlines = {}
+      for i = 1, n - 1 do newlines[i] = "" end
+      newlines[n] = suffix
+      ed.buf:set(ed.cy, prefix)
+      ed.buf:insert(ed.cy + 1, newlines)
+      ed.cy, ed.cx = ed.cy + n, first_nonblank(suffix)
+    else
+      ed.buf:set(ed.cy, s:sub(1, a - 1) .. string.rep(string.char(key), n) .. s:sub(endb))
+      ed.cx = a + n - 1
+    end
     ed.changed = true
   end,
   [b("p")] = function(ed, _, reg) do_put(ed, true, reg) end,
