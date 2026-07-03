@@ -428,6 +428,51 @@ end
 
 local flip = { f = "F", F = "f", t = "T", T = "t" }
 
+-- Paragraph ({ }) and section ([[ ]]) motions. Pragmatic subset of POSIX: a
+-- SECTION boundary is a line starting with '{' or <form-feed>, or the first/last
+-- line; a PARAGRAPH boundary is a section boundary or an empty line. We skip the
+-- nroff `sections`/`paragraphs` macro options (lvi has none) and POSIX's rule
+-- that switches these between line/char mode as operator targets -- they are
+-- plain charwise-exclusive motions landing on the boundary line's first column
+-- (the common vim behavior; see MANPAGE-vi.txt "section/paragraph boundary").
+local function is_boundary(ed, l, section_only)
+  local s = line(ed, l)
+  local c = s:sub(1, 1)
+  if c == "{" or c == "\f" then return true end
+  return (not section_only) and s == ""
+end
+
+-- One step to the next/prev boundary. When starting inside a run of empty lines
+-- (paragraph mode), skip the whole run first so we don't re-stop on it.
+local function para_step(ed, l, forward, section_only)
+  local N = ed.buf:nlines()
+  if forward then
+    if l >= N then return N end
+    if not section_only and line(ed, l) == "" then
+      while l < N and line(ed, l) == "" do l = l + 1 end
+    else
+      l = l + 1
+    end
+    while l < N and not is_boundary(ed, l, section_only) do l = l + 1 end
+    return l
+  else
+    if l <= 1 then return 1 end
+    if not section_only and line(ed, l) == "" then
+      while l > 1 and line(ed, l) == "" do l = l - 1 end
+    else
+      l = l - 1
+    end
+    while l > 1 and not is_boundary(ed, l, section_only) do l = l - 1 end
+    return l
+  end
+end
+
+local function para_target(ed, count, forward, section_only)
+  local l = ed.cy
+  for _ = 1, (count or 1) do l = para_step(ed, l, forward, section_only) end
+  return l
+end
+
 local motions = {
   [b("h")] = { kind = "char", move = function(ed, n)
     local s, c = line(ed, ed.cy), ed.cx
@@ -524,6 +569,18 @@ local motions = {
     local bottom = math.min(top + (ed.rows or 24) - 2, ed.buf:nlines())
     local l = math.floor((top + bottom) / 2)
     return l, first_nonblank(line(ed, l))
+  end },
+  -- Paragraph / section motions (charwise-exclusive; land on the boundary's
+  -- first column). [[ / ]] read their doubled key like g does gg.
+  [b("}")] = { kind = "char", move = function(ed, count) return para_target(ed, count, true, false), 1 end },
+  [b("{")] = { kind = "char", move = function(ed, count) return para_target(ed, count, false, false), 1 end },
+  [b("]")] = { kind = "char", move = function(ed, count)
+    if getkey(ed) ~= b("]") then return ed.cy, ed.cx end
+    return para_target(ed, count, true, true), 1
+  end },
+  [b("[")] = { kind = "char", move = function(ed, count)
+    if getkey(ed) ~= b("[") then return ed.cy, ed.cx end
+    return para_target(ed, count, false, true), 1
   end },
 }
 
