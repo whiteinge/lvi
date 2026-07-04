@@ -600,6 +600,39 @@ local function match_bracket(ed)
   return ed.cy, ed.cx                                  -- unmatched: no-op
 end
 
+-- ---- screen geometry (shared by H/M/L and the scroll commands) --------------
+local function textrows(ed) return (ed.rows or 24) - 1 end
+
+-- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
+-- up), honoring wrap, clamped to the buffer. In nowrap each line is one row.
+local function advance_rows(ed, l, sub, rows)
+  local N = ed.buf:nlines()
+  if not (ed.opts and ed.opts.wrap) then
+    return math.max(1, math.min(l + rows, N)), 0
+  end
+  local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+  if rows > 0 then
+    for _ = 1, rows do
+      if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
+      elseif l < N then l, sub = l + 1, 0 else break end
+    end
+  else
+    for _ = 1, -rows do
+      if sub > 0 then sub = sub - 1
+      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
+      else break end
+    end
+  end
+  return l, sub
+end
+
+-- The bottommost buffer line with a row on screen. Walk textrows-1 rows down
+-- from the top; in wrap a single line spans several rows, so this is well below
+-- top+textrows-1. (nowrap collapses to exactly top+textrows-1, clamped.)
+local function visible_bottom(ed)
+  return (advance_rows(ed, ed.top or 1, ed.topsub or 0, textrows(ed) - 1))
+end
+
 local motions = {
   [b("h")] = { kind = "char", move = function(ed, n)
     local s, c = line(ed, ed.cy), ed.cx
@@ -683,22 +716,20 @@ local motions = {
     t = math.max(1, math.min(t, ed.buf:nlines()))
     return t, first_nonblank(line(ed, t))
   end },
-  -- H/M/L: top/middle/bottom of the screen (linewise, so they compose with
-  -- operators). Measured in buffer lines from ed.top -- exact in nowrap (the
-  -- render reality); in wrap they approximate by line rather than screen row.
+  -- H/M/L: top / middle / bottom line of the *screen*, as linewise motions (so
+  -- they compose with operators). Wrap-aware via visible_bottom, which walks
+  -- screen rows -- a wrapped line spans several, so plain buffer-line arithmetic
+  -- would point past the visible area (and dragging the cursor there scrolls).
   [b("H")] = { kind = "line", move = function(ed, n)
-    local l = math.min((ed.top or 1) + (n or 1) - 1, ed.buf:nlines())
+    local l = math.min((ed.top or 1) + (n or 1) - 1, visible_bottom(ed))
     return l, first_nonblank(line(ed, l))
   end },
   [b("L")] = { kind = "line", move = function(ed, n)
-    local bottom = math.min((ed.top or 1) + (ed.rows or 24) - 2, ed.buf:nlines())
-    local l = math.max(ed.top or 1, bottom - (n or 1) + 1)
+    local l = math.max(ed.top or 1, visible_bottom(ed) - (n or 1) + 1)
     return l, first_nonblank(line(ed, l))
   end },
   [b("M")] = { kind = "line", move = function(ed)
-    local top = ed.top or 1
-    local bottom = math.min(top + (ed.rows or 24) - 2, ed.buf:nlines())
-    local l = math.floor((top + bottom) / 2)
+    local l = math.floor(((ed.top or 1) + visible_bottom(ed)) / 2)
     return l, first_nonblank(line(ed, l))
   end },
   -- Paragraph / section motions (charwise-exclusive; land on the boundary's
@@ -745,30 +776,6 @@ end
 -- works in both wrap (line + sub-row) and nowrap (one row per line) modes. The
 -- driver's refresh() won't fight us: we always leave the cursor on-screen, and
 -- refresh() only re-scrolls when the cursor is off-screen.
-local function textrows(ed) return (ed.rows or 24) - 1 end
-
--- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
--- up), honoring wrap, clamped to the buffer. In nowrap each line is one row.
-local function advance_rows(ed, l, sub, rows)
-  local N = ed.buf:nlines()
-  if not (ed.opts and ed.opts.wrap) then
-    return math.max(1, math.min(l + rows, N)), 0
-  end
-  local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
-  if rows > 0 then
-    for _ = 1, rows do
-      if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
-      elseif l < N then l, sub = l + 1, 0 else break end
-    end
-  else
-    for _ = 1, -rows do
-      if sub > 0 then sub = sub - 1
-      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
-      else break end
-    end
-  end
-  return l, sub
-end
 
 -- Screen rows from the top of the window down to the cursor (0 = cursor on the
 -- top row). Assumes the cursor is at or below the top (true whenever we scroll,

@@ -889,6 +889,16 @@ describe("normal-mode interpreter", function()
       feed(ed, "7GdH")   -- from line 7 up to top (line 5): delete 5,6,7
       expect(ed.buf:line(5)).to.equal("line8")
     end)
+    it("L/M stay on-screen when a top line wraps", function()
+      -- line 1 is 25 cols wide; at W=10 it spans 3 screen rows.
+      local ed = make(string.rep("x", 25) .. "\na\nb\nc\nd")
+      ed.opts = { wrap = true, tabstop = 8 }
+      ed.rows = 5; ed.cols = 10; ed.top = 1; ed.topsub = 0
+      -- 4 text rows = line1's 3 rows + line2 -> only lines 1 and 2 are visible.
+      feed(ed, "H"); expect(ed.cy).to.equal(1)
+      feed(ed, "L"); expect(ed.cy).to.equal(2)   -- not line 3 (the old buggy result)
+      feed(ed, "M"); expect(ed.cy).to.equal(1)
+    end)
   end)
 
   describe("z reposition and Ctrl-G", function()
