@@ -473,6 +473,82 @@ local function para_target(ed, count, forward, section_only)
   return l
 end
 
+-- Sentence motions ( ). A sentence ends at '.', '!' or '?' -- optionally
+-- followed by any run of closing )]"' chars -- and then either the end of the
+-- line or TWO <space> characters (POSIX; note vim breaks on a single space, see
+-- MANPAGE-vi.txt "sentence boundary"). A paragraph boundary is also a sentence
+-- boundary. The sentence *start* is the first non-blank after such a break.
+-- Charwise-exclusive, count-aware, like vim's ( and ).
+local CLOSERS = { [")"] = true, ["]"] = true, ['"'] = true, ["'"] = true }
+
+-- The sentence start on the line following a terminator/blank at EOL of line l.
+local function sent_after_eol(ed, l, N)
+  if l >= N then return l, math.max(1, #line(ed, l)) end
+  local nl = l + 1
+  if is_boundary(ed, nl, false) then return nl, 1 end   -- empty / '{' line = boundary
+  return nl, first_nonblank(line(ed, nl))
+end
+
+local function sent_forward(ed, l, c)
+  local N = ed.buf:nlines()
+  local s = line(ed, l)
+  while true do
+    if c > #s then                                       -- ran off the line
+      local left_bnd = is_boundary(ed, l, false)
+      if l >= N then return l, math.max(1, #s) end        -- EOF
+      l = l + 1; s = line(ed, l); c = 1
+      if is_boundary(ed, l, false) then return l, 1 end   -- crossed into a boundary line
+      if left_bnd then return l, first_nonblank(s) end    -- first non-blank after one
+    else
+      local ch = s:sub(c, c)
+      if ch == "." or ch == "!" or ch == "?" then
+        local j = c + 1
+        while CLOSERS[s:sub(j, j)] do j = j + 1 end
+        if j > #s then                                    -- terminator at end of line
+          return sent_after_eol(ed, l, N)
+        elseif s:sub(j, j) == " " and s:sub(j + 1, j + 1) == " " then
+          local k = j                                     -- terminator + >=2 spaces
+          while s:sub(k, k) == " " or s:sub(k, k) == "\t" do k = k + 1 end
+          if k > #s then return sent_after_eol(ed, l, N) end
+          return l, k
+        end
+      end
+      c = c + 1
+    end
+  end
+end
+
+local function pos_lt(l1, c1, l2, c2) return l1 < l2 or (l1 == l2 and c1 < c2) end
+
+-- The first sentence start of the buffer (line 1 is always a boundary).
+local function sent_first(ed)
+  local s = line(ed, 1)
+  return 1, (s == "") and 1 or first_nonblank(s)
+end
+
+-- Previous sentence start: walk forward from the first start, keeping the last
+-- one still before the cursor. Linear in distance-from-start, like the other
+-- backward motions here; reuses the (tested) forward scanner rather than
+-- re-deriving boundary detection in reverse.
+local function sent_backward(ed, l, c)
+  local cl, cc = sent_first(ed)
+  if not pos_lt(cl, cc, l, c) then return cl, cc end       -- already at/before the first
+  while true do
+    local nl, nc = sent_forward(ed, cl, cc)
+    if not pos_lt(nl, nc, l, c) then return cl, cc end      -- next would reach/pass cursor
+    if nl == cl and nc == cc then return cl, cc end         -- no progress (EOF)
+    cl, cc = nl, nc
+  end
+end
+
+local function sent_target(ed, count, forward)
+  local l, c = ed.cy, ed.cx
+  for _ = 1, (count or 1) do
+    if forward then l, c = sent_forward(ed, l, c) else l, c = sent_backward(ed, l, c) end
+  end
+  return l, c
+end
+
 local motions = {
   [b("h")] = { kind = "char", move = function(ed, n)
     local s, c = line(ed, ed.cy), ed.cx
@@ -582,6 +658,8 @@ local motions = {
     if getkey(ed) ~= b("[") then return ed.cy, ed.cx end
     return para_target(ed, count, false, true), 1
   end },
+  [b(")")] = { kind = "char", move = function(ed, count) return sent_target(ed, count, true) end },
+  [b("(")] = { kind = "char", move = function(ed, count) return sent_target(ed, count, false) end },
 }
 
 local function do_motion(ed, m, count)
