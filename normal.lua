@@ -106,6 +106,14 @@ local function char_class(c)
   return "punct"
 end
 
+-- Word class for the w/b/e family. With `big` (the W/B/E "bigword" variants),
+-- punctuation folds into "word", so a WORD is any maximal run of non-blanks.
+local function wclass(c, big)
+  local cls = char_class(c)
+  if big and cls == "punct" then return "word" end
+  return cls
+end
+
 -- The word under the cursor (Vim's <cword>), using the same word class as
 -- w/b/e -- so lvi exports a value it already knows how to compute rather than
 -- inventing a second notion of "word". Empty when the cursor isn't on a word
@@ -330,13 +338,13 @@ end
 -- ---- motions ----------------------------------------------------------------
 -- Each: { kind = "char"|"line", inclusive = bool, move = fn(ed,count)->(l,c[,inc]) }.
 -- Word motions cross line boundaries and stop on empty lines (POSIX-ish).
-local function word_forward(ed, count)
+local function word_forward(ed, count, big)
   local N, l, c = ed.buf:nlines(), ed.cy, ed.cx
   local function step()
     local s = line(ed, l)
-    if #s > 0 and c <= #s and char_class(s:sub(c, c)) ~= "blank" then
-      local cls = char_class(s:sub(c, c))
-      while c <= #s and char_class(s:sub(c, c)) == cls do c = c + 1 end
+    if #s > 0 and c <= #s and wclass(s:sub(c, c), big) ~= "blank" then
+      local cls = wclass(s:sub(c, c), big)
+      while c <= #s and wclass(s:sub(c, c), big) == cls do c = c + 1 end
     end
     while true do
       s = line(ed, l)
@@ -344,7 +352,7 @@ local function word_forward(ed, count)
         if l >= N then c = math.max(1, #s); return end
         l, c = l + 1, 1
         if #line(ed, l) == 0 then return end -- empty line is a word stop
-      elseif char_class(s:sub(c, c)) == "blank" then c = c + 1
+      elseif wclass(s:sub(c, c), big) == "blank" then c = c + 1
       else return end
     end
   end
@@ -352,7 +360,7 @@ local function word_forward(ed, count)
   return l, math.min(c, math.max(1, #line(ed, l)))
 end
 
-local function word_back(ed, count)
+local function word_back(ed, count, big)
   local l, c = ed.cy, ed.cx
   local function step()
     c = c - 1
@@ -363,18 +371,18 @@ local function word_back(ed, count)
         if c == 0 then c = 1; return end   -- empty line is a word stop
       else
         local s = line(ed, l)
-        if char_class(s:sub(c, c)) == "blank" then c = c - 1 else break end
+        if wclass(s:sub(c, c), big) == "blank" then c = c - 1 else break end
       end
     end
     local s = line(ed, l)
-    local cls = char_class(s:sub(c, c))
-    while c > 1 and char_class(s:sub(c - 1, c - 1)) == cls do c = c - 1 end
+    local cls = wclass(s:sub(c, c), big)
+    while c > 1 and wclass(s:sub(c - 1, c - 1), big) == cls do c = c - 1 end
   end
   for _ = 1, (count or 1) do step() end
   return l, math.max(1, c)
 end
 
-local function word_end(ed, count)
+local function word_end(ed, count, big)
   local N, l, c = ed.buf:nlines(), ed.cy, ed.cx
   local function step()
     c = c + 1
@@ -383,12 +391,12 @@ local function word_end(ed, count)
       if c > #s then
         if l >= N then c = math.max(1, #s); return end
         l, c = l + 1, 1
-      elseif char_class(s:sub(c, c)) == "blank" then c = c + 1
+      elseif wclass(s:sub(c, c), big) == "blank" then c = c + 1
       else break end
     end
     local s = line(ed, l)
-    local cls = char_class(s:sub(c, c))
-    while c < #s and char_class(s:sub(c + 1, c + 1)) == cls do c = c + 1 end
+    local cls = wclass(s:sub(c, c), big)
+    while c < #s and wclass(s:sub(c + 1, c + 1), big) == cls do c = c + 1 end
   end
   for _ = 1, (count or 1) do step() end
   return l, math.max(1, c)
@@ -549,6 +557,49 @@ local function sent_target(ed, count, forward)
   return l, c
 end
 
+-- % : jump to the matching bracket. If the cursor isn't on one of ()[]{}, scan
+-- forward on the current line for the first one (error/no-op if none). An open
+-- bracket searches forward for its close, a close searches backward, counting
+-- nesting of the SAME pair type only -- other bracket types are ignored (POSIX
+-- leaves that implementation-defined; matches vim, no string/comment awareness).
+-- Charwise-inclusive so d%/y%/c% span both brackets; we skip POSIX's rule that
+-- makes a whole-line-spanning match linewise (same simplification as the other
+-- motions here). No count (the N% "percent of file" jump is a vim extension).
+local PAIRS  = { ["("] = ")", ["["] = "]", ["{"] = "}" }
+local OPENOF = { [")"] = "(", ["]"] = "[", ["}"] = "{" }
+
+local function match_bracket(ed)
+  local l, c = ed.cy, ed.cx
+  local s = line(ed, l)
+  while c <= #s and not (PAIRS[s:sub(c, c)] or OPENOF[s:sub(c, c)]) do c = c + 1 end
+  if c > #s then return ed.cy, ed.cx end               -- no bracket on the line: no-op
+  local ch = s:sub(c, c)
+  local N = ed.buf:nlines()
+  local fwd = PAIRS[ch] ~= nil
+  -- The starting bracket's own type increments the counter; its opposite
+  -- decrements it (so it works the same scanning either direction).
+  local same  = ch
+  local other = fwd and PAIRS[ch] or OPENOF[ch]
+  local depth = 0
+  while l >= 1 and l <= N do
+    s = line(ed, l)
+    local d = (c >= 1 and c <= #s) and s:sub(c, c) or ""
+    if d == same then depth = depth + 1
+    elseif d == other then
+      depth = depth - 1
+      if depth == 0 then return l, c end
+    end
+    if fwd then
+      c = c + 1
+      if c > #s then l, c = l + 1, 1 end
+    else
+      c = c - 1
+      if c < 1 then l = l - 1; c = (l >= 1) and #line(ed, l) or 0 end
+    end
+  end
+  return ed.cy, ed.cx                                  -- unmatched: no-op
+end
+
 local motions = {
   [b("h")] = { kind = "char", move = function(ed, n)
     local s, c = line(ed, ed.cy), ed.cx
@@ -566,6 +617,10 @@ local motions = {
   [b("w")] = { kind = "char", move = word_forward },
   [b("b")] = { kind = "char", move = word_back },
   [b("e")] = { kind = "char", inclusive = true, move = word_end },
+  [b("W")] = { kind = "char", move = function(ed, n) return word_forward(ed, n, true) end },
+  [b("B")] = { kind = "char", move = function(ed, n) return word_back(ed, n, true) end },
+  [b("E")] = { kind = "char", inclusive = true, move = function(ed, n) return word_end(ed, n, true) end },
+  [b("%")] = { kind = "char", inclusive = true, move = match_bracket },
   [b("f")] = find_motion("f", true),
   [b("t")] = find_motion("t", true),
   [b("F")] = find_motion("F", false),

@@ -670,6 +670,74 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("bigword motions W B E", function()
+    it("W skips over punctuation (whitespace-delimited)", function()
+      local ed = make("foo.bar baz")
+      feed(ed, "w"); expect(ed.cx).to.equal(4)   -- w stops at '.'
+      local ed2 = make("foo.bar baz")
+      feed(ed2, "W"); expect(ed2.cx).to.equal(9) -- W jumps to 'baz'
+    end)
+    it("B moves back over a whole bigword", function()
+      local ed = make("foo.bar baz")
+      feed(ed, "$");  expect(ed.cx).to.equal(11)
+      feed(ed, "B");  expect(ed.cx).to.equal(9)  -- start of 'baz'
+      feed(ed, "B");  expect(ed.cx).to.equal(1)  -- start of 'foo.bar'
+    end)
+    it("E moves to the end of a bigword", function()
+      local ed = make("foo.bar baz")
+      feed(ed, "E");  expect(ed.cx).to.equal(7)  -- end of 'foo.bar'
+      feed(ed, "E");  expect(ed.cx).to.equal(11) -- end of 'baz'
+    end)
+    it("dW deletes through punctuation to the next bigword", function()
+      local ed = make("foo.bar baz")
+      feed(ed, "dW")
+      expect(ed.buf:line(1)).to.equal("baz")
+    end)
+    it("w/b/e still stop at punctuation boundaries", function()
+      local ed = make("a.b c")
+      feed(ed, "w"); expect(ed.cx).to.equal(2)   -- '.'
+      feed(ed, "w"); expect(ed.cx).to.equal(3)   -- 'b'
+    end)
+  end)
+
+  describe("match bracket %", function()
+    it("jumps from an open bracket to its match", function()
+      local ed = make("a(bcd)e")
+      feed(ed, "f(%")
+      expect(ed.cx).to.equal(6)   -- the ')'
+    end)
+    it("jumps from a close bracket back to its match", function()
+      local ed = make("a(bcd)e")
+      feed(ed, "f)%")
+      expect(ed.cx).to.equal(2)   -- back to '('
+    end)
+    it("searches forward on the line when not on a bracket", function()
+      local ed = make("foo (bar) baz")
+      feed(ed, "%")               -- cursor at col 1, first bracket is '(' at 5
+      expect(ed.cx).to.equal(9)   -- its ')'
+    end)
+    it("honors nesting of the same type", function()
+      local ed = make("(a(b)c)")
+      feed(ed, "%")
+      expect(ed.cx).to.equal(7)   -- outer ')'
+    end)
+    it("matches across lines", function()
+      local ed = make("foo(\n  bar\n)baz")
+      feed(ed, "f(%")
+      expect(ed.cy).to.equal(3); expect(ed.cx).to.equal(1)
+    end)
+    it("is a no-op when the line has no bracket", function()
+      local ed = make("plain text")
+      feed(ed, "%")
+      expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(1)
+    end)
+    it("d% deletes inclusively across the pair", function()
+      local ed = make("x(abc)y")
+      feed(ed, "f(d%")
+      expect(ed.buf:line(1)).to.equal("xy")
+    end)
+  end)
+
   describe("sentence motions ( )", function()
     it(") moves to the next sentence (2 spaces, then EOL)", function()
       -- "One.  Two.  Three" : starts at cols 1, 7, 13
