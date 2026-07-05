@@ -24,11 +24,13 @@ local function hl_index(ed)
   local idx = {}
   if not ed.highlights then return idx end
   local styles = ed.hlstyles or {}
+  local pris = ed.hlpri or {}
   for group, ranges in pairs(ed.highlights) do
-    local sgr = styles[group]                 -- nil -> default reverse video (in slice)
+    local sgr = styles[group]                 -- nil -> plain text (invisible, in slice)
+    local pri = pris[group] or 0              -- z-order; higher wins per cell (see intervals)
     for _, r in ipairs(ranges) do
       idx[r.line] = idx[r.line] or {}
-      table.insert(idx[r.line], { line = r.line, c1 = r.c1, c2 = r.c2, sgr = sgr })
+      table.insert(idx[r.line], { line = r.line, c1 = r.c1, c2 = r.c2, sgr = sgr, pri = pri })
     end
   end
   return idx
@@ -42,8 +44,11 @@ local function intervals(ranges, orig, ts)
   for _, r in ipairs(ranges) do
     local s = disp.dispcol(orig, ts, r.c1)
     local e = (r.c2 >= #orig) and disp.width(orig, ts) or disp.dispcol(orig, ts, r.c2 + 1)
-    if e > s then out[#out + 1] = { s, e, r.sgr } end
+    if e > s then out[#out + 1] = { s, e, r.sgr, r.pri or 0 } end
   end
+  -- slice resolves overlaps by "last interval wins", so sort ascending by pri:
+  -- the highest-priority group covering a cell ends up last and shows through.
+  table.sort(out, function(a, b) return a[4] < b[4] end)
   return (#out > 0) and out or nil
 end
 

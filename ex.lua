@@ -152,14 +152,23 @@ local function parse_style(spec)
   return table.concat(params, ";")
 end
 
--- :hi[ghlight] GROUP [fg=.. bg=.. attr..] -- define a highlight group's color
--- (vim-style). No spec (or NONE) clears the style, reverting the group to the
--- default reverse-video overlay. Styles are theme state (set in the rc file) and
--- persist across :nohl, which clears only the transient ranges.
+-- :hi[ghlight] GROUP [fg=.. bg=.. attr.. pri=N] -- define a highlight group's
+-- color (vim-style). No spec (or NONE) clears the style, leaving the group as
+-- plain (invisible) text. `pri=N` sets the group's z-order: when two groups cover
+-- the same cell the higher pri draws on top (default 0). Syntax stays at 0 so
+-- overlays that must be seen through it set a positive pri (search uses pri=10).
+-- Styles are theme state (set in the rc file) and persist across :nohl, which
+-- clears only the transient ranges.
 local function do_histyle(ed, args)
   local group, rest = args:match("^(%S+)%s*(.-)%s*$")
-  if not group or group == "" then return "usage: hi GROUP [fg=.. bg=.. bold ..]", "err" end
+  if not group or group == "" then return "usage: hi GROUP [fg=.. bg=.. bold .. pri=N]", "err" end
   ed.hlstyles = ed.hlstyles or {}
+  local pri = rest:match("pri=(%-?%d+)")        -- z-order is not an SGR param; pull it out
+  if pri then
+    ed.hlpri = ed.hlpri or {}
+    ed.hlpri[group] = tonumber(pri)
+    rest = rest:gsub("%s*pri=%-?%d+%s*", " "):match("^%s*(.-)%s*$")
+  end
   if rest == "" or rest == "NONE" or rest == "none" then
     ed.hlstyles[group] = nil
     return "", "ok"

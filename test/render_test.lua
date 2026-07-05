@@ -95,6 +95,17 @@ describe("render.frame", function()
     expect(f:find("\27[7mcd\27[0m", 1, true)).to.exist()
   end)
 
+  it("draws a higher-pri group over a lower-pri one on the same cell", function()
+    -- syn (pri 0) and search (pri 10) both cover column 1; search must win.
+    local f = render.frame(ed_with("1. item", { cols = 20,
+      highlights = { syn = { { line = 1, c1 = 1, c2 = 1 } },
+                     search = { { line = 1, c1 = 1, c2 = 1 } } },
+      hlstyles = { syn = "38;5;4", search = "7" },
+      hlpri = { search = 10 } }))
+    expect(f:find("\27[7m1\27[0m", 1, true)).to.exist()      -- '1' reversed (search)
+    expect(f:find("\27[38;5;4m1", 1, true)).to_not.exist()   -- not blue (syn lost)
+  end)
+
   it("renders multibyte whole and highlights the right char", function()
     local E = "\195\169"                    -- 'é' at bytes 2-3, display col 1
     local f = render.frame(ed_with("a" .. E .. "b",

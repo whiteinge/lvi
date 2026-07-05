@@ -56,6 +56,8 @@ if [ -z "$matches" ]; then
   exit 0
 fi
 # search owns its look so it shows without a theme (see CLAUDE.md); rc may override.
-$LVI -w "$target" --detach -- "hi search reverse"
+# pri=10 lifts the mark above syntax highlighting (pri 0) so it shows through a
+# styled first column (e.g. a Markdown `1.` ordered-list marker).
+$LVI -w "$target" --detach -- "hi search reverse pri=10"
 printf '%s\n' "$matches" | awk -v f="$file" '{print f":"$0}' | lvi-list $wflag put search --focus
 lvi-list $wflag next

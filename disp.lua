@@ -190,8 +190,10 @@ end
 -- "38;5;2;1"); a nil sgr means no styling (plain text). When adjacent cells
 -- carry different styles we reset and re-open, so touching tokens keep their own
 -- colors. Overlapping intervals: the last one in the list wins per cell (tokens
--- from one highlighter don't overlap; cross-group order is unspecified). One
--- char-aware walk serves every render path.
+-- from one highlighter don't overlap; cross-group order is set by pri). One
+-- char-aware walk serves every render path. The caller (render.intervals) sorts
+-- by group priority ascending so this last-wins rule lets a higher-pri overlay
+-- (e.g. search over syntax) show through where they cover the same cell.
 function M.slice(s, ts, startcol, W, ivs)
   local endcol = startcol + W
   local out, col, i, n, cur = {}, 0, 1, #s, nil
