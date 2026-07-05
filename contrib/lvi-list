@@ -90,17 +90,20 @@ jump() {
   else send "$ln" "|$c"; fi
 }
 
-# Repaint NAME's entries for the CURRENT buffer (whole-line :hl), mark the current
-# entry, and set the status counter. Bound to :on bufenter for cross-file lists.
+# Repaint NAME's entries for the CURRENT buffer, mark the current entry, and set
+# the status counter. Bound to :on bufenter for cross-file lists. Each entry is
+# marked at its FIRST COLUMN (`L:1-1`) rather than the whole line: a reversed or
+# colored leading cell reads as a poor-man's sign, where a whole-line style buries
+# the very text you're scanning. Un-themed groups stay invisible (opt in via :hi).
 paint() {
   name=$1; [ -f "$listdir/$name" ] || return 0
   cf=$(curfile)
-  lines=$(awk -F: -v f="$cf" '$1==f{printf "%s ", $2}' "$listdir/$name")
+  lines=$(awk -F: -v f="$cf" '$1==f{printf "%s:1-1 ", $2}' "$listdir/$name")
   [ -n "$lines" ] && send "hl $name $lines" || send "hl $name"
   cur=$(getcur "$name"); total=$(count "$name")
   ce=$(nth "$name" "$cur")
   if [ -n "$ce" ] && [ "${ce%%:*}" = "$cf" ]; then
-    send "hl $name-cur $(printf '%s' "$ce" | awk -F: '{print $2}')"
+    send "hl $name-cur $(printf '%s' "$ce" | awk -F: '{print $2":1-1"}')"
   else send "hl $name-cur"; fi
   send "status $name [$cur/$total] $name"
 }
