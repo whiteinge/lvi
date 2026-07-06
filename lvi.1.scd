@@ -174,6 +174,11 @@ moves the cursor to that line.
 *q*, *q!*, *qa*[*!*]
 	Quit (current view / all views); *!* discards unsaved changes.
 
+*cq* [_N_]
+	Quit unconditionally (discarding changes) and exit with a non-zero status
+	(_N_, default 1). Lets a script driving lvi as its editor -- *git commit*,
+	and the like -- signal "abort": a non-zero editor cancels the operation.
+
 *e*[*!*] [_file_|*#*]
 	Edit _file_, reload the current one (no argument), or switch to the alternate
 	buffer (*#*).

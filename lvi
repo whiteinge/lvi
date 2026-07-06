@@ -50,4 +50,5 @@ end
 -- Editor mode. Positional args open as buffers (first one current); -q parks an
 -- errorfile path in $LVI_QUICKFIX for a `ready` hook (it is not itself a buffer).
 local editor = require("editor")
-editor.run({ files = a.args, quickfix = a.quickfix })
+local ed = editor.run({ files = a.args, quickfix = a.quickfix })
+os.exit(ed.exit_code or 0)

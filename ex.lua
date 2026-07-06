@@ -508,6 +508,15 @@ function M.dispatch(ed, line)
     ed.running = false
     return "", "ok"
 
+  elseif cmd == "cq" or cmd == "cquit" then
+    -- Quit unconditionally, discarding any changes, and make the editor process
+    -- exit non-zero -- the scriptable "abort" (git commit et al. treat a nonzero
+    -- editor as "cancel this operation"). No modified check: cancelling is the
+    -- whole point. :cq N exits with code N; bare :cq (and :cq!) exits 1.
+    ed.exit_code = tonumber(args) or 1
+    ed.running = false
+    return "", "ok"
+
   elseif cmd == "set" or cmd == "se" then
     return do_set(ed, args)
 
