@@ -303,6 +303,7 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
   (the vim *-q* format), file-backed and steppable.
 - *lvi-gitchanges* -- step the current file's *git diff* hunks with *n*/*N*.
 - *lvi-open* -- fuzzy-pick a file and open it in the running view.
+- *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
 
 This is only a taste. For what each tool does, its configuration, and
 ready-to-copy bindings and themes, see *contrib/README.md* and

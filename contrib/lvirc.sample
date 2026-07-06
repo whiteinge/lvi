@@ -61,6 +61,12 @@ on bufenter lvi-list paint
 " press n to step to the first entry. Drop `--focus` to keep your current focus.
 on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
 
+" ---- tags -------------------------------------------------------------------
+" lvi-tags lists this file's ctags tags in file order through your picker and
+" jumps to the one you choose -- a jump-to-symbol and a file outline in one key.
+" It needs the tty for the picker, so :silent !. Needs a `tags` file (ctags -R).
+map \t :silent !lvi-tags<CR>
+
 " ---- git changes -------------------------------------------------------------
 " lvi-gitchanges turns `git diff` for the current file into a `gitchanges` list
 " and jumps to the first hunk; n/N then step it like any other list. It reads the

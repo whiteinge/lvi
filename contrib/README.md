@@ -69,6 +69,15 @@ on **disk**, not the live buffer, so it shows changes as of your last `:w`.
 A fuzzy-picker (fzf by default) that opens the chosen file in the running view.
 Bind it: `map \f :silent !lvi-open<CR>`.
 
+### `lvi-tags` — jump around / outline the current file
+
+A `readtags` picker: lists every ctags tag defined in the current file, in file
+order, and jumps to the one you pick. Because each row shows the tag's own
+definition line, scrolling the picker *is* a structural overview of the buffer —
+"jump to a function" and "what's in this file" are the same key. It reads a
+`tags` file (walk-up from the tree, or `$LVI_TAGS`), so it reflects your last
+`ctags` run, not the live buffer. Bind it: `map \t :silent !lvi-tags<CR>`.
+
 ## The shared machinery
 
 Everything above is built from four ideas the core provides — worth

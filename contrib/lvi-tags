@@ -1,0 +1,83 @@
+#!/bin/sh
+# lvi-tags [-w auto|WID]
+#
+# A ctags-driven outline of the CURRENT file: list every tag defined in it, in
+# file order, through a fuzzy picker (fzy/fzf); pick one and the view jumps to
+# its line. Two uses in one: jump straight to a function/section, or just scroll
+# the picker as a quick structural overview of the buffer.
+#
+# It reads a `tags` file (Universal/Exuberant ctags) via `readtags` -- so it
+# reflects the last ctags run, not the live buffer -- and shows each tag's own
+# definition line (ctags stores it as the search pattern), which is what makes
+# the list read like an outline. Entries are sorted by line number, taken from
+# the tag address (ctags records it by default) with the `line:` field as backup.
+#
+# TAGS FILE: found by walking up from lvi's working directory for `tags` (then
+# `.tags`); override with $LVI_TAGS. Tags are matched to the buffer by their
+# `input` field relative to the tags file's directory, so generate tags from
+# your project root (the usual `ctags -R` at the top) and it just works.
+#
+# fzy/fzf needs the terminal, so bind it with :silent ! (lvi hands over the tty);
+# the jump goes back with --detach (fire-and-forget -- a synchronous reply would
+# deadlock while lvi is frozen on us, exactly like lvi-open):
+#     map \t :silent !lvi-tags<CR>
+#
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
+# LVI_TAGS (tags file path). Needs readtags + a picker on PATH. Run from inside
+# lvi ($LVI_WID/$LVI_FILE exported); from elsewhere pass -w and cd to the tree.
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+
+die() { echo "lvi-tags: $*" >&2; exit 1; }
+
+want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+target=${want_wid:-${LVI_WID:-auto}}
+send() { $LVI -w "$target" --detach -- "$@"; }
+
+# The buffer's file: from the env when spawned by lvi (a map), else ask.
+file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+case "$file" in ""|"[No File]"|"[No Name]") die "current buffer has no file" ;; esac
+abs=$(case "$file" in /*) printf '%s' "$file";; *) printf '%s' "$PWD/$file";; esac)
+
+# Locate the tags file (walk up from cwd) and the tag `input` path to query
+# (the buffer's path relative to the tags file's directory).
+tagsfile=${LVI_TAGS:-}
+if [ -z "$tagsfile" ]; then
+  d=$PWD
+  while [ -n "$d" ]; do
+    [ -f "$d/tags" ]  && { tagsfile="$d/tags";  break; }
+    [ -f "$d/.tags" ] && { tagsfile="$d/.tags"; break; }
+    [ "$d" = "/" ] && break
+    d=$(dirname "$d")
+  done
+fi
+[ -n "$tagsfile" ] && [ -f "$tagsfile" ] || die "no tags file (run ctags -R, or set \$LVI_TAGS)"
+tagdir=$(dirname "$tagsfile")
+rel=${abs#"$tagdir"/}                                 # buffer path as ctags recorded it
+
+# Pull this file's tags. -e gives kind:/line: extension fields; the tag address
+# (field 3) carries both the line number and the definition-line pattern.
+rows=$(readtags -t "$tagsfile" -e -Q "(eq? \$input \"$rel\")" -l 2>/dev/null | awk -F'\t' '
+  {
+    name=$1; addr=$3; line=""; kind="?"
+    la=addr; sub(/;.*/,"",la); if (la ~ /^[0-9]+$/) line=la      # line from the address
+    def=addr
+    sub(/^[0-9]*;?/,"",def); sub(/^\/\^?/,"",def)               # strip "NNN;/^"
+    sub(/\$?\/;".*/,"",def)                                     # strip trailing "$/;" + fields
+    gsub(/\\\//,"/",def)                                        # unescape \/ in the pattern
+    for (i=4;i<=NF;i++) {
+      if ($i ~ /^kind:/)               kind=substr($i,6)
+      if ($i ~ /^line:/ && line == "") line=substr($i,6)
+    }
+    if (line == "") next
+    printf "%s\t%s\t%s\t%s\n", line, kind, name, def
+  }' | sort -n)
+
+[ -n "$rows" ] || { send "status tags no tags for this file"; exit 0; }
+
+# Show line + kind + name + its definition, keep the line number as column 1 so
+# we can read it straight back off the selection.
+sel=$(printf '%s\n' "$rows" | awk -F'\t' '{printf "%6s  %-4s %-24s %s\n", $1, $2, $3, $4}' | "$PICKER") || exit 0
+line=$(printf '%s' "$sel" | awk '{print $1}')
+case "$line" in ''|*[!0-9]*) exit 0 ;; esac
+send "$line"                                          # tag is in this buffer -> just jump
