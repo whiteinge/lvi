@@ -28,6 +28,12 @@ hi Preproc  fg=red
 " lvi-hl-pygments) on your PATH, or set LVI_HL_BACKEND / LVI in its env.
 on change lvi-highlight
 
+" `change` is keyboard-only, so a socket-driven :e (e.g. lvi-open jumping to a
+" file) never arms it -- the new buffer would open unhighlighted. `bufenter`
+" fires on every buffer switch on any surface, so pair it with `change` to
+" re-highlight whenever you land in a buffer.
+on bufenter lvi-highlight
+
 " ...and/or a key to force a refresh on demand:
 map \h :silent !lvi-highlight<CR>
 
