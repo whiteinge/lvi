@@ -204,6 +204,47 @@ describe("bufs", function()
       expect(ed.running).to.be(false)
       os.remove(p)
     end)
+    it(":wa writes every modified buffer, skipping clean ones", function()
+      local ed = make_ed()
+      local pa, pb = tmpfile("a"), tmpfile("b")
+      bufs.init(ed, buffer.open(pa)); bufs.open(ed, pb)
+      ed.buf:set(1, "B2")                       -- dirty the current buffer (b)
+      bufs.switch(ed, 1); ed.buf:set(1, "A2")   -- dirty the other buffer (a) too
+      local fired = {}
+      ed.fire_event = function(e) fired[#fired + 1] = e end
+      local p, s = ex.dispatch(ed, "wa")
+      expect(s).to.equal("ok")
+      expect(p).to.equal("2 buffers written")
+      expect(fired).to.equal({ "write", "write" })   -- one per buffer written
+      expect(io.open(pa):read("*a")).to.equal("A2")
+      expect(io.open(pb):read("*a")).to.equal("B2")
+      -- a second :wa now writes nothing -- both are clean
+      fired = {}
+      expect((ex.dispatch(ed, "wa"))).to.equal("0 buffers written")
+      expect(fired).to.equal({})
+      os.remove(pa); os.remove(pb)
+    end)
+    it(":xa writes all changed buffers, then quits", function()
+      local ed = make_ed()
+      local pa, pb = tmpfile("a"), tmpfile("b")
+      bufs.init(ed, buffer.open(pa)); bufs.open(ed, pb)
+      ed.buf:set(1, "B2")
+      local _, s = ex.dispatch(ed, "xa")
+      expect(s).to.equal("ok")
+      expect(ed.running).to.be(false)
+      expect(io.open(pb):read("*a")).to.equal("B2")
+      os.remove(pa); os.remove(pb)
+    end)
+    it(":wa errors on a modified unnamed buffer, without quitting", function()
+      local ed = make_ed()
+      bufs.init(ed, buffer.new("named-later"))   -- no path
+      ed.buf:set(1, "dirty")
+      local _, s = ex.dispatch(ed, "wa")
+      expect(s).to.equal("err")
+      local _, s2 = ex.dispatch(ed, "xa")        -- xa likewise refuses, stays running
+      expect(s2).to.equal("err")
+      expect(ed.running).to.be(true)
+    end)
   end)
 end)
 

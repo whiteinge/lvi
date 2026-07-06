@@ -183,6 +183,12 @@ moves the cursor to that line.
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
 	untouched). *ZZ* is *x*.
 
+*wa*, *xa*
+	Write every modified buffer to its own path (*wa*, alias *wall*), or write
+	them all and then quit (*xa*, aliases *xall* *wqa* *wqall*). Changed-only,
+	like *x*: a clean buffer's file is left untouched. A modified buffer with no
+	name is an error and no quit happens.
+
 *q*, *q!*, *qa*[*!*]
 	Quit (current view / all views); *!* discards unsaved changes.
 

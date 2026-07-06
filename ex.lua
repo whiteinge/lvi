@@ -334,6 +334,29 @@ local function parse_keys(s)
   return table.concat(out)
 end
 
+-- Write every modified buffer to its own path (the :wa/:xa engine). Iterates
+-- ed.buffers -- each rec.buf is the live object (ed.buf IS the current slot's
+-- buf by reference, so its unsaved edits are seen without a save()); falls back
+-- to the lone ed.buf in headless/single-buffer contexts. Changed-only, like :x:
+-- a clean buffer is skipped so its mtime is untouched. A modified buffer with no
+-- name is an error (E141-style) -- you can't write what has no path -- and stops
+-- the run before any quit. Fires `write` once per buffer actually written.
+-- Returns nwritten, or nil, errmsg.
+local function write_all(ed)
+  local n = 0
+  for _, rec in ipairs(ed.buffers or { { buf = ed.buf } }) do
+    local buf = rec.buf
+    if buf.modified then
+      if not buf.path then return nil, "No file name for a buffer" end
+      local ok, err = pcall(buf.write, buf)
+      if not ok then return nil, "write failed: " .. tostring(err) end
+      if ed.fire_event then ed.fire_event("write") end
+      n = n + 1
+    end
+  end
+  return n
+end
+
 function M.dispatch(ed, line)
   local a, b, rest = parse_range(ed, line)
   rest = rest:gsub("^%s+", "")
@@ -506,6 +529,20 @@ function M.dispatch(ed, line)
         end
       end
     end
+    ed.running = false
+    return "", "ok"
+
+  elseif cmd == "wa" or cmd == "wall" then
+    local n, err = write_all(ed)
+    if not n then return err, "err" end
+    return ("%d buffer%s written"):format(n, n == 1 and "" or "s"), "ok"
+
+  elseif cmd == "xa" or cmd == "xall" or cmd == "wqa" or cmd == "wqall" then
+    -- Write all changed buffers, then quit -- :wa + :qa. Changed-only (see
+    -- write_all), so like :x it leaves clean buffers' files untouched; xa and
+    -- wqa are aliases here (lvi has no readonly notion for wqa to force past).
+    local _, err = write_all(ed)
+    if err then return err, "err" end
     ed.running = false
     return "", "ok"
 

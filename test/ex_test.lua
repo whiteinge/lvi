@@ -160,6 +160,18 @@ describe("ex.dispatch", function()
       if f then f:close() end
       os.remove(target)
     end)
+    it(":wa in a headless single-buffer ed writes the lone buffer", function()
+      local ed = ed_with("a\nb\n")               -- no ed.buffers -> fallback path
+      local target = os.tmpname()
+      ed.buf.path = target
+      ed.buf:set(1, "X")
+      local p, s = ex.dispatch(ed, "wa")
+      expect(s).to.equal("ok")
+      expect(p).to.equal("1 buffer written")
+      local f = io.open(target, "rb"); local body = f:read("*a"); f:close()
+      expect(body).to.equal("X\nb\n")
+      os.remove(target)
+    end)
   end)
 
   describe("set", function()
