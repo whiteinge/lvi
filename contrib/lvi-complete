@@ -52,10 +52,15 @@ if [ -n "${LVI_COMPL_POPUP:-}" ] && [ -n "${TMUX:-}" ]; then
   # display-popup runs a separate command with its own tty, so hand the list in
   # and take the selection out through temp files.
   cf=$(mktemp) || exit 0; sf=$(mktemp) || { rm -f "$cf"; exit 0; }
-  printf '%s\n' "$words" > "$cf"
-  tmux display-popup -E "$PICKER -q \"\$LVI_COMPL_TOKEN\" < '$cf' > '$sf'" </dev/null
+  tf=$(mktemp) || { rm -f "$cf" "$sf"; exit 0; }
+  printf '%s\n' "$words" > "$cf"; printf '%s' "$token" > "$tf"
+  # display-popup runs its command in a fresh shell under the tmux SERVER, which
+  # does NOT inherit the LVI_COMPL_* env lvi exported to us -- so $LVI_COMPL_TOKEN
+  # would be empty there (a blank query). Pass the query through a file and read
+  # it back quoted (`"$(cat ...)"`): no env, no quoting hazard for any token.
+  tmux display-popup -E "$PICKER -q \"\$(cat '$tf')\" < '$cf' > '$sf'" </dev/null
   cat "$sf"
-  rm -f "$cf" "$sf"
+  rm -f "$cf" "$sf" "$tf"
 else
   printf '%s\n' "$words" | "$PICKER" -q "$token"
 fi
