@@ -85,6 +85,11 @@ leading count, e.g. *3dw*.
 	Delete, change, yank over a motion (e.g. *dw*, *c$*, *y`a*). Doubled
 	(*dd* *cc* *yy*) they act on whole lines.
 
+*>* *<*
+	Shift lines right/left by one *shiftwidth* (see *set*). Always linewise,
+	even over a charwise motion; doubled (*>>* *<<*) they shift the current
+	line.
+
 *x* *r*_x_ *p* *P*
 	Delete character, replace character with _x_, put after/before.
 
@@ -223,7 +228,10 @@ moves the cursor to that line.
 
 *set* _option_...
 	Set options: *wrap*/*nowrap* (and *wrap!* to toggle, *wrap?* to query),
-	*tabstop*=_N_ (alias *ts*).
+	*tabstop*=_N_ (alias *ts*), *shiftwidth*=_N_ (alias *sw*, the *>>*/*<<*
+	indent step), and *expandtab*/*noexpandtab* (alias *et*/*noet*; whether
+	*>>* indents with spaces or tabs). Numeric options answer *?*; *expandtab*
+	also toggles with *!*.
 
 *map* _lhs_ _rhs_, *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*
@@ -252,8 +260,8 @@ moves the cursor to that line.
 	*bufenter*/*bufleave*/*bufdelete* (buffer switches, with that buffer's path in
 	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
 	*contrib/lvi-list*). *complete* is special: not auto-fired but run
-	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and a single completer
-	-- it replaces on re-register instead of composing.
+	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and is a single
+	completer that replaces on re-register instead of composing.
 
 *status* _name_ [_text_]
 	Set (or clear, if _text_ is empty) a named segment shown in the status line;

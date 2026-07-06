@@ -97,7 +97,7 @@ pick one by context (a `/` in the token → paths, etc.) with no menu.
 
 ## The shared machinery
 
-Everything above is built from four ideas the core provides — worth
+Everything above is built from five ideas the core provides — worth
 understanding once, because they're all *you* need to write the next tool.
 
 **The `:hl` overlay is the substrate.** One styled overlay (`:hl` paints ranges,
@@ -127,6 +127,15 @@ buffer's matches when you arrive in it, which is what makes *cross-file* lists
   double-fork a worker and return at once, letting lvi resume and service the
   worker's socket I/O. `lvi-list` never reads the buffer, so it just fires
   fire-and-forget jumps with `lvi -w --detach`.
+
+**The dirty flag is a socket primitive.** The buffer's modified state is exposed
+through the ordinary `:set` surface — `set modified?` queries it, `set
+nomodified` clears it (aligning the undo saved-marker with the current state, as
+`:w` does but without the I/O), `set modified` forces it dirty. That is all
+`lvi-mirror` needs to keep the clean/dirty indicator honest across panes: it
+reads its own flag and pushes `set nomodified` to peers whenever it goes clean.
+No new protocol — a piece of view state that happened to have no ex option got
+one, and a cross-pane feature fell out.
 
 **The backend contract** (for adding a highlighter). `lvi-highlight` is a
 backend-agnostic harness; a backend is one adapter, `lvi-hl-<name>`, with a
