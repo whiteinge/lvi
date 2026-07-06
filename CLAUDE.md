@@ -46,6 +46,15 @@ Data flows through a few deliberate choke points. Understanding these four is mo
 - **Change hooks** (`:on change CMD`): the generic "run an external tool when the buffer settles" mechanism (so features like syntax highlighting need no daemon — `on change lvi-highlight` in the rc). The `poll` loop arms a 150 ms idle timeout only while a *keyboard* edit is pending (tracked via `buffer.rev`), then fires each hook through `ed.spawn_bg` (detached, output-discarded, non-blocking). Only keyboard edits arm a hook — a hook's own edits return over the *socket* (a different source), so they can never retrigger it and loop. `%event`/subscribe (proto.lua) stays reserved for a future stateful push consumer.
 - Comments explain *why* (design rationale), matching the existing dense-header style; several files carry decision records worth reading before changing them.
 
+## Documentation (who each doc is for)
+
+Four docs, four audiences — keep content in its lane and don't duplicate across them:
+
+- **`lvi.1.scd` (the manpage)** — source of truth for day-to-day editor use: normal-mode commands, ex commands, config, environment. GitHub renders `.scd` inline, so it doubles as browsable reference. It mentions the `contrib` tools only as a brief "this exists, turn it on" teaser with headliners, then links out.
+- **contrib script header comments** — the verbose per-script operator reference: purpose, invocation/synopsis, every env knob, binding snippets, debug flags. Self-contained when you open the file. Env knobs live *here only*.
+- **`contrib/README.md`** — the tour/pitch: what each tool is *for*, and the cross-cutting machinery no single script owns (the `:hl` overlay substrate, file-backed lists + focus, the three spawn disciplines, the backend contract). Points *into* the headers rather than re-listing knobs.
+- **`README.md`** — overview and sales pitch, cascading high→low: the pitch, quick start, a short "what you get" teaser (defers to the manpage for the full reference), then the "Design & implementation" rationale near the end. Prominent links to the manpage and `contrib/` sit up top.
+
 ## POSIX references
 
 `MANPAGE-vi.txt` and `MANPAGE-ex.txt` (repo root) are the POSIX vi/ex specs — consult them for exact command/addressing semantics rather than guessing. Note POSIX vi specifies no arrow keys (commands are literal characters); escape-sequence decoding is intentionally deferred.

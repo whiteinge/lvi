@@ -284,31 +284,24 @@ So *map* and *set* persist by putting them in the rc file; a color theme is a se
 of *hi* lines, and live syntax highlighting is one *on change* line. See
 *contrib/README.md* and *contrib/lvirc.sample*.
 
-# SYNTAX HIGHLIGHTING, SEARCH, AND LISTS
+# TURNING ON THE IDE
 
-These are provided from *outside* the editor -- no language engine, search
-engine, or quickfix machinery lives in *lvi*. Helper programs in _contrib_ pull
-the live buffer over the socket, run an external tool, and drive the view back
-through *hl*/*status* and cursor jumps:
+Much of what feels built into other editors is, in *lvi*, a small external
+program that drives the view over the socket -- so it lives *outside* the core
+and you switch it on from the rc file. No language engine, search engine, or
+quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 
-*lvi-highlight*
-	Syntax highlighting via an external highlighter (Pygments or bat). Enable
-	it with *on change lvi-highlight* in the rc file.
+- *lvi-highlight* -- syntax highlighting via an external highlighter (Pygments or
+  bat); turn it on with *on change lvi-highlight*.
+- *lvi-search* -- grep the live (unsaved) buffer and step matches with *n*/*N*.
+- *lvi-list* -- quickfix/location lists from any grep/compiler/linter output
+  (the vim *-q* format), file-backed and steppable.
+- *lvi-open* -- fuzzy-pick a file and open it in the running view.
 
-*lvi-list*
-	Quickfix/location lists, external and file-backed. A list is a file of
-	_file_:_line_:_text_ entries (grep/compiler/linter output -- the vim *-q*
-	format); *lvi-list* steps the focused one, jumps the cursor, and paints
-	*hl*/*status*. Any number coexist -- one stepping interface for search, grep,
-	lint, git hunks. An *on ready* rc hook loads the *-q* _errorfile_ into one at
-	startup.
-
-*lvi-search* [*-w* _auto_|_wid_] [_pattern_]
-	Grep the live buffer into the *search* list and jump to the first match; a
-	*lvi-list* producer. Steps with *n*/*N* like any list.
-
-*lvi-open*
-	Fuzzy-pick a file and open it in the running view.
+This is only a taste. For what each tool does, its configuration, and
+ready-to-copy bindings and themes, see *contrib/README.md* and
+*contrib/lvirc.sample* -- and the header comment of each script for its full
+reference.
 
 # ENVIRONMENT
 
@@ -335,8 +328,9 @@ through *hl*/*status* and cursor jumps:
 *XDG_RUNTIME_DIR*, *TMPDIR*
 	Preferred locations for the socket directory (else _/tmp_).
 
-*LVI_HL_BACKEND*, *LVI_HL_MAXBYTES*, *BAT_THEME*
-	Tune *lvi-highlight* (see *contrib/README.md*).
+*LVI_HL_BACKEND*, *LVI_HL_MAXBYTES*, *BAT_THEME*, *LVI_PICKER*, ...
+	Knobs for the _contrib_ tools; each script's header comment documents its
+	own. See *contrib/README.md*.
 
 # FILES
 

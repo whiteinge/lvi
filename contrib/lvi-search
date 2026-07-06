@@ -7,11 +7,13 @@
 # degenerate quickfix. Because it reads the buffer via `%p` it searches UNSAVED
 # content, and the line numbers map straight back. PATTERN is a POSIX grep BRE.
 #
-# Bind it inside lvi (WID comes from $LVI_WID):
-#     map / :silent !lvi-search<CR>                 " prompt for a pattern
-#     map * :silent !lvi-search "$LVI_CWORD"<CR>    " search the word under the cursor
-#     map n :silent !lvi-list next<CR>              " step the focused list
-#     map N :silent !lvi-list prev<CR>
+# Bind it inside lvi (WID comes from $LVI_WID). `/` prompts, so it needs the tty
+# (`:silent !`); the rest touch no tty, so they use `:bg` -- a detached spawn with
+# no terminal handover, which avoids the alt-screen flash when you hold n/N:
+#     map / :silent !lvi-search<CR>          " prompt for a pattern
+#     map * :bg lvi-search "$LVI_CWORD"<CR>  " search the word under the cursor
+#     map n :bg lvi-list next<CR>            " step the focused list
+#     map N :bg lvi-list prev<CR>
 # From another terminal, pass a WID: `lvi-search -w auto foo`.
 #
 # It self-backgrounds a --worker: reading the buffer needs lvi's event loop,

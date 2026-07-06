@@ -15,7 +15,13 @@
 #     hi Number   fg=magenta
 #     hi Function fg=yellow
 #     hi Type     fg=cyan
-#     map \h :silent !lvi-highlight<CR>   " re-highlight on demand
+#     on change   lvi-highlight           " re-highlight a beat after you stop typing
+#     on bufenter lvi-highlight           " ...and when you switch/open a buffer
+#     map \h :silent !lvi-highlight<CR>   " ...and/or force it on a key
+#
+# `change` is keyboard-only (a hook's own socket edits can't retrigger it, so no
+# loop); pair it with `bufenter` so a socket-driven :e (e.g. lvi-open) highlights
+# the file it lands on.
 #
 # It self-backgrounds so the `:silent !` returns at once: reading the buffer
 # needs lvi's event loop, which is frozen while it waits on the child, so a
