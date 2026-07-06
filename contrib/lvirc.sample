@@ -61,11 +61,15 @@ on bufenter lvi-list paint
 " press n to step to the first entry. Drop `--focus` to keep your current focus.
 on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
 
-" Always-on lists get their own keys so stepping them never steals focus, e.g.
-" a git-hunk list produced by your own `git-quickfix | lvi-list put hunks`:
-"   map ]c :bg lvi-list next hunks<CR>
-"   map [c :bg lvi-list prev hunks<CR>
+" ---- git changes -------------------------------------------------------------
+" lvi-gitchanges turns `git diff` for the current file into a `gitchanges` list
+" and jumps to the first hunk; n/N then step it like any other list. It reads the
+" file on disk, so it reflects your last :w. (git is non-interactive -> :bg.)
+map \g :bg lvi-gitchanges<CR>                  " load this file's changes + focus
+" Or give it its own step keys so it never steals focus from search:
+"   map ]c :bg lvi-list next gitchanges<CR>
+"   map [c :bg lvi-list prev gitchanges<CR>
 " A group with no style is invisible; lvi-search styles `search` itself, but you
 " can theme any list's group (and its -cur current-entry group), e.g.:
-"   hi hunks bg=22 pri=10   " pri lifts the mark above syntax (which sits at 0)
-"   hi lint  undercurl      " (once lvi grows the attributes you want)
+"   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
+"   hi lint       undercurl     " (once lvi grows the attributes you want)

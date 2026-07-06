@@ -1,0 +1,80 @@
+#!/bin/sh
+# lvi-gitchanges [-w auto|WID] [REF | REF..REF]
+#
+# Load the git changes for the CURRENT buffer as a `lvi-list` quickfix and jump
+# to the first hunk; `n`/`N` then step them like any other list. A git producer
+# in the same mold as lvi-search -- it turns `git diff` hunk headers into
+# `file:line:text` entries, one per hunk, feeds them to `lvi-list`, and lets the
+# shared step/paint/status machinery do the rest.
+#
+#   lvi-gitchanges              uncommitted changes to this file (working tree vs HEAD)
+#   lvi-gitchanges HEAD~3..     changes across a commit range that touch this file
+#   lvi-gitchanges abc123       changes introduced by a single commit (git show)
+#
+# SCOPE + PATHS: always the current file (`$LVI_FILE`), passed to git as a
+# pathspec. Entries emit $LVI_FILE verbatim as the filename (not git's `b/...`
+# path) so they always match what lvi calls the buffer -- the same trick
+# lvi-search uses -- which is what lets `jump` skip a needless :e and `paint`
+# light the changed lines in place.
+#
+# DISK, NOT BUFFER: git diffs the file ON DISK, so this reflects your last :w,
+# not unsaved edits. Save first if a hunk looks stale. (Contrast lvi-search,
+# which greps the live buffer via %p.)
+#
+# Bind it with :bg -- git is non-interactive so it needs no tty, and :bg avoids
+# the alt-screen flash that :silent ! causes:
+#     map \g :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
+#     map ]c :bg lvi-list next gitchanges<CR>   " or step it without stealing focus
+#     map [c :bg lvi-list prev gitchanges<CR>
+# Theme the marks in your rc (un-themed = invisible; see lvi-list):
+#     hi gitchanges bg=22 pri=10
+#
+# Config: LVI (client, default `lvi`). Needs lvi-list and git on PATH. Run from
+# inside lvi ($LVI_WID/$LVI_FILE are exported); from elsewhere pass -w and cd to
+# the file's directory.
+LVI=${LVI:-lvi}
+
+die() { echo "lvi-gitchanges: $*" >&2; exit 1; }
+
+want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+ref=${1:-}
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+send() { $LVI -w "$target" --detach -- "$@"; }
+
+# The buffer's file: from the env when spawned by lvi (a map/hook), else ask.
+file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+case "$file" in ""|"[No File]"|"[No Name]") die "current buffer has no file" ;; esac
+
+# Choose the diff: no ref -> working tree vs HEAD; a range -> that range; a lone
+# commit -> just that commit (git show), mirroring the git-quickfix convention.
+if [ -z "$ref" ]; then
+  diff=$(git diff -U0 HEAD -- "$file" 2>/dev/null)
+elif [ "${ref#*..}" != "$ref" ]; then
+  diff=$(git diff -U0 "$ref" -- "$file" 2>/dev/null)
+else
+  diff=$(git show -U0 --first-parent -m "$ref" -- "$file" 2>/dev/null)
+fi
+[ $? -eq 0 ] || die "git failed (not a repo, or bad ref '$ref'?)"
+
+# One entry per hunk: $LVI_FILE:<new-start>:+A -D  <section context>.
+# @@ -a,d +s,i @@ ctx   (a comma-less count means 1; +s,0 is a pure deletion).
+entries=$(printf '%s\n' "$diff" | awk -v f="$file" '
+  /^@@ / {
+    add=$3; sub(/^\+/,"",add); s=add
+    if (add ~ /,/) { sub(/.*,/,"",add); sub(/,.*/,"",s) } else add=1
+    if (s+0 < 1) s=1
+    del=$2; sub(/^-/,"",del); if (del ~ /,/) sub(/.*,/,"",del); else del=1
+    ctx=$0; sub(/^@@[^@]*@@ ?/,"",ctx)
+    label=sprintf("+%d -%d", add, del)
+    if (ctx != "") label=label "  " ctx
+    printf "%s:%s:%s\n", f, s, label
+  }')
+
+if [ -z "$entries" ]; then
+  send "hl gitchanges" "hl gitchanges-cur" "status gitchanges no changes"
+  exit 0
+fi
+
+printf '%s\n' "$entries" | lvi-list $wflag put gitchanges --focus
+lvi-list $wflag next

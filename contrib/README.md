@@ -55,6 +55,15 @@ Lists live beside the view's socket (auto-cleaned per view); `lvi-list save`/`lo
 promote one to any durable path — that's "save this quickfix for later" in a
 single file. See the `lvi-list` header for the full verb set.
 
+### `lvi-gitchanges` — step your git diff
+
+The second `lvi-list` producer, and a one-line proof that "any tool that speaks
+`file:line:text` is a quickfix": it turns the `git diff` for the current buffer
+into a `gitchanges` list — one entry per hunk — and jumps to the first, so `n`/`N`
+walk your uncommitted changes. `lvi-gitchanges HEAD~3..` steps a commit range,
+`lvi-gitchanges <commit>` a single commit. Unlike `lvi-search` it reads the file
+on **disk**, not the live buffer, so it shows changes as of your last `:w`.
+
 ### `lvi-open` — open a file
 
 A fuzzy-picker (fzf by default) that opens the chosen file in the running view.

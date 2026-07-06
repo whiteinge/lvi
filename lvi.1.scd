@@ -301,6 +301,7 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 - *lvi-search* -- grep the live (unsaved) buffer and step matches with *n*/*N*.
 - *lvi-list* -- quickfix/location lists from any grep/compiler/linter output
   (the vim *-q* format), file-backed and steppable.
+- *lvi-gitchanges* -- step the current file's *git diff* hunks with *n*/*N*.
 - *lvi-open* -- fuzzy-pick a file and open it in the running view.
 
 This is only a taste. For what each tool does, its configuration, and
