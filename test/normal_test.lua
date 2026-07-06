@@ -1011,6 +1011,60 @@ describe("normal-mode interpreter", function()
       expect(ed.running).to.be(false)
     end)
   end)
+
+  describe("insert-mode completion (Ctrl-P/Ctrl-N)", function()
+    -- Stub the completer: record the context core hands over, return a canned word.
+    local function with_completer(ed, ret)
+      local seen = {}
+      ed.hooks = { complete = { "stub" } }
+      ed.complete_run = function(cmd, token, left, dir)
+        seen.cmd, seen.token, seen.left, seen.dir = cmd, token, left, dir
+        return ret
+      end
+      return seen
+    end
+    local CP, CN = string.char(16), string.char(14)
+
+    it("replaces the token before the cursor with the completer's word", function()
+      local ed = make("")
+      local seen = with_completer(ed, "foobar")
+      feed(ed, "ifoo" .. CP)
+      expect(ed.buf:line(1)).to.equal("foobar")
+      expect(ed.cx).to.equal(7)                 -- cursor after the inserted word
+      expect(seen.token).to.equal("foo")        -- the non-blank run before cursor
+      expect(seen.dir).to.equal("prev")         -- Ctrl-P
+    end)
+
+    it("extracts the token as the non-blank run and preserves text after the cursor", function()
+      local ed = make("fooXYZ")
+      local seen = with_completer(ed, "foobar")
+      feed(ed, "llli" .. CP)                     -- cursor on 'X', insert before it
+      expect(seen.token).to.equal("foo")
+      expect(seen.left).to.equal("foo")
+      expect(ed.buf:line(1)).to.equal("foobarXYZ")
+    end)
+
+    it("Ctrl-N passes dir=next", function()
+      local ed = make("")
+      local seen = with_completer(ed, "x")
+      feed(ed, "ia" .. CN)
+      expect(seen.dir).to.equal("next")
+    end)
+
+    it("an empty completion result leaves the buffer unchanged", function()
+      local ed = make("")
+      with_completer(ed, "")
+      feed(ed, "ifoo" .. CP)
+      expect(ed.buf:line(1)).to.equal("foo")
+      expect(ed.cx).to.equal(4)
+    end)
+
+    it("is a no-op with no completer registered", function()
+      local ed = make("")
+      feed(ed, "ifoo" .. CP .. "bar")            -- Ctrl-P ignored; typing continues
+      expect(ed.buf:line(1)).to.equal("foobar")
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

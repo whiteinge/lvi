@@ -19,7 +19,8 @@ local M = {}
 -- startup analog of vim's VimEnter -- e.g. an rc hook loads a `-q` list); the
 -- buf* events fire on buffer switches (editor.lua/bufs.lua).
 local EVENTS = { change = true, write = true, ready = true,
-                 bufenter = true, bufleave = true, bufdelete = true }
+                 bufenter = true, bufleave = true, bufdelete = true,
+                 complete = true }
 
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
@@ -539,11 +540,19 @@ function M.dispatch(ed, line)
     -- edits can't retrigger it (see editor.lua). The buf* events fire on buffer
     -- switches with that buffer's path in LVI_FILE -- the glue that lets a
     -- cross-file list repaint the current buffer's subset on arrival.
+    -- `complete` is the exception to all of the above: not auto-fired but read
+    -- SYNCHRONOUSLY by insert-mode Ctrl-P/Ctrl-N, which runs the single registered
+    -- command with the tty and inserts its stdout -- the completion funnel (see
+    -- editor.lua's complete_run and normal.lua). Being single, it REPLACES on
+    -- re-register instead of composing.
     local event, rest = args:match("^(%S+)%s*(.-)%s*$")
     if not event or event == "" then return "usage: on EVENT [command]", "err" end
     if not EVENTS[event] then return "unknown event: " .. event, "err" end
     ed.hooks = ed.hooks or {}
     if rest == "" then ed.hooks[event] = nil; return "", "ok" end
+    -- `complete` names a single completer (you can't merge two pickers), so it
+    -- REPLACES; the fire-and-forget events compose (append).
+    if event == "complete" then ed.hooks.complete = { rest }; return "", "ok" end
     ed.hooks[event] = ed.hooks[event] or {}
     table.insert(ed.hooks[event], rest)
     return "", "ok"

@@ -78,6 +78,23 @@ definition line, scrolling the picker *is* a structural overview of the buffer �
 `tags` file (walk-up from the tree, or `$LVI_TAGS`), so it reflects your last
 `ctags` run, not the live buffer. Bind it: `map \t :silent !lvi-tags<CR>`.
 
+### `lvi-complete` — insert-mode word completion
+
+Insert-mode Ctrl-N/Ctrl-P completion drawn from **all open buffers**. lvi's core
+gives it a dedicated funnel: `on complete CMD` registers a completer, and the
+keypress runs it synchronously — handing it the token you're typing (plus the
+line's left context) and every open buffer's text, then splicing its stdout in
+over the token. `lvi-complete` is the shipped completer: it de-dupes the buffers'
+words (current buffer first), fuzzy-picks with your `$LVI_PICKER` seeded by the
+token, and prints the choice. Turn it on with `on complete lvi-complete`; set
+`LVI_COMPL_POPUP=1` under tmux to draw the picker in a `display-popup` over the
+editor instead of taking the whole screen.
+
+Because the funnel is generic — token + left-context + buffers in, one word out —
+the *kind* of completion is just which command you register: a file-path, whole-
+line, or `readtags` symbol completer is the same contract, and a dispatcher can
+pick one by context (a `/` in the token → paths, etc.) with no menu.
+
 ## The shared machinery
 
 Everything above is built from four ideas the core provides — worth

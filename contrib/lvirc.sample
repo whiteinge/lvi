@@ -61,6 +61,14 @@ on bufenter lvi-list paint
 " press n to step to the first entry. Drop `--focus` to keep your current focus.
 on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
 
+" ---- insert-mode completion --------------------------------------------------
+" Ctrl-N/Ctrl-P in insert mode complete the word before the cursor from all open
+" buffers. `on complete` names the completer; core hands it the token + buffers
+" and splices its choice back. lvi-complete fuzzy-picks with $LVI_PICKER; set
+" LVI_COMPL_POPUP=1 (under tmux) to draw it in a popup over the editor.
+on complete lvi-complete
+"   on complete LVI_COMPL_POPUP=1 lvi-complete   " ...as a tmux popup instead
+
 " ---- tags -------------------------------------------------------------------
 " lvi-tags lists this file's ctags tags in file order through your picker and
 " jumps to the one you choose -- a jump-to-symbol and a file outline in one key.

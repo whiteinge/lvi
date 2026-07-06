@@ -159,6 +159,13 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 *Ctrl-A*, *Ctrl-E*
 	Move to the start / end of the line (a readline convenience; not POSIX vi).
 
+*Ctrl-N*, *Ctrl-P*
+	Complete the word before the cursor. Both run the command registered with
+	*on complete* (nothing happens if none is), handing it the token and every
+	open buffer's text and splicing its choice in; *contrib/lvi-complete* is the
+	shipped completer (a fuzzy pick of the buffers' words). *Ctrl-N*/*Ctrl-P*
+	pass a forward/backward hint the completer may use.
+
 # EX COMMANDS
 
 Typed at the *:* prompt and sent over the socket alike -- the same dispatcher
@@ -244,7 +251,9 @@ moves the cursor to that line.
 	analog of vim's *VimEnter*, e.g. to load a *-q* list), or
 	*bufenter*/*bufleave*/*bufdelete* (buffer switches, with that buffer's path in
 	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
-	*contrib/lvi-list*).
+	*contrib/lvi-list*). *complete* is special: not auto-fired but run
+	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and a single completer
+	-- it replaces on re-register instead of composing.
 
 *status* _name_ [_text_]
 	Set (or clear, if _text_ is empty) a named segment shown in the status line;
@@ -304,6 +313,8 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 - *lvi-gitchanges* -- step the current file's *git diff* hunks with *n*/*N*.
 - *lvi-open* -- fuzzy-pick a file and open it in the running view.
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
+- *lvi-complete* -- insert-mode word completion from the open buffers
+  (*on complete lvi-complete*).
 
 This is only a taste. For what each tool does, its configuration, and
 ready-to-copy bindings and themes, see *contrib/README.md* and

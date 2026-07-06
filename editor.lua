@@ -264,11 +264,15 @@ function M.run(opts)
     -- Hand the real terminal to a child (interactive programs: fzf/fzy, vim,
     -- git commit): drop to cooked mode, leave the alt screen, run fn (which may
     -- capture output via a pipe while the child's UI uses the tty), then resume.
-    ed.with_tty = function(fn)
+    -- `keep` (completion): stay ON the alt screen so an interactive picker/popup
+    -- draws OVER the current frame instead of flashing the shell underneath; the
+    -- caller repaints after (force_clear). The default swaps to the primary
+    -- screen -- right for :! / vim / git that own the whole terminal.
+    ed.with_tty = function(fn, keep)
       sys.restore(saved)
-      sys.write(1, term.alt_off .. term.show)
+      sys.write(1, (keep and "" or term.alt_off) .. term.show)
       local r = fn()
-      sys.write(1, term.alt_on)
+      if not keep then sys.write(1, term.alt_on) end
       saved = sys.raw_mode()
       return r
     end
@@ -291,6 +295,39 @@ function M.run(opts)
     -- Ctrl-Z: suspend to the shell (reusing the tty dance); execution continues
     -- after `raise(SIGTSTP)` when the user runs `fg`.
     ed.suspend_self = function() ed.with_tty(sys.suspend) end
+    -- Insert-mode completion (Ctrl-P/Ctrl-N -> the `on complete` command). We run
+    -- the completer synchronously, handing it the real terminal (keep=true, so a
+    -- picker/popup draws over our frame), which freezes the poll loop -- so the
+    -- completer can't read us back over the socket. We therefore feed it
+    -- everything up front: the token being completed and the line's left context
+    -- in the env, and ALL buffers' text (current first) on stdin. Its stdout is
+    -- the replacement text. normal.lua splices it in over the token. Cross-buffer
+    -- words work because the current view's other buffers live only in memory
+    -- here, not on any socket the frozen loop could answer.
+    ed.complete_run = function(cmd, token, left, dir)
+      ed.export_context()
+      sys.setenv("LVI_COMPL_TOKEN", token or "")
+      sys.setenv("LVI_COMPL_LINE", left or "")
+      sys.setenv("LVI_COMPL_DIR", dir or "")
+      local tmp = os.tmpname()
+      local f = io.open(tmp, "wb")
+      if f then
+        f:write(ed.buf:text())                          -- current buffer first
+        for i = 1, #ed.buffers do
+          if i ~= ed.bufidx then f:write(ed.buffers[i].buf:text()) end
+        end
+        f:close()
+      end
+      local sel = ed.with_tty(function()
+        local p = io.popen(cmd .. " < " .. tmp, "r")    -- picker UI on /dev/tty
+        local o = p and p:read("*a") or ""
+        if p then p:close() end
+        return o
+      end, true)
+      os.remove(tmp)
+      ed.force_clear = true                             -- repaint over the picker
+      return (sel or ""):match("^[^\r\n]*")             -- first line only (a line has no \n)
+    end
     refresh(ed)
     sys.write(1, render.frame(ed))
   else

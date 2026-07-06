@@ -138,6 +138,25 @@ local function set_reg(ed, name, text, linewise)
 end
 local function get_reg(ed, name) return ed.regs[name or '"'] end
 
+-- Insert-mode completion (Ctrl-P/Ctrl-N): replace the non-blank token before the
+-- cursor with a word chosen by the `on complete` command. Core hands the command
+-- its context and inserts its stdout (see editor.lua's complete_run and the
+-- lvi-complete contrib script); a no-op with no completer registered or headless
+-- (ed.complete_run absent). Byte-based like insert_char, so a multibyte token
+-- round-trips. dir (prev/next) is advisory -- the completer may ignore it.
+local function complete(ed, dir)
+  local cmd = ed.hooks and ed.hooks.complete and ed.hooks.complete[1]
+  if not cmd or not ed.complete_run then return end
+  local s = line(ed, ed.cy)
+  local left = s:sub(1, ed.cx - 1)
+  local token = left:match("%S+$") or ""
+  local sel = ed.complete_run(cmd, token, left, dir)
+  if not sel or sel == "" then return end
+  local at = ed.cx - #token                              -- start of the token
+  ed.buf:set(ed.cy, s:sub(1, at - 1) .. sel .. s:sub(ed.cx))
+  ed.cx = at + #sel
+end
+
 -- ---- insert mode (also a coroutine loop) ------------------------------------
 local function insert_char(ed, byte_)
   local s = line(ed, ed.cy)
@@ -204,6 +223,8 @@ local function insert_mode(ed)
     -- vi's answer is <Esc> then I / A. Included by request.
     elseif k == 1 then ed.cx = 1                       -- Ctrl-A: start of line
     elseif k == 5 then ed.cx = #line(ed, ed.cy) + 1    -- Ctrl-E: end of line
+    elseif k == 16 then complete(ed, "prev")           -- Ctrl-P: complete (backward)
+    elseif k == 14 then complete(ed, "next")           -- Ctrl-N: complete (forward)
     elseif k == 9 or (k >= 32 and k ~= 127) then insert_char(ed, k) -- printable + UTF-8 bytes
     end
     clamp(ed)
