@@ -95,6 +95,21 @@ the *kind* of completion is just which command you register: a file-path, whole-
 line, or `readtags` symbol completer is the same contract, and a dispatcher can
 pick one by context (a `/` in the token → paths, etc.) with no menu.
 
+### `lvi-mirror` — live-share a buffer across panes
+
+lvi has no in-editor split; the multiplexer owns the panes, and each runs its own
+`lvi thefile` — a separate process with its own buffer and socket. `lvi-mirror`
+is the thread between them: it pulls the **live** buffer over the control socket
+(so *unsaved* edits propagate, which a file-watch + `:e` never could) and diffs
+it into every other view open on the same file, applying only the changed hunks
+so each peer keeps its marks, highlights, and scroll. Turn it on in **every**
+pane with two rc lines — `on change lvi-mirror` (propagate edits as they settle)
+and `on write lvi-mirror` (propagate the saved/clean state on `:w`). The mesh is
+stable by construction: a peer receives the push over its socket, and
+socket-sourced edits never re-arm the `change` hook, so A→B never rings back
+B→A. It also carries the dirty flag across panes via the `set modified?` /
+`set nomodified` primitive (see below).
+
 ## The shared machinery
 
 Everything above is built from five ideas the core provides — worth
