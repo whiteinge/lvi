@@ -28,8 +28,8 @@ Linux, macOS, BSD, and WSL.
 - **UNIX as IDE.** Search, syntax highlighting, and the bulk of the ex command
   set come from composing programs you already have (grep, a highlighter, the
   system `ex`) over the socket — not from engines living inside the editor.
-- **Small and legible.** The whole editor is a few small Lua files (~1.5k lines),
-  with everything unsafe or platform-specific quarantined to one of them.
+- **Small and legible.** The whole editor is a dozen small Lua files, with
+  everything unsafe or platform-specific quarantined to one of them.
 - **Modal editing you already know.** Motions, operators, counts, registers,
   insert mode, `.` repeat, macros, undo/redo, and marks — the muscle memory
   carries over.
@@ -210,7 +210,7 @@ columns on screen, so cost is independent of file size.
 
 ### Testing
 
-Behavior is covered by ~90 tests (`test/`, vendored `lust`): the buffer and its
+Behavior is covered by tests (`test/`, vendored `lust`): the buffer and its
 undo log, the ex dispatcher, the wire protocol (including binary-safety and
 chunk-boundary cases), the renderer (a pure function of editor state), and the
 coroutine interpreter (driven by feeding it keys). The socket path is exercised
