@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-search [-w auto|WID] [PATTERN]
+# lvi-search [-w auto|WID] [-i] [PATTERN]
 #
 # Search a running lvi from outside it, as a `lvi-list` producer: grep the *live*
 # buffer over the control socket, build the `search` list, focus it, and jump to
@@ -21,12 +21,18 @@
 # deadlock (same reason lvi-highlight self-backgrounds). The pattern PROMPT,
 # though, runs in the foreground -- a backgrounded worker has no tty.
 #
-# Config: LVI (client, default `lvi`), LVI_SEARCH_DEBUG (capture worker stderr).
-# Needs lvi-list on PATH.
+# Case: -i forces case-insensitive; LVI_SEARCH_CASE picks the default policy --
+# `sensitive` (default), `ignore`, or `smart` (the vi/vim rule: insensitive unless
+# PATTERN has an uppercase letter). Set it per binding to taste, e.g.
+#     map / :silent !LVI_SEARCH_CASE=smart lvi-search<CR>
+#
+# Config: LVI (client, default `lvi`), LVI_SEARCH_CASE (sensitive|ignore|smart),
+# LVI_SEARCH_DEBUG (capture worker stderr). Needs lvi-list on PATH.
 LVI=${LVI:-lvi}
 
 worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
 want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+icase=; [ "$1" = "-i" ] && { icase=1; shift; }
 pat=${1:-}
 target=${want_wid:-${LVI_WID:-auto}}
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
@@ -42,7 +48,7 @@ fi
 # Detach the buffer-reading half; return at once so lvi's loop resumes and can
 # service the worker's socket traffic.
 if [ -z "$worker" ]; then
-  ( "$0" --worker $wflag "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
+  ( "$0" --worker $wflag ${icase:+-i} "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
   exit 0
 fi
 
@@ -52,7 +58,19 @@ fi
 file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$file" in "[No File]"|"[No Name]") file= ;; esac
 
-matches=$($LVI -w "$target" -- '%p' | grep -n -- "$pat")
+# Resolve case policy: an explicit -i wins, else LVI_SEARCH_CASE decides (smart
+# looks for an uppercase letter in the pattern, so a locale-aware [[:upper:]]).
+iflag=
+if [ -n "$icase" ]; then
+  iflag=-i
+else
+  case "${LVI_SEARCH_CASE:-sensitive}" in
+    ignore) iflag=-i ;;
+    smart)  case "$pat" in *[[:upper:]]*) ;; *) iflag=-i ;; esac ;;
+  esac
+fi
+
+matches=$($LVI -w "$target" -- '%p' | grep -n $iflag -- "$pat")
 if [ -z "$matches" ]; then
   $LVI -w "$target" --detach -- "hl search" "status search /$pat/ no match"
   exit 0
