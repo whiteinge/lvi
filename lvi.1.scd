@@ -122,6 +122,9 @@ just register text, so a yanked register can be replayed with *@*.
 	Switch to the alternate buffer -- the one edited before the current (same as
 	*:b #*).
 
+*ZZ* *ZQ*
+	Write (if modified) and quit; quit without writing. Same as *:x* and *:q!*.
+
 *Ctrl-Z*
 	Suspend the editor to the shell (resume with fg).
 
@@ -149,7 +152,9 @@ a line number, *.* (current), *$* (last), and *%* (whole buffer). A bare address
 moves the cursor to that line.
 
 *w* [_file_], *wq*, *x*
-	Write (to _file_ or the current path), write and quit.
+	Write (to _file_ or the current path); write and quit; write and quit but
+	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
+	untouched). *ZZ* is *x*.
 
 *q*, *q!*, *qa*[*!*]
 	Quit (current view / all views); *!* discards unsaved changes.

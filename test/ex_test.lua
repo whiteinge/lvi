@@ -96,6 +96,58 @@ describe("ex.dispatch", function()
     end)
   end)
 
+  describe("write and quit (:wq / :x)", function()
+    it(":x on a clean buffer quits WITHOUT writing (leaves mtime alone)", function()
+      local ed = ed_with("a\nb\n")
+      local target = os.tmpname(); os.remove(target)   -- a path that must stay absent
+      ed.buf.path = target
+      local fired = {}
+      ed.fire_event = function(e) fired[#fired + 1] = e end
+      local _, s = ex.dispatch(ed, "x")
+      expect(s).to.equal("ok")
+      expect(ed.running).to.be(false)
+      local fh = io.open(target, "rb")
+      expect(fh).to_not.exist()                          -- never written
+      if fh then fh:close(); os.remove(target) end
+      expect(fired).to.equal({})                          -- and no write event
+    end)
+    it(":x on a modified buffer writes, quits, clears modified, fires write", function()
+      local ed = ed_with("a\nb\n")
+      local target = os.tmpname()
+      ed.buf.path = target
+      ed.buf:set(1, "X")                                  -- dirty it
+      local fired = {}
+      ed.fire_event = function(e) fired[#fired + 1] = e end
+      local _, s = ex.dispatch(ed, "x")
+      expect(s).to.equal("ok")
+      expect(ed.running).to.be(false)
+      expect(ed.buf.modified).to.be(false)
+      expect(fired).to.equal({ "write" })
+      local f = io.open(target, "rb"); local body = f:read("*a"); f:close()
+      expect(body).to.equal("X\nb\n")
+      os.remove(target)
+    end)
+    it(":x on a modified unnamed buffer errors (no file name)", function()
+      local ed = ed_with("a")
+      ed.buf:set(1, "X")
+      local _, s = ex.dispatch(ed, "x")
+      expect(s).to.equal("err")
+      expect(ed.running).to.be(true)
+    end)
+    it(":wq writes even when the buffer is clean (unlike :x)", function()
+      local ed = ed_with("a\nb\n")
+      local target = os.tmpname(); os.remove(target)
+      ed.buf.path = target
+      local _, s = ex.dispatch(ed, "wq")
+      expect(s).to.equal("ok")
+      expect(ed.running).to.be(false)
+      local f = io.open(target, "rb")
+      expect(f).to.exist()                                -- :wq always writes
+      if f then f:close() end
+      os.remove(target)
+    end)
+  end)
+
   describe("set", function()
     it("toggles wrap and queries it", function()
       local ed = ed_with("x")

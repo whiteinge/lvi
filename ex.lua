@@ -365,6 +365,14 @@ function M.dispatch(ed, line)
     return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
 
   elseif cmd == "wq" or cmd == "x" then
+    -- :x writes only when the buffer is modified, then quits -- so on a clean
+    -- buffer it leaves the file's mtime untouched (its whole reason to exist
+    -- over :wq, which always writes). An explicit target (:x file) is a save-as,
+    -- so it still writes. ZZ routes here, inheriting the skip.
+    if cmd == "x" and args == "" and not ed.buf.modified then
+      ed.running = false
+      return "", "ok"
+    end
     local p = (args ~= "" and args) or ed.buf.path
     if not p then return "No file name", "err" end
     local ok, n = pcall(ed.buf.write, ed.buf, p)
