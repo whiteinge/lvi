@@ -75,6 +75,14 @@ focus_get() { cat "$focusfile" 2>/dev/null; }
 focus_set() { printf '%s\n' "$1" > "$focusfile"; }
 names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
 
+# Keep only `file:line[:col]:text` entries (a colon then digits then a colon or
+# EOL). This drops blank lines AND the body/message continuation lines of vim's
+# MULTI-LINE quickfix format -- lvi-list has no notion of them, so without this a
+# `git-quickfix`/compiler file written for vim would litter the list with
+# unjumpable junk that inflates the count and traps n/N. Continuation lines never
+# have digits right after their first colon, so the shape test excludes them.
+qfilter() { grep -E '^[^:]*:[0-9][0-9]*(:|$)'; }
+
 # Current file: from the env when we were spawned by lvi (a map/hook), else ask.
 curfile() {
   if [ -n "${LVI_FILE+x}" ]; then printf '%s\n' "$LVI_FILE"
@@ -115,7 +123,7 @@ case "$sub" in
   put)
     dofocus=; [ "${2:-}" = "--focus" ] && { dofocus=1; set -- "$1"; }
     name=${1:?usage: lvi-list put NAME [--focus]}
-    mkdir -p "$listdir"; grep . > "$listdir/$name" || true    # drop blank lines
+    mkdir -p "$listdir"; qfilter > "$listdir/$name" || true   # keep only entries (see qfilter)
     setcur "$name" 0                                          # a following `next` lands on 1
     [ -n "$dofocus" ] && focus_set "$name"
     paint "$name" ;;
@@ -175,7 +183,7 @@ case "$sub" in
   load)
     src=${1:?usage: load PATH [NAME] [--focus]}
     name=${2:-$(basename "$src")}; case "$name" in --focus) name=$(basename "$src");; esac
-    mkdir -p "$listdir"; cp "$src" "$listdir/$name"; setcur "$name" 0
+    mkdir -p "$listdir"; qfilter < "$src" > "$listdir/$name" || true; setcur "$name" 0
     case " $* " in *" --focus "*) focus_set "$name" ;; esac
     paint "$name" ;;
 

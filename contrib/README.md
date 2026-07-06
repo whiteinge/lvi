@@ -37,7 +37,9 @@ Select one with `LVI_HL_BACKEND`; see the `lvi-highlight` header for the rest.
 ### `lvi-search` + `lvi-list` — search and quickfix
 
 A **list** is a plain file of `file:line[:col]:text` entries — the vim `-q`
-format that grep, a compiler, a linter, or `git diff` all speak. lvi knows
+format that grep, a compiler, a linter, or `git diff` all speak (vim's
+multi-line variant works too: `lvi-list` keeps the entry lines and ignores the
+diff-body/message continuation lines it has no notion of). lvi knows
 nothing about lists: `lvi-list` owns them and drives the view over the socket,
 jumping the cursor, painting the `:hl` overlay, and setting a `:status` counter.
 Any number of named lists coexist; one is **focused**, and the bare step commands
