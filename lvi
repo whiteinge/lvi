@@ -19,6 +19,7 @@ parser:argument("args", "file to edit, or ex commands (after --) in client mode"
 parser:option("-w --wid", "send ex commands to this view's socket ('auto' = sole view)")
 parser:flag("-d --detach", "client mode: send without waiting for replies (fire-and-forget)")
 parser:flag("-l --list", "list running views and exit")
+parser:option("-q --quickfix", "set $LVI_QUICKFIX to FILE and fire the `ready` hook (wire it up in the rc; see lvirc.sample)")
 
 local a = parser:parse()
 
@@ -46,6 +47,7 @@ if a.wid then
   os.exit(rc)
 end
 
--- Editor mode. Positional args open as buffers (first one current).
+-- Editor mode. Positional args open as buffers (first one current); -q parks an
+-- errorfile path in $LVI_QUICKFIX for a `ready` hook (it is not itself a buffer).
 local editor = require("editor")
-editor.run({ files = a.args })
+editor.run({ files = a.args, quickfix = a.quickfix })

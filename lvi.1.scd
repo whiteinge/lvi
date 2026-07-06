@@ -6,7 +6,7 @@ lvi - a minimal, POSIX-vi-style modal editor with a control socket
 
 # SYNOPSIS
 
-*lvi* [_file_...]++
+*lvi* [*-q* _errorfile_] [_file_...]++
 *lvi* *-w* _wid_ [*-d*] *--* _command_...++
 *lvi* *-l*
 
@@ -39,6 +39,14 @@ that sends ex commands to an already-running view (see *THE CONTROL SOCKET*).
 
 *-l*, *--list*
 	List running views as _wid_<TAB>_socket-path_, one per line, and exit.
+
+*-q*, *--quickfix* _errorfile_
+	Editor mode: export _errorfile_ as *LVI_QUICKFIX* and fire the *ready* event
+	at startup (see *on*). *lvi* itself does nothing more with it -- the core has
+	no list machinery. An rc hook turns it into a loaded quickfix list; the one
+	in *contrib/lvirc.sample* runs *lvi-list load "$LVI_QUICKFIX" quickfix* when
+	*LVI_QUICKFIX* is set (see *contrib/lvi-list*). _errorfile_ is not opened as a
+	buffer.
 
 # NORMAL MODE
 
@@ -227,9 +235,11 @@ moves the cursor to that line.
 *on* _event_ [_cmd_]
 	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears
 	that event's hooks. _event_ is *change* (a keyboard edit settled -- for live
-	highlighting), or *bufenter*/*bufleave*/*bufdelete* (buffer switches, with
-	that buffer's path in *LVI_FILE* -- the glue for repainting per-buffer list
-	overlays; see *contrib/lvi-list*).
+	highlighting), *ready* (once at startup, socket live and rc loaded -- the
+	analog of vim's *VimEnter*, e.g. to load a *-q* list), or
+	*bufenter*/*bufleave*/*bufdelete* (buffer switches, with that buffer's path in
+	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
+	*contrib/lvi-list*).
 
 *status* _name_ [_text_]
 	Set (or clear, if _text_ is empty) a named segment shown in the status line;
@@ -287,9 +297,11 @@ through *hl*/*status* and cursor jumps:
 
 *lvi-list*
 	Quickfix/location lists, external and file-backed. A list is a file of
-	_file_:_line_:_text_ entries (grep/compiler/linter output); *lvi-list* steps
-	the focused one, jumps the cursor, and paints *hl*/*status*. Any number
-	coexist -- one stepping interface for search, grep, lint, git hunks.
+	_file_:_line_:_text_ entries (grep/compiler/linter output -- the vim *-q*
+	format); *lvi-list* steps the focused one, jumps the cursor, and paints
+	*hl*/*status*. Any number coexist -- one stepping interface for search, grep,
+	lint, git hunks. An *on ready* rc hook loads the *-q* _errorfile_ into one at
+	startup.
 
 *lvi-search* [*-w* _auto_|_wid_] [_pattern_]
 	Grep the live buffer into the *search* list and jump to the first match; a
@@ -306,6 +318,10 @@ through *hl*/*status* and cursor jumps:
 *LVI_WID*, *LVI_SOCK*
 	The current view's id and socket path, exported to child processes (static
 	for the life of the view).
+
+*LVI_QUICKFIX*
+	The _errorfile_ given with *-q*, exported for the *ready* hook to load (see
+	*-q*). Unset when *-q* was not given.
 
 *LVI_FILE*, *LVI_LINE*, *LVI_COL*, *LVI_CWORD*
 	The cursor's world -- current file path, 1-based line and byte column, and

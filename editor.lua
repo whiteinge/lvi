@@ -192,6 +192,11 @@ function M.run(opts)
   -- this view back over the socket (`lvi -w "$LVI_WID" -- ...`).
   sys.setenv("LVI_WID", ed.wid)
   sys.setenv("LVI_SOCK", ed.sock_path)
+  -- `lvi -q FILE` parks the errorfile path here for a `ready` hook to consume
+  -- (e.g. `on ready ... lvi-list load "$LVI_QUICKFIX" ...` in the rc). The core
+  -- stays list-agnostic -- this is just one more value in the child environment,
+  -- like LVI_FILE; the rc owns what to do with it.
+  if opts.quickfix then sys.setenv("LVI_QUICKFIX", opts.quickfix) end
 
   -- The interpreter coroutine. Prime it to the first getkey() yield.
   ed.interp = coroutine.create(function() normal.loop(ed) end)
@@ -228,6 +233,10 @@ function M.run(opts)
   -- initial bufenter lets lists paint the starting buffer.
   ed.fire_event = function(event, buf) M.fire(ed, event, buf) end
   ed.fire_event("bufenter")
+  -- One-shot startup event: the view is fully live (socket up, rc loaded). Fired
+  -- once here, before the poll loop, like the initial bufenter above -- a hook's
+  -- socket callbacks queue and are serviced the instant the loop starts.
+  ed.fire_event("ready")
 
   local saved
   if tty then

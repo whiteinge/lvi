@@ -113,7 +113,10 @@ paints named groups of ranges, `:hi GROUP fg=… bg=… bold underline` (or a ra
 `sgr=…`) gives a group a color and `pri=N` its z-order (higher draws over lower,
 so overlays win over syntax); an un-themed group renders as plain text.
 **Change hooks**: `:on change <cmd>` runs an external command a beat after you
-stop typing (debounced, non-blocking, loop-safe).
+stop typing (debounced, non-blocking, loop-safe); `:on ready <cmd>` runs one
+once the view is live at startup — e.g. `lvi -q errorfile` parks the path in
+`$LVI_QUICKFIX` and an rc `on ready` hook loads it as a quickfix list, keeping
+the core list-agnostic.
 
 **Syntax highlighting**, built entirely from those pieces — no language engine
 in the editor. `contrib/lvi-highlight` pulls the live buffer over the socket,

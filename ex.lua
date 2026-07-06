@@ -15,8 +15,11 @@ local M = {}
 
 -- Events an `:on` hook may bind to. `change` fires (debounced) after a keyboard
 -- edit settles; `write` fires right after a successful :w/:wq/:x (any surface);
--- the buf* events fire on buffer switches (editor.lua/bufs.lua).
-local EVENTS = { change = true, write = true, bufenter = true, bufleave = true, bufdelete = true }
+-- `ready` fires once at startup, after the rc loads and the socket is live (the
+-- startup analog of vim's VimEnter -- e.g. an rc hook loads a `-q` list); the
+-- buf* events fire on buffer switches (editor.lua/bufs.lua).
+local EVENTS = { change = true, write = true, ready = true,
+                 bufenter = true, bufleave = true, bufdelete = true }
 
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'

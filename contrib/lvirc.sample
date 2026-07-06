@@ -48,6 +48,13 @@ map \/ :bg lvi-list hide<CR>                  " :nohl-style -- hide it; next n/N
 " makes cross-file lists -- project grep, a compiler -- highlight per file).
 on bufenter lvi-list paint
 
+" `lvi -q FILE` (vim's quickfix flag): the core only parks FILE in $LVI_QUICKFIX
+" and fires `ready` once at startup -- it knows nothing about lists. This hook is
+" what turns it into a loaded list: the shell guard keeps it inert on a plain
+" `lvi`, and only bites when -q was passed. Loads + paints (cursor stays put);
+" press n to step to the first entry. Drop `--focus` to keep your current focus.
+on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
+
 " Always-on lists get their own keys so stepping them never steals focus, e.g.
 " a git-hunk list produced by your own `git-quickfix | lvi-list put hunks`:
 "   map ]c :bg lvi-list next hunks<CR>
