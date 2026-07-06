@@ -113,6 +113,13 @@ just register text, so a yanked register can be replayed with *@*.
 *Ctrl-E* *Ctrl-Y*
 	Scroll one line down/up, keeping the cursor in view.
 
+*z*_CR_ *z.* *z-*
+	Reposition the window so the current line (or line _count_) sits at the top,
+	center, or bottom, moving the cursor to that line's first non-blank.
+
+*zt* *zz* *zb*
+	Like *z*_CR_ / *z.* / *z-*, but leave the cursor in its current column.
+
 ## Other
 
 *:*

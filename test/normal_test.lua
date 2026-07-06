@@ -4,6 +4,7 @@ package.path = "vendor/lust/?.lua;./?.lua;" .. package.path
 local lust   = require("lust")
 local buffer = require("buffer")
 local normal = require("normal")
+local editor = require("editor")
 local ex     = require("ex")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
@@ -928,6 +929,43 @@ describe("normal-mode interpreter", function()
       local ed = tall()
       feed(ed, "20z\r")
       expect(ed.top).to.equal(20); expect(ed.cy).to.equal(20)
+    end)
+    it("zt puts the current line at the top, keeping the column", function()
+      local ed = tall()
+      feed(ed, "15Glzt")                          -- line 15, one col right, then zt
+      expect(ed.top).to.equal(15); expect(ed.cy).to.equal(15)
+      expect(ed.cx).to.equal(2)                   -- column kept (z<CR> -> first non-blank = 1)
+    end)
+    it("zz centers the current line, keeping the column", function()
+      local ed = tall()
+      feed(ed, "15Gllzz")
+      expect(ed.top).to.equal(10)                 -- 15 - floor(10/2)
+      expect(ed.cy).to.equal(15); expect(ed.cx).to.equal(3)
+    end)
+    it("zb puts the current line at the bottom, keeping the column", function()
+      local ed = tall()
+      feed(ed, "15Glzb")
+      expect(ed.top).to.equal(6)                  -- 15 - (10 - 1)
+      expect(ed.cy).to.equal(15); expect(ed.cx).to.equal(2)
+    end)
+    it("[count]zt keeps the column across the line change", function()
+      local ed = tall()
+      feed(ed, "l20zt")                           -- col 2 on line 1, then 20zt
+      expect(ed.top).to.equal(20); expect(ed.cy).to.equal(20)
+      expect(ed.cx).to.equal(2)
+    end)
+    it("zz centers a wrapping line by SCREEN rows, not buffer lines (wrap on)", function()
+      -- 9 lines each wrapping into 2 screen rows at cols=4. Centering the last
+      -- line (textrows 10 -> 5 rows up) must count screen rows: buffer-line math
+      -- would wrongly land at top=4, and refresh() would then pin it to the
+      -- bottom (the reported wrap bug). Screen-row math lands at top=6,topsub=1.
+      local ed = make(("abcdef\n"):rep(9))
+      ed.opts = { wrap = true, tabstop = 8 }; ed.cols = 4; ed.rows = 11
+      feed(ed, "Gzz")
+      expect(ed.cy).to.equal(9)
+      expect(ed.top).to.equal(6); expect(ed.topsub).to.equal(1)
+      editor.refresh(ed)                          -- the driver's clamp must not undo it
+      expect(ed.top).to.equal(6); expect(ed.topsub).to.equal(1)
     end)
     it("Ctrl-G reports file position on the message line", function()
       local ed = tall()

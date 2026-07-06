@@ -99,7 +99,8 @@ Modal editing: motions `h j k l 0 ^ $ w b e f t F T ; , G gg` and marks
 `` y`a ``) plus `dd`/`yy`/`cc` and counts (`2d3w`); `x r p P i a o A I O`;
 registers `a`–`z` and the unnamed register; `.` repeat; macros `q`/`@`/`@@`;
 multi-level undo/redo (`u` / `Ctrl-R`); scrolling `Ctrl-F`/`Ctrl-B` (page),
-`Ctrl-D`/`Ctrl-U` (half), `Ctrl-E`/`Ctrl-Y` (line); insert-mode `Ctrl-W`/`Ctrl-U`
+`Ctrl-D`/`Ctrl-U` (half), `Ctrl-E`/`Ctrl-Y` (line) and window repositioning
+(`z<CR>`/`z.`/`z-`, `zt`/`zz`/`zb`); `ZZ`/`ZQ`; insert-mode `Ctrl-W`/`Ctrl-U`
 and `Ctrl-A`/`Ctrl-E`. An ex layer (`:w`, `:d`, ranges, `:%p`, `:normal`,
 `:u`/`:redo`, `:q`, and line-number goto) shared by the `:` prompt and the
 socket — and **any ex command lvi doesn't implement is delegated to the system

@@ -941,21 +941,38 @@ actions = {
     ed.changed = true
     clamp(ed)
   end,
-  -- z{CR|.|-}: reposition the window so the current (or [count]) line sits at the
-  -- top / center / bottom. Cursor moves to that line's first non-blank. We always
-  -- leave the cursor on-screen, so refresh() won't re-scroll and fight us.
+  -- Reposition the window so the current (or [count]) line sits at the top /
+  -- center / bottom. Two spellings per position: the POSIX one (z<CR>/z./z-)
+  -- moves the cursor to that line's first non-blank; the vim one (zt/zz/zb)
+  -- leaves it in the same column. We always leave the cursor on-screen, so
+  -- refresh() won't re-scroll and fight us.
   [b("z")] = function(ed, count)
     local k = getkey(ed)
     local tr = (ed.rows or 24) - 1
     local target = count and math.max(1, math.min(count, ed.buf:nlines())) or ed.cy
-    local top
-    if k == 13 or k == 10 then top = target
-    elseif k == b(".") then top = target - math.floor(tr / 2)
-    elseif k == b("-") then top = target - (tr - 1)
+    -- How many screen rows above `target` the window top should sit: 0 (top),
+    -- half a screen (center), or a full screen minus one (bottom).
+    local offset, keepcol
+    if k == 13 or k == 10 then offset = 0                                    -- z<CR>
+    elseif k == b("t") then offset, keepcol = 0, true                        -- zt
+    elseif k == b(".") then offset = math.floor(tr / 2)                      -- z.
+    elseif k == b("z") then offset, keepcol = math.floor(tr / 2), true       -- zz
+    elseif k == b("-") then offset = tr - 1                                  -- z-
+    elseif k == b("b") then offset, keepcol = tr - 1, true                   -- zb
     else return end
-    ed.top = math.max(1, math.min(top, ed.buf:nlines()))
-    ed.topsub = 0
-    ed.cy, ed.cx = target, first_nonblank(line(ed, target))
+    -- Measure the offset in SCREEN rows (not buffer lines) so a wrapped target
+    -- -- or wrapped lines above it -- still lands centered/at bottom: walk up
+    -- from the target line's first row. advance_rows honors wrap and clamps at
+    -- the buffer top; in nowrap it collapses to one row per line (top = target -
+    -- offset). Leaving the cursor on-screen keeps refresh() from re-scrolling.
+    if ed.opts and ed.opts.wrap then
+      ed.top, ed.topsub = advance_rows(ed, target, 0, -offset)
+    else
+      ed.top = math.max(1, target - offset)
+      ed.topsub = 0
+    end
+    ed.cy = target
+    if not keepcol then ed.cx = first_nonblank(line(ed, target)) end
     clamp(ed)
   end,
   -- ZZ: write (if modified) and quit; ZQ: quit without writing. Both go through
