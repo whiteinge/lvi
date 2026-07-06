@@ -1,0 +1,199 @@
+#!/bin/sh
+# lvi-mirror [WID] -- mirror a running lvi's live buffer into every OTHER view
+# open on the same file, so an edit in one tmux pane appears in the others.
+#
+# The bet, same as lvi-search/lvi-highlight: no in-editor multi-window. tmux (or
+# any multiplexer) owns the panes -- each runs its own `lvi thefile`, a separate
+# process with its own buffer and socket. This script is the thread between them:
+# it pulls the LIVE buffer over the control socket (so UNSAVED edits propagate,
+# which a file-watch+:e never could) and writes it into the peers, also over the
+# socket.
+#
+# Bind it on BOTH change and write -- two lines in ~/.lvirc, in EVERY pane:
+#
+#     on change lvi-mirror      " propagate edits as they settle
+#     on write  lvi-mirror      " propagate the saved/clean state on :w
+#
+# THE LOOP-SAFETY GIFT (why this doesn't ring): a `change` hook fires only after
+# a KEYBOARD edit settles; a peer receives our push over its SOCKET, and
+# socket-sourced edits deliberately never arm the change hook (see editor.lua's
+# handle_socket_command). So when A pushes to B, B does not push back. Every pane
+# can carry the identical `on change lvi-mirror` and the mesh is stable by
+# construction -- no instance needs to know the topology in advance.
+#
+# It self-backgrounds (double-fork) exactly like lvi-highlight: reading a peer's
+# buffer needs lvi's event loop, which is FROZEN if we were invoked from a
+# foreground `:silent !` map -- so we return at once and let lvi resume to
+# service our socket I/O. Under `:on change` (spawn_bg) the loop is already live
+# and the extra background is simply harmless. Run the worker directly to debug:
+#
+#     lvi-mirror --worker WID          # (LVI_MIRROR_DEBUG=/path captures stderr)
+#
+# HOW IT PUSHES -- DIFF-DRIVEN. Rather than shipping the whole buffer every
+# settle, we `diff` the peer's content against ours and apply only the changed
+# hunks, so untouched lines keep their identity (the peer's marks/highlights, and
+# its scroll, survive) and the socket carries O(diff), not O(filesize). We use
+# diff's NORMAL output (POSIX base utility, format identical on Linux/macOS/BSD --
+# no git needed), NOT `diff -e`: an ed-script's multi-line insert blocks would be
+# shredded by the socket's newline framing. Each hunk becomes lvi-native
+# single-line commands, applied BOTTOM-UP so old line numbers stay valid:
+#     delete  a,b       ->  :a,bd
+#     append  after a   ->  :a  r !sed -n 'b1,b2p' NEWTMP   (pull new lines from us)
+#     change  a,b       ->  :a,bd  then  :a-1 r !sed -n 'b1,b2p' NEWTMP
+# The cursor: :d/:r move it as a side effect, so we save the peer's position,
+# shift it by the net line-delta of the hunks ABOVE it (so it tracks its content
+# across edits higher up), and restore it last.
+#
+# THE MODIFIED FLAG comes along for free in the DIRTY direction (a mirrored edit
+# is a real splice on the peer, so the peer goes modified on its own). Only the
+# CLEAN transitions need help -- a :w changes no content, and an undo-to-saved
+# reaches the peer as forward splices, so neither would clear the peer's flag.
+# Rule: identical content against the same file has identical dirtiness, so we
+# read OUR flag (`set modified?`) and, whenever we are clean, tell each in-sync
+# peer `set nomodified`. That one push fixes both the save and the undo-to-clean
+# cases. (We never need to force a peer dirty: it already is, from the splices.)
+#
+# LIMITS (by design, for now):
+#   * Views are matched by filename, so an unnamed ([No File]) buffer can't
+#     mirror, and two panes must have opened the SAME path (canonicalized here,
+#     so cwd differences are fine; a hardlink under two names is not).
+#   * One human, several viewports: last-writer-per-settle wins. Two panes typing
+#     into the same region inside one 150ms window can lose an update -- there is
+#     no OT/CRDT here and there won't be.
+#   * Each hunk applies as its own socket command = its own undo step on the peer
+#     (a c-hunk is two), and undo (a keyboard act) itself mirrors back, so undo is
+#     quasi-global. Know this before leaning on it.
+#   * `:wq`/`:x` fire write, but the pane is exiting -- its socket closes before
+#     this worker can read it back, so the FINAL save may not clear the peers'
+#     flags. A plain `:w` (pane stays open) propagates reliably; that's the norm.
+#
+# Config (env): LVI (client, default `lvi`); LVI_MIRROR_MAXBYTES (skip buffers
+# larger than this; default 262144); LVI_MIRROR_DEBUG (capture worker stderr).
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_MIRROR_MAXBYTES:-262144}
+
+# First entry: detach a worker (double-fork -> no zombie for the calling lvi) and
+# return immediately so lvi can resume and service the worker's socket reads.
+if [ "$1" != "--worker" ]; then
+  ("$0" --worker "$@" >"${LVI_MIRROR_DEBUG:-/dev/null}" 2>&1 &)
+  exit 0
+fi
+shift
+
+wid=${1:-$LVI_WID}
+[ -n "$wid" ] || { echo "lvi-mirror: no WID (pass one or run from inside lvi)" >&2; exit 1; }
+command -v diff >/dev/null 2>&1 || { echo "lvi-mirror: diff not found on PATH" >&2; exit 1; }
+
+# Parse the filename out of `:f` ('"path" N lines'); empty for an unnamed buffer.
+parse_file() { sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; }
+
+# Canonicalize a path so two panes launched from different directories still
+# match. realpath -m tolerates a not-yet-saved file; without realpath we compare
+# raw (works when both panes used the same spelling). An unnamed buffer -> fail.
+canon() {
+  case "$1" in ''|'[No File]'|'[No Name]') return 1 ;; esac
+  if command -v realpath >/dev/null 2>&1; then
+    realpath -m -- "$1" 2>/dev/null || printf '%s\n' "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+# Our own file (env when spawned by lvi; else ask the view) and live buffer.
+myfile=${LVI_FILE:-$("$LVI" -w "$wid" -- f | parse_file)}
+mycanon=$(canon "$myfile") || { echo "lvi-mirror: view $wid has no filename; nothing to mirror" >&2; exit 0; }
+mine=$("$LVI" -w "$wid" -- '%p') || { echo "lvi-mirror: cannot read view $wid" >&2; exit 1; }
+mymod=$("$LVI" -w "$wid" -- 'set modified?' 2>/dev/null)   # modified|nomodified ('' if unsupported)
+
+nbytes=$(printf '%s' "$mine" | wc -c)
+if [ "$nbytes" -gt "$MAXBYTES" ]; then
+  echo "lvi-mirror: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_MIRROR_MAXBYTES)" >&2
+  exit 0
+fi
+
+# Stage OUR buffer once (peers read new lines out of it via sed) and a scratch
+# file we rewrite with each peer's OLD content to diff against.
+newf=$(mktemp "${TMPDIR:-/tmp}/lvi-mirror.new.XXXXXX") || exit 1
+oldf=$(mktemp "${TMPDIR:-/tmp}/lvi-mirror.old.XXXXXX") || exit 1
+trap 'rm -f "$newf" "$oldf"' EXIT
+printf '%s' "$mine" > "$newf"
+q=\'   # single-quote, to wrap the filename inside the awk-emitted commands
+
+# Fan out to every OTHER live view whose (canonicalized) file matches ours.
+"$LVI" -l | cut -f1 | while read -r peer; do
+  [ -n "$peer" ] && [ "$peer" != "$wid" ] || continue
+  pcanon=$(canon "$("$LVI" -w "$peer" -- f | parse_file)") || continue
+  [ "$pcanon" = "$mycanon" ] || continue
+
+  set --   # accumulate this peer's commands: content hunks, cursor, then flag
+
+  theirs=$("$LVI" -w "$peer" -- '%p')
+  if [ "$theirs" != "$mine" ]; then       # content differs: build the diff hunks
+  printf '%s' "$theirs" > "$oldf"
+
+  # Peer cursor, so we can put it back after :d/:r have moved it.
+  pos=$("$LVI" -w "$peer" -- pos)
+  line=$(printf '%s' "$pos" | cut -f1); col=$(printf '%s' "$pos" | cut -f2)
+  case "$line" in ''|*[!0-9]*) line=1 ;; esac
+  case "$col"  in ''|*[!0-9]*) col=1  ;; esac
+
+  # diff normal output. Command lines look like `2a3,4` / `3,5c3` / `4,6d3`:
+  # <old-range><op><new-range>. Emit lvi commands in REVERSE hunk order so each
+  # hunk's OLD-side addresses still refer to the pre-edit buffer when it runs.
+  d=$(diff "$oldf" "$newf")
+
+  while IFS= read -r c; do [ -n "$c" ] && set -- "$@" "$c"; done <<EOF
+$(printf '%s\n' "$d" | awk -v newf="$newf" -v q="$q" '
+    /^[0-9]/ {
+      match($0, /[acd]/); op = substr($0, RSTART, 1)
+      old = substr($0, 1, RSTART-1); new = substr($0, RSTART+1)
+      oa = old; ob = old
+      if (index(old, ",")) { oa = substr(old,1,index(old,",")-1); ob = substr(old,index(old,",")+1) }
+      na = new; nb = new
+      if (index(new, ",")) { na = substr(new,1,index(new,",")-1); nb = substr(new,index(new,",")+1) }
+      n++; OA[n]=oa; OB[n]=ob; OP[n]=op; NA[n]=na; NB[n]=nb
+    }
+    END {
+      for (i = n; i >= 1; i--) {
+        if (OP[i] == "d") {
+          printf "%s,%sd\n", OA[i], OB[i]
+        } else if (OP[i] == "a") {
+          printf "%s r !sed -n %s,%sp %s%s%s\n", OA[i], NA[i], NB[i], q, newf, q
+        } else {                                   # change: delete then read new lines in
+          printf "%s,%sd\n", OA[i], OB[i]
+          printf "%s r !sed -n %s,%sp %s%s%s\n", OA[i]-1, NA[i], NB[i], q, newf, q
+        }
+      }
+    }')
+EOF
+
+  # Shift the saved cursor by the net line-delta of hunks strictly above it, so
+  # it follows its content across insertions/deletions higher in the file.
+  adj=$(printf '%s\n' "$d" | awk -v cl="$line" '
+    /^[0-9]/ {
+      match($0, /[acd]/); op = substr($0, RSTART, 1)
+      old = substr($0, 1, RSTART-1); new = substr($0, RSTART+1)
+      oa = old+0; ob = oa
+      if (index(old, ",")) { oa = substr(old,1,index(old,",")-1)+0; ob = substr(old,index(old,",")+1)+0 }
+      na = new+0; nb = na
+      if (index(new, ",")) { na = substr(new,1,index(new,",")-1)+0; nb = substr(new,index(new,",")+1)+0 }
+      removed = (op == "a") ? 0 : (ob - oa + 1)
+      added   = (op == "d") ? 0 : (nb - na + 1)
+      if (op == "a") { if (oa < cl) delta += added }
+      else if (ob < cl) { delta += (added - removed) }
+      else if (oa <= cl && cl <= ob && !seen) { hit = na; seen = 1 }   # cursor line changed
+    }
+    END { print seen ? hit : cl + delta }')
+  case "$adj" in ''|*[!0-9]*) adj=$line ;; esac
+
+  # Hunks first, then the cursor restore (lvi clamps an over-range line/col).
+  set -- "$@" "$adj" "|$col"
+  fi
+
+  # Flag sync: whenever WE are clean, make the (now in-sync) peer clean too. The
+  # dirty direction needs nothing -- the splices above already did it.
+  [ "$mymod" = nomodified ] && set -- "$@" "set nomodified"
+
+  # One round-trip, in order: content, cursor, flag. Skip if there's nothing.
+  [ $# -gt 0 ] && "$LVI" -w "$peer" -- "$@"
+done

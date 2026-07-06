@@ -137,6 +137,20 @@ describe("ex.dispatch", function()
       local _, s = ex.dispatch(ed_with("x"), "set bogus")
       expect(s).to.equal("err")
     end)
+    it("queries, clears, and forces the modified flag", function()
+      local ed = ed_with("abc")
+      expect((ex.dispatch(ed, "set modified?"))).to.equal("nomodified")
+      ed.buf:set(1, "X")                              -- an edit dirties the buffer
+      expect((ex.dispatch(ed, "set mod?"))).to.equal("modified")
+      ex.dispatch(ed, "set nomodified")               -- clear: align the saved-marker
+      expect((ex.dispatch(ed, "set modified?"))).to.equal("nomodified")
+      ed.buf:undo_checkpoint()                        -- a command boundary (new change group)
+      ed.buf:set(1, "Y")                              -- a later edit still dirties: not sticky
+      expect((ex.dispatch(ed, "set modified?"))).to.equal("modified")
+      ex.dispatch(ed, "set nomod")                    -- alias clears again
+      ex.dispatch(ed, "set mod")                      -- and force it dirty
+      expect((ex.dispatch(ed, "set modified?"))).to.equal("modified")
+    end)
   end)
 
   describe("highlights and position", function()
@@ -200,6 +214,23 @@ describe("ex.dispatch", function()
         expect(select(2, ex.dispatch(ed, "on " .. e .. " lvi-list paint"))).to.equal("ok")
         expect(ed.hooks[e]).to.equal({ "lvi-list paint" })
       end
+    end)
+    it(":on write registers a hook", function()
+      local ed = ed_with("x")
+      expect(select(2, ex.dispatch(ed, "on write lvi-mirror"))).to.equal("ok")
+      expect(ed.hooks.write).to.equal({ "lvi-mirror" })
+    end)
+    it(":w fires the write event (and clears modified)", function()
+      local fired = {}
+      local ed = ed_with("hello")
+      ed.fire_event = function(e) fired[#fired + 1] = e end
+      ed.buf.path = os.tmpname()
+      ed.buf:set(1, "changed")                        -- dirty, so :w actually writes
+      local _, s = ex.dispatch(ed, "w")
+      os.remove(ed.buf.path)
+      expect(s).to.equal("ok")
+      expect(fired).to.equal({ "write" })
+      expect(ed.buf.modified).to.be(false)
     end)
     it(":pos reports the cursor as line<TAB>col", function()
       local ed = ed_with("a\nb\nc")

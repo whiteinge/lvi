@@ -14,8 +14,9 @@ local buffer = require("buffer")
 local M = {}
 
 -- Events an `:on` hook may bind to. `change` fires (debounced) after a keyboard
--- edit settles; the buf* events fire on buffer switches (editor.lua/bufs.lua).
-local EVENTS = { change = true, bufenter = true, bufleave = true, bufdelete = true }
+-- edit settles; `write` fires right after a successful :w/:wq/:x (any surface);
+-- the buf* events fire on buffer switches (editor.lua/bufs.lua).
+local EVENTS = { change = true, write = true, bufenter = true, bufleave = true, bufdelete = true }
 
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
@@ -57,6 +58,14 @@ end
 -- :set -- minimal option handling. Booleans: `wrap` / `nowrap` / `wrap?`.
 -- Numerics: `tabstop=4` (alias `ts`) / `tabstop?`. Space-separated options are
 -- each applied; queries are collected into the reply.
+--
+-- `modified` (alias `mod`) is the odd one out: it is not an ed.opts flag but the
+-- buffer's derived dirty state, exposed here as the vi/vim option surface so a
+-- tool can query it (`set modified?`) and clear it (`set nomodified`) over the
+-- socket -- the primitive lvi-mirror uses to sync the dirty flag across panes.
+-- Clearing aligns the undo saved-marker with the current state (what :w does
+-- minus the I/O), so it composes with later edits/undos; setting parks the
+-- marker at a never-reached id (-1) so the buffer reads dirty until a real save.
 local function do_set(ed, args)
   ed.opts = ed.opts or { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false }
   local out = {}
@@ -74,16 +83,22 @@ local function do_set(ed, args)
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. (ed.opts.shiftwidth or 8)
       elseif n == "expandtab" or n == "et" then out[#out + 1] = ed.opts.expandtab and "expandtab" or "noexpandtab"
+      elseif n == "modified" or n == "mod" then out[#out + 1] = ed.buf.modified and "modified" or "nomodified"
       else return "unknown option: " .. n, "err" end
     elseif opt:sub(-1) == "!" then                      -- toggle a boolean (vim `set wrap!`)
       local n = opt:sub(1, -2)
       if n == "wrap" then ed.opts.wrap = not ed.opts.wrap
       elseif n == "expandtab" or n == "et" then ed.opts.expandtab = not ed.opts.expandtab
+      elseif n == "modified" or n == "mod" then
+        if ed.buf.modified then ed.buf._undo.saved = ed.buf._undo.now; ed.buf.modified = false
+        else ed.buf._undo.saved = -1; ed.buf.modified = true end
       else return "not a boolean option: " .. n, "err" end
     elseif opt == "wrap" then ed.opts.wrap = true
     elseif opt == "nowrap" then ed.opts.wrap = false
     elseif opt == "expandtab" or opt == "et" then ed.opts.expandtab = true
     elseif opt == "noexpandtab" or opt == "noet" then ed.opts.expandtab = false
+    elseif opt == "modified" or opt == "mod" then ed.buf._undo.saved = -1; ed.buf.modified = true
+    elseif opt == "nomodified" or opt == "nomod" then ed.buf._undo.saved = ed.buf._undo.now; ed.buf.modified = false
     else return "unknown option: " .. opt, "err" end
   end
   return table.concat(out, "\n"), "ok"
@@ -346,6 +361,7 @@ function M.dispatch(ed, line)
     if not p then return "No file name", "err" end
     local ok, n = pcall(ed.buf.write, ed.buf, p)
     if not ok then return "write failed: " .. tostring(n), "err" end
+    if ed.fire_event then ed.fire_event("write") end
     return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
 
   elseif cmd == "wq" or cmd == "x" then
@@ -353,6 +369,7 @@ function M.dispatch(ed, line)
     if not p then return "No file name", "err" end
     local ok, n = pcall(ed.buf.write, ed.buf, p)
     if not ok then return "write failed: " .. tostring(n), "err" end
+    if ed.fire_event then ed.fire_event("write") end
     ed.running = false
     return "", "ok"
 
