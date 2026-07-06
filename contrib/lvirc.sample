@@ -54,5 +54,5 @@ on bufenter lvi-list paint
 "   map [c :bg lvi-list prev hunks<CR>
 " A group with no style is invisible; lvi-search styles `search` itself, but you
 " can theme any list's group (and its -cur current-entry group), e.g.:
-"   hi hunks bg=22
-"   hi lint  undercurl   " (once lvi grows the attributes you want)
+"   hi hunks bg=22 pri=10   " pri lifts the mark above syntax (which sits at 0)
+"   hi lint  undercurl      " (once lvi grows the attributes you want)

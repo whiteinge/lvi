@@ -204,7 +204,10 @@ moves the cursor to that line.
 *hi* _group_ [_spec_...]
 	Give _group_ a color. _spec_ is *fg*=_color_, *bg*=_color_ (an 8-color name
 	or a 0-255 index), attributes *bold* *dim* *italic* *underline* *reverse*,
-	or *sgr*=_params_ (raw SGR). No spec renders the group as plain text.
+	*sgr*=_params_ (raw SGR), or *pri*=_N_. No spec renders the group as plain
+	text. *pri* sets the group's z-order (default 0): where two groups cover the
+	same cell the higher _pri_ draws on top, so an overlay that must show through
+	syntax highlighting (which sits at 0) sets a positive _pri_ -- search uses 10.
 
 *nohl*
 	Clear all highlight ranges (styles set by *hi* persist).

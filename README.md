@@ -109,7 +109,8 @@ against whatever `ex` is installed (marks and the cursor line are mirrored in, s
 startup (`$LVIRC` → `$XDG_CONFIG_HOME/lvi/lvirc` → `~/.lvirc`; `"` begins a
 comment) — so `:map` and `:set` persist. A **styled highlight overlay**: `:hl`
 paints named groups of ranges, `:hi GROUP fg=… bg=… bold underline` (or a raw
-`sgr=…`) gives a group a color; an un-themed group renders as plain text.
+`sgr=…`) gives a group a color and `pri=N` its z-order (higher draws over lower,
+so overlays win over syntax); an un-themed group renders as plain text.
 **Change hooks**: `:on change <cmd>` runs an external command a beat after you
 stop typing (debounced, non-blocking, loop-safe).
 
