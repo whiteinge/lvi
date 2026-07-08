@@ -128,8 +128,11 @@ function M.frame(ed)
   -- Bottom row: command line while typing ':', otherwise the status line.
   out[#out + 1] = term.move(rows, 1) .. term.clr_eol
   if ed.mode == "command" then
-    out[#out + 1] = (":" .. ed.cmdline):sub(1, cols)
-    crow, ccol = rows, math.min(cols, 2 + #ed.cmdline)
+    -- Char-aware slice (a byte :sub could bisect a UTF-8 char at the edge) and
+    -- a display-width cursor (a multibyte cmdline is wider in bytes than cells).
+    local pline = ":" .. ed.cmdline
+    out[#out + 1] = disp.slice(pline, ts, 0, cols, nil)
+    crow, ccol = rows, math.min(cols, 1 + disp.width(pline, ts))
   else
     local left_s, right = status_halves(ed)
     local mid = status_mid(ed)

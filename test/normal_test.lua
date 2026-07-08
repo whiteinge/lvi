@@ -446,6 +446,19 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("the ':' prompt accepts UTF-8", function()
+    it("multibyte bytes reach the command line", function()
+      local ed = make("x")
+      feed(ed, ":echo héllo\r")           -- é is two bytes; both must pass
+      expect(ed.message).to.equal("héllo")
+    end)
+    it("backspace erases a whole multibyte char, not one byte", function()
+      local ed = make("x")
+      feed(ed, ":echo aé\127b\r")         -- one BS must kill both bytes of é
+      expect(ed.message).to.equal("ab")   -- byte-wise BS would leave a stray 0xC3
+    end)
+  end)
+
   describe("scrolling (Ctrl-F/B/D/U/E/Y)", function()
     -- A tall nowrap window: 100 short lines, rows=12 -> textrows=11, half=5,
     -- page=9 (11-2 overlap). One buffer line == one screen row, so top/cursor

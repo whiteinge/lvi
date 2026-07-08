@@ -1197,8 +1197,12 @@ actions = {
       elseif k == 27 or k == 3 then ed.mode = "normal"; ed.cmdline = ""; return  -- Esc / Ctrl-C cancel
       elseif k == 127 or k == 8 then
         if #ed.cmdline == 0 then ed.mode = "normal"; return end
-        ed.cmdline = ed.cmdline:sub(1, -2)
-      elseif k >= 32 and k < 127 then ed.cmdline = ed.cmdline .. string.char(k) end
+        -- Erase the whole trailing char (may be multibyte), like insert mode.
+        ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
+      -- Printable ASCII, tab, and UTF-8 bytes (>= 128) -- the same set insert
+      -- mode accepts, so :e on a non-ASCII filename or a UTF-8 :s pattern is
+      -- typeable at the prompt, not only over the socket.
+      elseif k == 9 or (k >= 32 and k ~= 127) then ed.cmdline = ed.cmdline .. string.char(k) end
     end
   end,
 }
