@@ -53,9 +53,19 @@ GROUP_MAP = [
     (Token.Name.Builtin,    "Builtin"),
     (Token.Name.Constant,   "Constant"),
     (Token.Name.Decorator,  "Preproc"),
+    # Generic.* -- markup/prose/diff tokens the code groups above never cover.
+    # Markdown/rST use Heading/Strong/Emph; diff lexers use Inserted/Deleted
+    # (and Subheading for hunk headers, folded into Heading here).
+    (Token.Generic.Heading,    "Heading"),
+    (Token.Generic.Subheading, "Heading"),
+    (Token.Generic.Inserted,   "Inserted"),
+    (Token.Generic.Deleted,    "Deleted"),
+    (Token.Generic.Strong,     "Strong"),
+    (Token.Generic.Emph,       "Emph"),
 ]
 GROUPS = ["Comment", "String", "Number", "Keyword", "Operator",
-          "Function", "Type", "Builtin", "Constant", "Preproc"]
+          "Function", "Type", "Builtin", "Constant", "Preproc",
+          "Heading", "Inserted", "Deleted", "Strong", "Emph"]
 
 
 def group_for(ttype):

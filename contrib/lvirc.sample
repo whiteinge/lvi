@@ -20,6 +20,12 @@ hi Type     fg=cyan
 hi Builtin  fg=yellow
 hi Constant fg=magenta
 hi Preproc  fg=red
+" Markup/prose/diff groups (Markdown headings, **bold**, diff +/- lines, ...):
+hi Heading  fg=yellow bold
+hi Strong   bold
+hi Emph     italic
+hi Inserted fg=green
+hi Deleted  fg=red
 "
 " ...or skip the hand-written block above and seed the groups from a Pygments
 " built-in style (truecolor). `--theme` pushes the `hi` lines once at startup;
