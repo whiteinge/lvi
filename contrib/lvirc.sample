@@ -105,3 +105,18 @@ map \g :bg lvi-gitchanges<CR>                  " load this file's changes + focu
 " can theme any list's group (and its -cur current-entry group), e.g.:
 "   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
 "   hi lint       undercurl     " (once lvi grows the attributes you want)
+
+" ---- position memory (viminfo's `") ------------------------------------------
+" lvi-pos remembers where you were in each file across sessions, in a plain-text
+" store under $XDG_STATE_HOME (LVI_POS_FILE to move it). `save` records the spot;
+" `restore` jumps there and drops the `" mark so you can jump back. Reopen a file
+" and you land where you left off. (The in-session last-change mark `. needs no
+" tool -- the core sets it as you edit.)
+on change   lvi-pos save        " after an edit settles...
+on write    lvi-pos save        " ...on :w...
+on bufleave lvi-pos save        " ...and when you leave a buffer
+on ready    lvi-pos restore     " restore the file(s) opened at startup
+" And restore a file opened later with :e. Safe on every switch: it only jumps a
+" buffer sitting at line 1 (a fresh read), so it never clobbers the live cursor
+" of a buffer you're revisiting.
+on bufenter lvi-pos restore

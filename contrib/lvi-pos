@@ -1,0 +1,105 @@
+#!/bin/sh
+# lvi-pos [-w auto|WID] save | restore
+#
+# Remember where you were in each file across sessions -- vi/vim's `` `" `` mark,
+# restored from viminfo -- but as a plain-text store and a couple of `:on` hooks
+# instead of an in-editor database. Two subcommands, wired to editor events in
+# your rc (see lvirc.sample):
+#
+#   save     record the current file's cursor position to the store. Bind to the
+#            moments a position is worth keeping: `on change` (after an edit
+#            settles), `on write`, `on bufleave` (leaving a buffer).
+#   restore  look the current file up in the store and jump there, leaving the
+#            `` `" `` mark at the spot so `` `" `` takes you back after you wander.
+#            Bind to `on ready` (the file(s) opened at startup) and `on bufenter`
+#            (a file opened later with :e).
+#
+# THE STORE is a tab-delimited text file, newest entry last, one line per file:
+#     /abs/path/to/file<TAB>LINE<TAB>COL
+# grep-able, hand-editable, and capped like viminfo's `'N` (LVI_POS_MAX). It
+# lives under $XDG_STATE_HOME (machine-written state, not config); override the
+# whole path with LVI_POS_FILE. Paths are absolutised against $PWD (the hook
+# inherits the editor's launch directory) so the same file keys the same entry no
+# matter where lvi was started.
+#
+# RESTORE IS GUARDED so `on bufenter` is safe on every switch: it only jumps when
+# the buffer is sitting at line 1. A freshly read file starts there (so restore
+# fires); a buffer you're revisiting already has lvi's own in-memory per-buffer
+# cursor restored to wherever you left it this session (so restore stands aside
+# and doesn't clobber the better, live position). The jump goes over the socket,
+# which never arms `change`/`bufenter`, so save and restore can't loop.
+#
+# The in-session last-CHANGE mark (`` `. ``) is NOT this tool's job: setting an lvi
+# mark needs `:normal m{x}`, and the `on change` hook can fire while you're still
+# in insert mode (a typing pause) -- there the keys would land as literal text. So
+# the core stamps `` `. `` itself as you edit; this tool only sets the cross-session
+# `` `" `` on restore, which runs in normal mode (startup / a buffer switch), where
+# `:normal` is safe.
+#
+# Bind it (all touch no tty -> a detached spawn is implicit for `on` hooks):
+#     on change   lvi-pos save
+#     on write    lvi-pos save
+#     on bufleave lvi-pos save
+#     on ready    lvi-pos restore
+#     on bufenter lvi-pos restore
+#
+# Config: LVI (client, default `lvi`), LVI_POS_FILE (store path, default
+# $XDG_STATE_HOME/lvi/positions), LVI_POS_MAX (entries to keep, default 1000).
+# Run from inside lvi ($LVI_WID/$LVI_FILE/$LVI_LINE exported by the hook); from
+# elsewhere pass -w and cd to the tree so relative paths resolve alike.
+LVI=${LVI:-lvi}
+store=${LVI_POS_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/lvi/positions}
+maxn=${LVI_POS_MAX:-1000}
+
+want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+sub=${1:-}; [ -n "$sub" ] && shift
+target=${want_wid:-${LVI_WID:-auto}}
+send() { $LVI -w "$target" --detach -- "$@"; }
+
+# Validate the subcommand before touching the socket, so a typo reports usage
+# rather than silently no-op'ing on the (later) empty-file guard.
+case "$sub" in
+  save|restore) ;;
+  *) echo "usage: lvi-pos [-w auto|WID] save | restore" >&2; exit 2 ;;
+esac
+
+# The buffer's file: from the env when spawned by a hook, else ask over the
+# socket. No name -> nothing to key on, so quietly do nothing (a hook must not
+# be noisy). Absolutise so the key is stable across launch directories.
+# `-` not `:-`: a hook always exports LVI_FILE (empty for an unnamed buffer, which
+# we then skip); only a manual run from another terminal leaves it unset -> ask.
+file=${LVI_FILE-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+case "$file" in ""|"[No File]"|"[No Name]") exit 0 ;; esac
+case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
+
+# Skip volatile files, the way viminfo skips gitcommit/gitrebase and temp edits:
+# a remembered position there is meaningless (a fresh COMMIT_EDITMSG every time).
+case "${file##*/}" in COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG|git-rebase-todo|*.tmp) exit 0 ;; esac
+case "$file" in /tmp/*) exit 0 ;; esac
+
+case "$sub" in
+save)
+  line=${LVI_LINE:-1}; col=${LVI_COL:-1}
+  case "$line" in ''|*[!0-9]*) line=1 ;; esac
+  case "$col"  in ''|*[!0-9]*) col=1  ;; esac
+  mkdir -p "$(dirname "$store")" 2>/dev/null || exit 0
+  tmp=$(mktemp "$store.XXXXXX") || exit 0
+  trap 'rm -f "$tmp"' EXIT INT TERM
+  # Drop any old entry for this file, append the fresh one, keep the newest maxn.
+  # awk keys on the whole first field, so a path with spaces is fine (only the
+  # tab separates columns). mv makes the replacement atomic.
+  { awk -F'\t' -v f="$file" '$1 != f' "$store" 2>/dev/null
+    printf '%s\t%s\t%s\n' "$file" "$line" "$col"
+  } | tail -n "$maxn" >"$tmp" && mv "$tmp" "$store"
+  ;;
+restore)
+  # Only act on a buffer at line 1 (a fresh read); a revisited buffer already
+  # carries lvi's live cursor -- leave it be (see header).
+  case "${LVI_LINE:-1}" in 1|"") ;; *) exit 0 ;; esac
+  line=$(awk -F'\t' -v f="$file" '$1 == f { print $2 }' "$store" 2>/dev/null)
+  case "$line" in ''|*[!0-9]*|0|1) exit 0 ;; esac      # nothing worth jumping to
+  # Jump there and drop the `` `" `` mark at the spot. The socket clamps a stale
+  # line (file shrank) to the last line, same tolerance as viminfo.
+  send "normal ${line}Gm\""
+  ;;
+esac

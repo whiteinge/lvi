@@ -77,7 +77,10 @@ leading count, e.g. *3dw*.
 	Go to display column _N_.
 
 *`*_m_ *'*_m_
-	Jump to mark _m_ (exact position / first non-blank of its line).
+	Jump to mark _m_ (exact position / first non-blank of its line). The mark
+	*`.* is set automatically to the position of your last change, so *`.*
+	returns to where you were typing. (*contrib/lvi-pos* adds a cross-session
+	*`"* -- where you last were when the file was closed.)
 
 ## Operators and edits
 
@@ -373,6 +376,8 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
 - *lvi-complete* -- insert-mode word completion from the open buffers
   (*on complete lvi-complete*).
+- *lvi-pos* -- remember your position in each file across sessions (viminfo's
+  *`"*), as a plain-text store driven by *on* hooks.
 - *lvi-diff* / *lvi-stagediff* -- a two-way vimdiff of two panes (highlight,
   scrollbind, move hunks with *\\p*/*\\o*, jump with *]c*/*[c*) and, atop it,
   *git add -p* as a side-by-side diff you stage from with *\\s*.

@@ -65,8 +65,21 @@ local IDLE_MS = 150 -- debounce: fire change hooks this long after the last key
 -- Called after a KEYBOARD pump: if it changed the buffer (a mutation bumps
 -- buf.rev; :e/:bn swaps the buffer object), arm the `change` hooks. Attributing
 -- to the keyboard is what keeps a hook's socket-driven edits from looping.
+-- Also stamp the `.` mark (last-change position, vi's `` `. ``) so `` `. `` / `'.`
+-- jump back to where you last typed -- but only on a same-buffer rev bump (a real
+-- edit), not on the object swap of a buffer switch. This is the ONLY safe place
+-- to set it: an `on change` hook can fire mid-insert (you paused typing), where
+-- an injected `m.` would land as literal text; here it runs in the driver,
+-- mode-agnostic. Marks are per-buffer (bufs swaps ed.marks), so it lands in the
+-- edited buffer's set.
 function M.note_keyboard_change(ed, prev_buf, prev_rev)
-  if ed.buf ~= prev_buf or ed.buf.rev ~= prev_rev then ed.change_pending = true end
+  if ed.buf ~= prev_buf or ed.buf.rev ~= prev_rev then
+    ed.change_pending = true
+    if ed.buf == prev_buf then
+      ed.marks = ed.marks or {}
+      ed.marks["."] = { ed.cy, ed.cx }
+    end
+  end
 end
 
 -- Fire every hook registered for an event, each detached. `buf` (optional)

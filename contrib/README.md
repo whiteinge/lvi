@@ -99,6 +99,25 @@ the *kind* of completion is just which command you register: a file-path, whole-
 line, or `readtags` symbol completer is the same contract, and a dispatcher can
 pick one by context (a `/` in the token → paths, etc.) with no menu.
 
+### `lvi-pos` — remember where you were (viminfo's `` `" ``)
+
+Reopen a file and land where you left off. vim keeps this in its `viminfo`
+database; lvi keeps it in a **plain-text store** — one tab-delimited
+`path⇥line⇥col` line per file under `$XDG_STATE_HOME` — that you can `grep`,
+edit, or delete by hand. No core support was needed: the whole feature is a
+handful of `:on` hooks pointed at one script. `save` (on `change`/`write`/
+`bufleave`) records the cursor; `restore` (on `ready`/`bufenter`) looks the file
+up, jumps there, and drops the `` `" `` mark so `` `" `` takes you back after you
+wander. `restore` only touches a buffer sitting at line 1 (a fresh read), so
+binding it to every `bufenter` never clobbers the live cursor of a buffer you're
+revisiting — lvi already keeps that in memory.
+
+Its companion is the one piece that *is* in the core: the `` `. `` mark, set to
+your last change as you type, so `` `. `` returns to the last edit within a
+session. (A hook can't set that mark safely — `on change` can fire mid-insert,
+where the keystrokes would land as text — so the core stamps it directly; the
+tool owns only the cross-session `` `" ``.)
+
 ### `lvi-mirror` — live-share a buffer across panes
 
 lvi has no in-editor split; the multiplexer owns the panes, and each runs its own
