@@ -139,6 +139,53 @@ describe("change-hook attribution and firing", function()
   end)
 end)
 
+describe("socket-key boundary discipline", function()
+  local function ed_live(text)
+    local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, topsub = 0,
+      leftcol = 0, mode = "normal", cmdline = "", rows = 12, cols = 80,
+      opts = { wrap = false, tabstop = 8 }, inject = {}, pending = {},
+      keylog = {}, regs = {}, marks = {}, running = true, hooks = {} }
+    ed.interp = coroutine.create(function() normal.loop(ed) end)
+    assert(coroutine.resume(ed.interp))
+    return ed
+  end
+  local function keys(ed, s)
+    for i = 1, #s do ed.inject[#ed.inject + 1] = s:byte(i) end
+    assert(coroutine.resume(ed.interp))
+  end
+
+  it("defers socket keys that arrive while a command is half-typed", function()
+    local ed = ed_live("aaa bbb\nccc")
+    expect(ed.at_boundary).to.be(true)               -- parked between commands
+    keys(ed, "d")                                    -- half a command: awaiting a motion
+    expect(ed.at_boundary).to.be(false)
+    editor.handle_socket_command(ed, "normal j")     -- a hook fires mid-command
+    expect(ed.buf:line(1)).to.equal("aaa bbb")       -- j was NOT consumed as d's motion
+    expect(#ed.inject_deferred).to.equal(1)
+    keys(ed, "w")                                    -- the user completes dw
+    expect(ed.buf:line(1)).to.equal("bbb")
+    editor.flush_deferred(ed)                        -- driver replays the deferred j
+    expect(ed.cy).to.equal(2)
+  end)
+
+  it("a socket command mid-insert does not split the undo group", function()
+    local ed = ed_live("x")
+    keys(ed, "iab")                                  -- typing, still in insert mode
+    editor.handle_socket_command(ed, "echo hi")      -- must not checkpoint here
+    keys(ed, "c\27")                                 -- finish the insert
+    expect(ed.buf:line(1)).to.equal("abcx")
+    ed.buf:undo()
+    expect(ed.buf:line(1)).to.equal("x")             -- one insert == one undo unit
+  end)
+
+  it("pumps immediately when parked between commands (unchanged fast path)", function()
+    local ed = ed_live("one\ntwo")
+    editor.handle_socket_command(ed, "normal j")
+    expect(ed.cy).to.equal(2)                        -- ran at once, nothing deferred
+    expect(ed.inject_deferred).to_not.exist()
+  end)
+end)
+
 describe("editor.preserve (crash salvage)", function()
   it("dumps each modified buffer beside its file", function()
     local tmp = os.tmpname()

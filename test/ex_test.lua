@@ -451,6 +451,18 @@ describe("ex.dispatch", function()
     it(":silent runs the sub-command (capture path)", function()
       expect((ex.dispatch(ed_with("x"), "silent !echo hi"))).to.equal("hi\n")
     end)
+    it(":fire arms the change debounce; :fire EVENT fires immediately", function()
+      local ed = ed_with("x")
+      local _, s = ex.dispatch(ed, "fire")
+      expect(s).to.equal("ok")
+      expect(ed.change_pending).to.be(true)          -- rides the idle debounce
+      local fired = {}
+      ed.fire_event = function(ev) fired[#fired + 1] = ev end
+      ex.dispatch(ed, "fire write")
+      expect(fired).to.equal({ "write" })            -- non-change: immediate
+      local _, s2 = ex.dispatch(ed, "fire bogus")
+      expect(s2).to.equal("err")
+    end)
     it(":silent clears its flag even when the sub-command throws", function()
       local ed = ed_with("x")
       local real = ex.dispatch

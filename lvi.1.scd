@@ -249,7 +249,11 @@ moves the cursor to that line.
 
 *normal* _keys_
 	Feed _keys_ as normal-mode keystrokes -- the escape hatch that gives the
-	socket full editing power (e.g. *normal 2dw*).
+	socket full editing power (e.g. *normal 2dw*). Over the socket, _keys_
+	run immediately only when the interpreter is parked between commands; if
+	they arrive mid-command (an operator awaiting its motion, insert mode, a
+	prompt) they are held and replayed at the next command boundary, so a
+	background tool can never turn a half-typed *d* into *dG*.
 
 *u*, *redo*
 	Undo, redo.
@@ -295,6 +299,14 @@ moves the cursor to that line.
 	completer that replaces on re-register instead of composing. Socket-driven
 	changes never fire *change*/*scroll* (only keyboard input does), so a hook's
 	own edits or a scroll pushed onto a view can't loop back.
+
+*fire* [_event_]
+	Raise _event_ (default *change*) by hand. Because socket-driven edits never
+	fire *change* (the anti-loop gate above), a tool that edits over the socket
+	-- a formatter, a diff-hunk applier -- leaves *change* consumers such as
+	live highlighting stale until the next keystroke; sending *fire* after its
+	edits is the explicit opt-in. *change* rides the normal idle debounce;
+	any other event runs its hooks immediately.
 
 *status* _name_ [_text_]
 	Set (or clear, if _text_ is empty) a named segment shown in the status line;

@@ -38,13 +38,43 @@ local function new_conn(fd) return { fd = fd, inbuf = "", next_id = 1 } end
 -- ed.change_pending: socket-sourced edits must never schedule a `change` hook,
 -- or a hook's own edits (which come back over the socket) would retrigger it and
 -- loop. Only keyboard input schedules a fire, via note_keyboard_change.
+--
+-- Boundary discipline: the interpreter is only safe to feed when it is parked
+-- BETWEEN commands (ed.at_boundary, set by normal.lua; nil in headless tests ==
+-- safe). Parked mid-command -- the user has typed `d` and a hook fires -- keys
+-- pumped now would be consumed as that d's motion; parked in insert they would
+-- land as text. So mid-command we (a) skip the undo checkpoint (closing the
+-- open group would split the user's insert into two undo units) and (b) defer
+-- injected keys to ed.inject_deferred, which flush_deferred replays the moment
+-- the interpreter is back between commands.
 local function handle_socket_command(ed, line)
-  ed.buf:undo_checkpoint() -- each socket command is its own undo unit
+  local safe = ed.at_boundary ~= false
+  if safe then ed.buf:undo_checkpoint() end -- each socket command is its own undo unit
   local payload, status = ex.dispatch(ed, line)
-  if #ed.inject > 0 then pump(ed) end
+  if #ed.inject > 0 then
+    if safe then
+      pump(ed)
+    else
+      ed.inject_deferred = ed.inject_deferred or {}
+      for i = 1, #ed.inject do ed.inject_deferred[#ed.inject_deferred + 1] = ed.inject[i] end
+      ed.inject = {}
+    end
+  end
   return payload, status
 end
 M.handle_socket_command = handle_socket_command
+
+-- Replay keys that arrived over the socket while the interpreter was parked
+-- mid-command, now that it is back at a boundary. Called by the poll loop after
+-- keyboard input (the only thing that can complete the pending command).
+local function flush_deferred(ed)
+  if ed.at_boundary ~= false and ed.inject_deferred and #ed.inject_deferred > 0 then
+    for i = 1, #ed.inject_deferred do ed.inject[#ed.inject + 1] = ed.inject_deferred[i] end
+    ed.inject_deferred = nil
+    pump(ed)
+  end
+end
+M.flush_deferred = flush_deferred
 
 local function feed_conn(ed, c, data)
   c.inbuf = c.inbuf .. data
@@ -475,6 +505,10 @@ function M.run(opts)
           M.note_keyboard_change(ed, pb, pr)
         end
       end
+      -- Keyboard input may have completed the command a socket key-injection
+      -- arrived in the middle of; replay the deferred keys now. After
+      -- note_keyboard_change so their edits stay socket-attributed (no hook).
+      flush_deferred(ed)
 
       refresh(ed)
       -- `on scroll` fires the instant a KEYBOARD action moved the viewport top

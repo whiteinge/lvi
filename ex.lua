@@ -640,6 +640,22 @@ function M.dispatch(ed, line)
     table.insert(ed.hooks[event], rest)
     return "", "ok"
 
+  elseif cmd == "fire" then
+    -- :fire [EVENT] -- raise an event by hand (default: change). The change
+    -- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
+    -- see :on above), which leaves a tool that edits over the socket -- a
+    -- formatter, a diff-hunk applier -- with stale hook consumers (e.g. syntax
+    -- highlighting) until the next keystroke. Running `:fire` after its edits
+    -- is the explicit opt-in: `change` arms the normal idle debounce exactly
+    -- like a keystroke; any other event fires its hooks immediately. A tool
+    -- whose own `on change` hook edits and then fires change WILL loop -- but
+    -- now by its own explicit hand, not by accident.
+    local event = (args ~= "" and args) or "change"
+    if not EVENTS[event] then return "unknown event: " .. event, "err" end
+    if event == "change" then ed.change_pending = true
+    elseif ed.fire_event then ed.fire_event(event) end
+    return "", "ok"
+
   elseif cmd == "pos" then                  -- cursor position query: line<TAB>col
     return ed.cy .. "\t" .. ed.cx, "ok"
 

@@ -1212,7 +1212,14 @@ local function command(ed)
   ed.keylog = {}
   ed.changed = false
   local reg
+  -- Between commands is the one parked state where the interpreter has no
+  -- half-consumed grammar: a socket command may safely inject keys or close an
+  -- undo group here. Every other park (awaiting an operator's motion, insert
+  -- mode, a prompt) is mid-command, and the driver defers socket keys until we
+  -- are back (editor.lua's flush_deferred).
+  ed.at_boundary = true
   local k = first_key(ed)                    -- parks here; prior message stays visible
+  ed.at_boundary = false
   ed.message = nil                           -- clear only once a new command's key arrives
   if k == b('"') then reg = string.char(getkey(ed)); k = getkey(ed) end
   local count1
