@@ -391,6 +391,24 @@ function M.dispatch(ed, line)
     if ed.fire_event then ed.fire_event("write") end
     return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
 
+  elseif cmd == "wbuf" then
+    -- Snapshot the live buffer (unsaved edits and all) to the per-view scratch
+    -- path (ed.buffer_scratch, exported as $LVI_BUFFER). The companion to
+    -- `:silent !` for a tool that needs BOTH the terminal and the live buffer (a
+    -- picker built from unsaved text, e.g. contrib/lvi-tags), which the frozen
+    -- poll loop otherwise can't serve over the socket. Runs inline, before any
+    -- shell-out freezes us. We write the bytes ourselves rather than via
+    -- buf:write, which would REPOINT buf.path to the scratch file and clear
+    -- modified -- this must leave the buffer's identity and dirty state alone.
+    local p = ed.buffer_scratch
+    if not p then return "no buffer scratch path", "err" end
+    local ok, err = pcall(function()
+      local f = assert(io.open(p, "wb"))
+      f:write(ed.buf:text()); f:close()
+    end)
+    if not ok then return "wbuf failed: " .. tostring(err), "err" end
+    return "", "ok"
+
   elseif cmd == "wq" or cmd == "x" then
     -- :x writes only when the buffer is modified, then quits -- so on a clean
     -- buffer it leaves the file's mtime untouched (its whole reason to exist

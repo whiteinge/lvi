@@ -189,10 +189,18 @@ function M.run(opts)
   ed.wid = opts.wid or tostring(sys.getpid())
   ed.sock_path = path.socket(ed.wid)
   local lfd = sys.listen(ed.sock_path)
+  -- A per-view scratch path (beside the socket, in the same private dir) where
+  -- `:wbuf` snapshots the live buffer for a `:silent !` tool to read -- the one
+  -- way to hand the *unsaved* buffer to a child that needs the tty, since the
+  -- tty verbs freeze the poll loop and a `%p` read would deadlock. Reaped on
+  -- exit like the socket.
+  ed.buffer_scratch = ed.sock_path .. ".buf"
   -- Export the view id/socket so external programs (`:!`, pickers) can drive
-  -- this view back over the socket (`lvi -w "$LVI_WID" -- ...`).
+  -- this view back over the socket (`lvi -w "$LVI_WID" -- ...`); LVI_BUFFER is
+  -- the scratch path above.
   sys.setenv("LVI_WID", ed.wid)
   sys.setenv("LVI_SOCK", ed.sock_path)
+  sys.setenv("LVI_BUFFER", ed.buffer_scratch)
   -- `lvi -q FILE` parks the errorfile path here for a `ready` hook to consume
   -- (e.g. `on ready ... lvi-list load "$LVI_QUICKFIX" ...` in the rc). The core
   -- stays list-agnostic -- this is just one more value in the child environment,
@@ -341,6 +349,7 @@ function M.run(opts)
     for fd in pairs(conns) do sys.close(fd) end
     sys.close(lfd)
     sys.unlink(ed.sock_path)
+    os.remove(ed.buffer_scratch)                 -- reap the :wbuf snapshot, if any
     if tty then sys.write(1, term.show .. term.alt_off) end
     if saved ~= nil then sys.restore(saved) end
   end

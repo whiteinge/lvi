@@ -72,8 +72,11 @@ on complete lvi-complete
 " ---- tags -------------------------------------------------------------------
 " lvi-tags lists this file's ctags tags in file order through your picker and
 " jumps to the one you choose -- a jump-to-symbol and a file outline in one key.
-" It needs the tty for the picker, so :silent !. Needs a `tags` file (ctags -R).
-map \t :silent !lvi-tags<CR>
+" It tags the live buffer (your unsaved edits included) -- no `tags` file needed.
+" It needs the picker's tty (:silent !), which freezes lvi, so it can't read the
+" buffer back over the socket -- :wbuf snapshots it to $LVI_BUFFER first, then
+" the frozen picker reads that. (See `Shelling out` in lvi.1.scd.)
+map \t :wbuf<CR>:silent !lvi-tags<CR>
 
 " ---- git changes -------------------------------------------------------------
 " lvi-gitchanges turns `git diff` for the current file into a `gitchanges` list

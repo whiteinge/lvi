@@ -110,6 +110,26 @@ describe("ex.dispatch", function()
     end)
   end)
 
+  describe("wbuf", function()
+    it("snapshots to the scratch path without touching file/modified", function()
+      local ed = ed_with("x\ny\n")
+      ed.buffer_scratch = os.tmpname()
+      ed.buf:set(1, "EDITED")                        -- make it modified
+      local _, s = ex.dispatch(ed, "wbuf")
+      expect(s).to.equal("ok")
+      local f = io.open(ed.buffer_scratch, "rb"); local body = f:read("*a"); f:close()
+      expect(body).to.equal("EDITED\ny\n")           -- live, unsaved content
+      expect(ed.buf.path).to_not.exist()             -- not repointed, unlike :w FILE
+      expect(ed.buf.modified).to.be(true)            -- still dirty; :wbuf is not a save
+      os.remove(ed.buffer_scratch)
+    end)
+    it("errors when no scratch path is set", function()
+      local ed = ed_with("a")                        -- no ed.buffer_scratch
+      local _, s = ex.dispatch(ed, "wbuf")
+      expect(s).to.equal("err")
+    end)
+  end)
+
   describe("write and quit (:wq / :x)", function()
     it(":x on a clean buffer quits WITHOUT writing (leaves mtime alone)", function()
       local ed = ed_with("a\nb\n")

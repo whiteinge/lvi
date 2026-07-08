@@ -189,6 +189,13 @@ moves the cursor to that line.
 	like *x*: a clean buffer's file is left untouched. A modified buffer with no
 	name is an error and no quit happens.
 
+*wbuf*
+	Snapshot the live buffer (unsaved edits and all) to *$LVI_BUFFER*, a per-view
+	scratch file in the child environment. Leaves the buffer's own file and
+	modified state untouched -- it just hands the current text to a child. The
+	companion to *silent !* for a tool that needs both the terminal and the live
+	buffer; see *Shelling out* below and *contrib/lvi-tags*.
+
 *q*, *q!*, *qa*[*!*]
 	Quit (current view / all views); *!* discards unsaved changes.
 
@@ -283,6 +290,38 @@ moves the cursor to that line.
 	Show the file name and line count; report the cursor as _line_<TAB>_col_;
 	echo _text_; run _cmd_ suppressing its interactive prompt.
 
+## Shelling out -- which verb
+
+```
+COMMAND        TERMINAL   LVI BLOCKED   typical use
+!cmd           yes        yes           run and watch it (:!make, :!git log)
+[range]!cmd    yes        yes           filter lines through cmd (:%!sort)
+bg cmd         no         no            detached; drives the view back as it runs
+
+silent !cmd    yes        yes           like !, for a picker -- output dropped
+wbuf           --         --            snapshot the buffer for a picker to read
+```
+
+(*wbuf* is not a shell-out -- it prepares the buffer for one, hence the dashes.)
+
+Two questions pick the verb. First: does it need the terminal -- a prompt, a
+picker (fzf), a pager, or you just want to watch its output? Then *!*, or
+*silent !* when it is a picker whose choice matters and not its output; either
+way lvi is blocked until it exits. Second: does it instead reach back to change
+the view as it runs -- move the cursor, set a highlight, update a list? Then
+*bg*, which never blocks (so those updates land at once, with no full-screen
+flash) but gets no terminal.
+
+When it needs both at once -- an interactive picker built from your *unsaved*
+text (see *contrib/lvi-tags*) -- the terminal verbs block lvi, so the tool
+cannot ask for the buffer back. Snapshot it to a file first, then let the
+blocked tool read the file:
+
+	map \t :wbuf<CR>:silent !lvi-tags<CR>
+
+*wbuf* writes the live buffer (unsaved edits and all) to *$LVI_BUFFER*, a
+scratch path in the tool's environment.
+
 # THE CONTROL SOCKET
 
 Each view listens on a Unix-domain socket; the path itself is the selector, so
@@ -345,9 +384,11 @@ reference.
 *LVIRC*, *XDG_CONFIG_HOME*
 	Locate the rc file (see *CONFIGURATION*).
 
-*LVI_WID*, *LVI_SOCK*
-	The current view's id and socket path, exported to child processes (static
-	for the life of the view).
+*LVI_WID*, *LVI_SOCK*, *LVI_BUFFER*
+	The current view's id, socket path, and *wbuf* scratch path, exported to
+	child processes (static for the life of the view). *LVI_BUFFER* names where
+	*:wbuf* snapshots the live buffer for a *silent !* tool to read (see
+	*Shelling out* under *EX COMMANDS*).
 
 *LVI_QUICKFIX*
 	The _errorfile_ given with *-q*, exported for the *ready* hook to load (see

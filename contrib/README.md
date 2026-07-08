@@ -71,12 +71,16 @@ Bind it: `map \f :silent !lvi-open<CR>`.
 
 ### `lvi-tags` — jump around / outline the current file
 
-A `readtags` picker: lists every ctags tag defined in the current file, in file
-order, and jumps to the one you pick. Because each row shows the tag's own
-definition line, scrolling the picker *is* a structural overview of the buffer —
-"jump to a function" and "what's in this file" are the same key. It reads a
-`tags` file (walk-up from the tree, or `$LVI_TAGS`), so it reflects your last
-`ctags` run, not the live buffer. Bind it: `map \t :silent !lvi-tags<CR>`.
+A `ctags` picker: lists every tag defined in the current file, in file order,
+and jumps to the one you pick. Because each row shows the tag's own definition
+line, scrolling the picker *is* a structural overview of the buffer — "jump to a
+function" and "what's in this file" are the same key. It tags the **live
+buffer**, not a saved `tags` file: it dumps the buffer over the socket (`:%p`)
+into a temp file named after it — the name is what lets `ctags` pick the language
+— and reads `ctags` stdout directly, so it reflects your unsaved, in-progress
+edits and needs no `ctags -R` first. Bind it: `map \t :wbuf<CR>:silent !lvi-tags<CR>`
+(`:wbuf` snapshots the buffer so the picker can read it — see the spawn
+disciplines below).
 
 ### `lvi-complete` — insert-mode word completion
 
@@ -142,6 +146,14 @@ buffer's matches when you arrive in it, which is what makes *cross-file* lists
   double-fork a worker and return at once, letting lvi resume and service the
   worker's socket I/O. `lvi-list` never reads the buffer, so it just fires
   fire-and-forget jumps with `lvi -w --detach`.
+
+…plus **`:wbuf`, the buffer-feeder** for the one case self-backgrounding can't
+cover: a tool that needs the terminal **and** the live buffer at once — an
+interactive picker built from *unsaved* text (`lvi-tags`). Self-backgrounding
+frees the loop but surrenders the tty the picker needs. So the binding snapshots
+the buffer to `$LVI_BUFFER` with `:wbuf` *before* handing over the tty, and the
+frozen picker reads that file: `map \t :wbuf<CR>:silent !lvi-tags<CR>`. The
+manpage's *Shelling out* table lays the verbs side by side.
 
 **The dirty flag is a socket primitive.** The buffer's modified state is exposed
 through the ordinary `:set` surface — `set modified?` queries it, `set

@@ -6,27 +6,46 @@
 # its line. Two uses in one: jump straight to a function/section, or just scroll
 # the picker as a quick structural overview of the buffer.
 #
-# It reads a `tags` file (Universal/Exuberant ctags) via `readtags` -- so it
-# reflects the last ctags run, not the live buffer -- and shows each tag's own
-# definition line (ctags stores it as the search pattern), which is what makes
-# the list read like an outline. Entries are sorted by line number, taken from
-# the tag address (ctags records it by default) with the `line:` field as backup.
+# LIVE BUFFER, NOT A tags FILE: it tags the in-memory buffer, so it reflects
+# your unsaved, in-progress edits -- the whole point of driving a running
+# editor. There is no `tags` file and no `readtags`: we ctags the buffer's text
+# and read ctags' stdout directly (the standard tag format). ctags' own stdout
+# IS the query result here -- every tag comes from this one buffer by
+# construction, so there is nothing to filter and readtags (which indexes/queries
+# an on-disk `tags`) would be pure ceremony.
 #
-# TAGS FILE: found by walking up from lvi's working directory for `tags` (then
-# `.tags`); override with $LVI_TAGS. Tags are matched to the buffer by their
-# `input` field relative to the tags file's directory, so generate tags from
-# your project root (the usual `ctags -R` at the top) and it just works.
+# GETTING THE BUFFER: two ways, and we can't just read `%p` on demand. A picker
+# needs the terminal, so this is bound with `:silent !` -- which FREEZES lvi's
+# event loop while we run, so a `%p` read back over the socket would deadlock
+# (lvi can't answer while it's blocked handing us the tty). So the binding dumps
+# the buffer to a file FIRST, with lvi's `:wbuf` (writes $LVI_BUFFER), then hands
+# us the tty:
+#     map \t :wbuf<CR>:silent !lvi-tags<CR>
+# We read that file ($LVI_TAGS_DUMP overrides, else $LVI_BUFFER). Run from
+# ANOTHER terminal (`lvi-tags -w WID`), lvi is NOT frozen and $LVI_BUFFER is not
+# in our env, so we fall back to reading `%p` live over the socket.
 #
-# fzy/fzf needs the terminal, so bind it with :silent ! (lvi hands over the tty);
-# the jump goes back with --detach (fire-and-forget -- a synchronous reply would
-# deadlock while lvi is frozen on us, exactly like lvi-open):
-#     map \t :silent !lvi-tags<CR>
+# LANGUAGE DETECTION: ctags can't read a pipe (it skips non-regular files) and
+# the dump file's name ($LVI_BUFFER) has no useful extension, so we copy the
+# content into a temp file named with the buffer's *basename* -- that name is
+# what lets ctags pick the language, and it still reads the shebang/modeline from
+# the content. Consequence: an unnamed buffer can't be tagged (no name to detect
+# from); we bail, same as a buffer with no file.
+#
+# Each row shows the tag's own definition line (ctags stores it as the search
+# pattern), which is what makes the list read like an outline; rows are sorted
+# by line number (from `--fields=+n`) so file order is preserved. The jump back
+# uses --detach (fire-and-forget -- a synchronous reply would deadlock while lvi
+# is frozen on us, exactly like lvi-open).
 #
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
-# LVI_TAGS (tags file path). Needs readtags + a picker on PATH. Run from inside
-# lvi ($LVI_WID/$LVI_FILE exported); from elsewhere pass -w and cd to the tree.
+# LVI_CTAGS (ctags binary, default `ctags`; wants Universal Ctags), LVI_TAGS_DUMP
+# (buffer-snapshot file to read instead of $LVI_BUFFER/%p). Needs ctags and a
+# picker on PATH. Run from inside lvi ($LVI_WID/$LVI_FILE/$LVI_BUFFER exported);
+# from elsewhere pass -w and cd to the tree.
 LVI=${LVI:-lvi}
 PICKER=${LVI_PICKER:-fzf}
+CTAGS=${LVI_CTAGS:-ctags}
 
 die() { echo "lvi-tags: $*" >&2; exit 1; }
 
@@ -34,46 +53,50 @@ want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
 target=${want_wid:-${LVI_WID:-auto}}
 send() { $LVI -w "$target" --detach -- "$@"; }
 
-# The buffer's file: from the env when spawned by lvi (a map), else ask.
+# The buffer's file: from the env when spawned by lvi (a map), else ask. We need
+# the name only to detect the language (via the temp file's basename below).
 file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$file" in ""|"[No File]"|"[No Name]") die "current buffer has no file" ;; esac
-abs=$(case "$file" in /*) printf '%s' "$file";; *) printf '%s' "$PWD/$file";; esac)
+case "$file" in
+  ""|"[No File]"|"[No Name]") die "buffer has no file name (need it to detect the language)" ;;
+esac
 
-# Locate the tags file (walk up from cwd) and the tag `input` path to query
-# (the buffer's path relative to the tags file's directory).
-tagsfile=${LVI_TAGS:-}
-if [ -z "$tagsfile" ]; then
-  d=$PWD
-  while [ -n "$d" ]; do
-    [ -f "$d/tags" ]  && { tagsfile="$d/tags";  break; }
-    [ -f "$d/.tags" ] && { tagsfile="$d/.tags"; break; }
-    [ "$d" = "/" ] && break
-    d=$(dirname "$d")
-  done
+# Get the buffer's text into a temp file named like the buffer, so ctags detects
+# the language from the name (and the shebang/modeline in the content). Prefer a
+# snapshot the binding already dumped ($LVI_TAGS_DUMP, else $LVI_BUFFER from
+# :wbuf) -- reading %p while frozen under :silent ! would deadlock. With neither
+# (run externally with -w), lvi is live, so read %p over the socket.
+tmpd=$(mktemp -d) || die "mktemp failed"
+trap 'rm -rf "$tmpd"' EXIT INT TERM
+tmpf="$tmpd/$(basename "$file")"
+dump=${LVI_TAGS_DUMP:-$LVI_BUFFER}
+if [ -n "$dump" ] && [ -f "$dump" ]; then
+  cp "$dump" "$tmpf" || die "could not read buffer snapshot $dump"
+else
+  $LVI -w "$target" -- %p >"$tmpf" || die "could not read buffer over the socket"
 fi
-[ -n "$tagsfile" ] && [ -f "$tagsfile" ] || die "no tags file (run ctags -R, or set \$LVI_TAGS)"
-tagdir=$(dirname "$tagsfile")
-rel=${abs#"$tagdir"/}                                 # buffer path as ctags recorded it
 
-# Pull this file's tags. -e gives kind:/line: extension fields; the tag address
-# (field 3) carries both the line number and the definition-line pattern.
-rows=$(readtags -t "$tagsfile" -e -Q "(eq? \$input \"$rel\")" -l 2>/dev/null | awk -F'\t' '
-  {
+# Tag the temp file to stdout. --fields=+n gives the line number; the tag
+# address (field 3) carries the line number and the definition-line pattern.
+# Pseudo (!_TAG) lines don't reach stdout, but we skip them defensively.
+rows=$($CTAGS -f - --sort=no --fields=+n "$tmpf" 2>/dev/null | awk -F'\t' '
+  /^!_TAG/ { next }
+  NF >= 3 {
     name=$1; addr=$3; line=""; kind="?"
     la=addr; sub(/;.*/,"",la); if (la ~ /^[0-9]+$/) line=la      # line from the address
     def=addr
     sub(/^[0-9]*;?/,"",def); sub(/^\/\^?/,"",def)               # strip "NNN;/^"
     sub(/\$?\/;".*/,"",def)                                     # strip trailing "$/;" + fields
     gsub(/\\\//,"/",def)                                        # unescape \/ in the pattern
-    for (i=4;i<=NF;i++) {
-      if ($i ~ /^kind:/)               kind=substr($i,6)
-      if ($i ~ /^line:/ && line == "") line=substr($i,6)
+    for (i=4;i<=NF;i++) {                                       # extension fields
+      if ($i ~ /^kind:/)                    kind=substr($i,6)   #   long-form kind
+      else if ($i ~ /^line:/ && line == "") line=substr($i,6)   #   line: backup
+      else if ($i !~ /:/ && kind == "?")    kind=$i             #   bare single-letter kind
     }
     if (line == "") next
     printf "%s\t%s\t%s\t%s\n", line, kind, name, def
   }' | sort -n)
 
-[ -n "$rows" ] || { send "status tags no tags for this file"; exit 0; }
+[ -n "$rows" ] || { send "status tags no tags for this buffer"; exit 0; }
 
 # Show line + kind + name + its definition, keep the line number as column 1 so
 # we can read it straight back off the selection.
