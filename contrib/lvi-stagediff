@@ -1,0 +1,161 @@
+#!/bin/sh
+# lvi-stagediff [FILE] -- `git add -p` by way of a side-by-side diff. Concept
+# borrowed from Fugitive (and a Vim POC of the same name): stage hunks by getting
+# them into an "index" pane, then writing that pane's whole content back as the
+# git index blob. No partial-patch math -- the index simply becomes whatever text
+# ends up in the left pane.
+#
+# It stands on lvi-diff (which must sit beside this script): that gives the two
+# panes their diff highlighting, scrollbind, and hunk nav/move -- all now
+# daemonless (one-shot setup + `on change`/`on scroll` hooks). This script adds
+# the two git-specific pieces:
+#
+#   * SEED -- the left ("index") pane is a scratch buffer filled from
+#     `git show :PATH` (the staged version); the right pane is the working tree.
+#     So the diff between them is exactly your UNSTAGED changes.
+#   * REBLOB -- the index pane's whole text IS the staged content: we `git
+#     hash-object -w` it and point the index at it (`git update-index`). Two ways
+#     it happens, both no-daemon:
+#       - \s (working pane): move the hunk under the cursor into the index pane
+#         and reblob at once -- instant per-hunk staging, like `git add -p`'s `y`.
+#       - `on write` on the index pane: `:w` reblobs the current index text. So
+#         you can also hand-edit the index (or `u`-undo a stage) and `:w` to
+#         commit that exact state -- which is how UNSTAGING works, POC-style.
+#
+# Why reblob-the-whole-buffer rather than `git apply --cached` a patch: it can't
+# misapply (no fuzz), composes trivially (stage another hunk = reblob again), and
+# falls straight out of "the index pane's text IS the staged state."
+#
+# SYNOPSIS
+#   lvi-stagediff FILE        open the index|working split for FILE and wire it up
+#   lvi-stagediff             use $LVI_FILE (i.e. run it from a map inside lvi)
+#   \s      (working pane)    stage the hunk under the cursor
+#   :w      (index pane)      stage the current index text (after a hand edit / undo)
+#   ]c / [c (either pane)     jump to the next / prev hunk (from lvi-diff)
+#   (lvi-diff's \p/\o are off here; use \s so the move also reblobs.)
+#
+# Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH wires
+# staging onto two open views; --stage IDX TOP REPOPATH [WORK LINE] is the one-shot
+# \s fires; --reblob TOP REPOPATH is the `on write` hook (IDX = $LVI_WID).
+#
+# LIMITS (MVP): one file, no directory/index browser; a dedicated per-hunk
+# unstage-to-HEAD would want a HEAD-vs-index second mode (for now unstage = edit
+# the index + :w); assumes the file ends in a newline when reblobbing. Conflicts
+# are refused up front (resolve them first).
+LVI=${LVI:-lvi}
+PIDDIR=${TMPDIR:-/tmp}
+
+case "$0" in
+  /*) SELF=$0 ;;
+  *)  SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0") ;;
+esac
+DIFF=$(dirname "$SELF")/lvi-diff        # the machinery we build on
+command -v git >/dev/null 2>&1 || { echo "lvi-stagediff: git not found" >&2; exit 1; }
+
+# reblob: the index pane's whole text IS the staged content -- write it as a git
+# blob and point the index at it. The one mechanism staging goes through.
+# (Assumes a trailing newline -- :%p drops the final one.)
+reblob() {
+  idx=$1; top=$2; rp=$3
+  content=$("$LVI" -w "$idx" -- '%p') || { echo "lvi-stagediff: cannot read index view $idx" >&2; return 1; }
+  mode=$(cd "$top" && git ls-files --stage -- "$rp" 2>/dev/null | awk '{print $1; exit}')
+  [ -n "$mode" ] || mode=100644
+  blob=$(printf '%s\n' "$content" | (cd "$top" && git hash-object -w --stdin)) || return 1
+  (cd "$top" && git update-index --cacheinfo "$mode,$blob,$rp") || {
+    echo "lvi-stagediff: update-index failed" >&2; return 1; }
+}
+
+# --stage: move the hunk under the working cursor into the index pane, reblob, and
+# repaint. Fired by \s (:bg) with $LVI_WID/$LVI_LINE set. The move is a SOCKET edit
+# to the index, which does NOT fire `on change` (keyboard-gated), so nothing would
+# otherwise reblob or re-highlight -- we do both explicitly here (`--refresh` re-
+# diffs so the just-staged hunk drops out of the overlay).
+stage() {
+  idx=$1; top=$2; rp=$3; work=${4:-$LVI_WID}; line=${5:-$LVI_LINE}
+  { [ -n "$idx" ] && [ -n "$top" ] && [ -n "$rp" ] && [ -n "$work" ] && [ -n "$line" ]; } || {
+    echo "lvi-stagediff --stage: need IDX TOP REPOPATH (+ \$LVI_WID/\$LVI_LINE)" >&2; return 1; }
+  "$DIFF" --xfer put "$idx" "$work" "$line" || return 1   # from working, put onto index
+  reblob "$idx" "$top" "$rp" || return 1
+  "$DIFF" --refresh "$idx" "$work"                        # repaint (socket edit skipped on change)
+  "$LVI" -w "$work" -- "status stage staged $rp" >/dev/null 2>&1
+}
+
+# --attach: run the (daemonless) diff setup with \p/\o off, then add the two
+# staging hooks: \s on the working pane, and `on write` on the index pane so a :w
+# there reblobs the current index text. Scrollbind, hunk nav, and re-highlight all
+# come from lvi-diff's own maps/hooks.
+attach() {
+  idx=$1; work=$2; top=$3; rp=$4
+  LVI_DIFF_NOMAP=1 LVI="$LVI" "$DIFF" "$idx" "$work" || return 1
+  "$LVI" -w "$work" -- "map \\s :bg LVI=$LVI $SELF --stage $idx $top $rp<CR>" >/dev/null 2>&1
+  "$LVI" -w "$idx"  -- "on write LVI=$LVI $SELF --reblob $top $rp" >/dev/null 2>&1
+  "$LVI" -w "$idx"  -- 'status stage [index -- edit + :w to (un)stage]' >/dev/null 2>&1
+  "$LVI" -w "$work" -- 'status stage [working -- \s stages the hunk]' >/dev/null 2>&1
+}
+
+# Sweep index seeds whose views are gone (no daemon to own their lifetime now).
+gc_seeds() {
+  live=$("$LVI" -l 2>/dev/null | cut -f1)
+  for f in "$PIDDIR"/lvi-stage.idx.*; do
+    [ -e "$f" ] || continue
+    used=""
+    for w in $live; do "$LVI" -w "$w" -- f 2>/dev/null | grep -qF "$f" && { used=1; break; }; done
+    [ -n "$used" ] || rm -f "$f"
+  done
+}
+
+case "$1" in
+  --stage)  shift; stage "$@"; exit $? ;;
+  # --reblob TOP REPOPATH -- the index pane's `on write` hook; IDX = $LVI_WID.
+  --reblob) shift; reblob "$LVI_WID" "$1" "$2"; exit $? ;;
+  --attach) shift; attach "$@"; exit $? ;;
+esac
+
+# --- launcher -----------------------------------------------------------------
+file=${1:-$LVI_FILE}
+[ -n "$file" ] || { echo "lvi-stagediff: need a FILE (or run from a map, \$LVI_FILE)" >&2; exit 1; }
+[ -f "$file" ] || { echo "lvi-stagediff: no such file: $file" >&2; exit 1; }
+
+dir=$(dirname "$file")
+top=$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null) || {
+  echo "lvi-stagediff: not inside a git repository" >&2; exit 1; }
+rp=$(cd "$dir" && git ls-files --full-name -- "$(basename "$file")")
+[ -n "$rp" ] || { echo "lvi-stagediff: not tracked by git: $file" >&2; exit 1; }
+if [ -n "$(cd "$top" && git ls-files --unmerged -- "$rp")" ]; then
+  echo "lvi-stagediff: resolve merge conflicts in $rp first" >&2; exit 1
+fi
+[ -n "$TMUX" ] || { echo "lvi-stagediff: run inside tmux (it opens the split there)" >&2; exit 1; }
+
+gc_seeds        # reap seeds from closed sessions before making a new one
+
+# Seed the index pane from the staged blob (empty for a not-yet-staged new file).
+idxtmp=$(mktemp "$PIDDIR/lvi-stage.idx.XXXXXX") || exit 1
+(cd "$top" && git show ":$rp" 2>/dev/null) > "$idxtmp"
+
+# Open the split: index (scratch) left, working file right. Snapshot the live wids
+# first so we pick out exactly the two we just made (never trust `lvi -l | head`).
+before=$("$LVI" -l | cut -f1 | sort)
+win=$(tmux new-window -P -F '#{window_id}' "exec $LVI '$idxtmp'")
+tmux split-window -h -t "$win" "exec $LVI '$file'"
+
+# Wait for both new views to register, then map wid -> file via :f.
+idx=""; work=""
+i=0
+while [ $i -lt 50 ]; do
+  new=""
+  for w in $("$LVI" -l | cut -f1); do
+    printf '%s\n' "$before" | grep -qxF "$w" || new="$new $w"
+  done
+  for w in $new; do
+    f=$("$LVI" -w "$w" -- f 2>/dev/null | sed -n 's/^"\(.*\)" .*/\1/p')
+    case "$f" in
+      "$idxtmp") idx=$w ;;
+      *"$rp"|"$file") work=$w ;;
+    esac
+  done
+  [ -n "$idx" ] && [ -n "$work" ] && break
+  i=$((i + 1)); sleep 0.1
+done
+[ -n "$idx" ] && [ -n "$work" ] || { echo "lvi-stagediff: views did not come up" >&2; exit 1; }
+
+exec "$SELF" --attach "$idx" "$work" "$top" "$rp"

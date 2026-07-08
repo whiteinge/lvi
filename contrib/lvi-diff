@@ -1,0 +1,281 @@
+#!/bin/sh
+# lvi-diff [WID_A WID_B] -- a two-way vimdiff, assembled from lvi's primitives.
+# Highlights the differences between two running views and SCROLLBINDS them, so
+# the two tmux panes scroll together with corresponding lines side by side.
+#
+# The bet is lvi's usual one (see lvi-mirror/lvi-search): no in-editor split. You
+# open the two files in two tmux panes -- `lvi old` | `lvi new` -- each its own
+# process and socket; this script is the thread between them. It owns NO editor
+# code, and -- as of the rewrite below -- NO running process either: it's a
+# one-shot that wires the two views up with maps and hooks, then exits. Everything
+# after is driven by lvi firing those hooks. Four primitives carry it:
+#
+#   * DIFF HIGHLIGHTING is the `:hl` overlay (same mechanism as lvi-search): we
+#     diff the two buffers and paint DiffChange/DiffDelete on the OLD view and
+#     DiffChange/DiffAdd on the NEW view. Re-painted by an `on change` hook so it
+#     tracks edits -- no polling; it fires only when a buffer actually settles.
+#   * SCROLLBIND rides on the `on scroll` hook + `:top`. lvi fires `on scroll`
+#     (with the new viewport top in $LVI_TOP) the instant a KEYBOARD action moves
+#     a view's top -- catching every scroll path (^E/^Y/^F/^B, j/k at the edge, G,
+#     /search) because it hooks the top itself, not specific keys. Our handler
+#     translates that top through the diff line map and sets the peer's top. It's
+#     ABSOLUTE (map-based), so it never drifts; the map is looked up from a cache
+#     we write on each (re)diff. Socket-driven :top doesn't fire `on scroll`
+#     (keyboard-gated in the editor), so the two panes can't echo each other.
+#   * HUNK NAV (]c / [c) jumps to the next/prev hunk and top-anchors BOTH panes
+#     (a socket :top wouldn't fire the peer's scroll hook, so we set both here).
+#   * HUNK MOVING (diffput/diffget): \p puts the hunk under the cursor onto the
+#     other view, \o obtains the other's hunk here -- a delete+read splice.
+#
+# WHY NO DAEMON (the design we landed on). Scrollbind used to be a polling loop
+# that read each view's `:top` ~10x/s; that flickered (lvi repaints on every
+# socket event) and starved lvi's idle `on change` hook. The `on scroll` hook
+# inverts it to push: the editor gained one small, generic "the viewport moved to
+# line N" notification, and ALL the diff-specific logic (the map, the translation)
+# stays out here in userspace where it belongs. No process to manage, no polling,
+# no flicker; the wiring lives as hooks/maps inside each view and dies with it.
+#
+# HUNK DRIFT: without vimdiff's filler lines two panes can't align row-for-row
+# THROUGH a lopsided hunk, but the map snaps to the hunk's start and re-aligns at
+# the next context line -- and because scrollbind is absolute (not a running
+# delta) it's self-correcting, never accumulating down the file.
+#
+# SYNOPSIS
+#   lvi-diff WID_A WID_B     diff+bind those two views (A = "old", B = "new")
+#   lvi-diff                 auto-pick when EXACTLY two views are live
+#   lvi-diff --stop          sweep stale map caches (there's no process to kill --
+#                            a session ends when you close a pane)
+#   (Installed in both views: ]c/[c jump hunks; \p/\o move a hunk across.)
+#
+# SUGGESTED BINDING (~/.lvirc, or run by hand). Launch it once per diff session.
+# Theme the groups to taste (it sets readable defaults; LVI_DIFF_NOSTYLE=1 skips):
+#     hi DiffChange bg=yellow fg=black
+#     hi DiffDelete bg=red    fg=black
+#     hi DiffAdd    bg=green  fg=black
+#
+# Config (env): LVI (client, default `lvi`); LVI_DIFF_MAXBYTES (skip a buffer
+# larger than this; default 4194304 = 4 MiB -- over it, both views show a
+# "[lvi-diff off: ...]" status instead of silently doing nothing); LVI_DIFF_NOMAP=1
+# leaves the \p/\o move maps off (lvi-stagediff sets it); LVI_DIFF_NOSTYLE=1 keeps
+# your rc's colors.
+#
+# LIMITS (by design): two-way only, no directories, no filler lines. Setting a
+# view's `:top` parks its cursor at the top line, so the follower pane's cursor
+# jumps to its top as you scroll the other -- fine for reading, surprising if you
+# then edit the pane you weren't driving. A change-hunk move is two undo steps on
+# the destination and moves that pane's cursor.
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_DIFF_MAXBYTES:-4194304}
+PIDDIR=${TMPDIR:-/tmp}
+
+# Absolute path to this script, so the maps/hooks we install fire the right binary
+# regardless of the editor's PATH.
+case "$0" in
+  /*) SELF=$0 ;;
+  *)  SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0") ;;
+esac
+
+# Per-direction line-map cache path for a view pair. mapfile SRC DST holds one
+# line per SRC buffer line = its corresponding DST line, so scrollbind/nav can
+# translate a top without re-diffing. Written by build(); read by scrollsync/hunk.
+mapfile() { echo "$PIDDIR/lvi-diff.$1-to-$2.map"; }
+
+# Sweep map caches whose owning views are gone (launch-time GC -- with no daemon,
+# nothing else cleans them; a crashed session's caches get reaped on the next).
+gc() {
+  live=$("$LVI" -l 2>/dev/null | cut -f1)
+  for f in "$PIDDIR"/lvi-diff.*-to-*.map "$PIDDIR"/lvi-diff.*.pid; do
+    [ -e "$f" ] || continue
+    dead=""
+    for w in $(basename "$f" | grep -o '[0-9][0-9]*'); do
+      printf '%s\n' "$live" | grep -qxF "$w" || dead=1
+    done
+    [ -n "$dead" ] && rm -f "$f"
+  done
+}
+
+# (Re)diff views A and B: rewrite both direction caches and repaint the highlight
+# overlay on both. Called at setup and by the `on change` hook (--refresh). Returns
+# 2 (and posts an "off" status) if a buffer is over the size cap, 1 if unreadable.
+build() {
+  a=$1; b=$2
+  fa=$(mktemp "$PIDDIR/lvi-diff.ba.XXXXXX") || return 1
+  fb=$(mktemp "$PIDDIR/lvi-diff.bb.XXXXXX") || return 1
+  if ! "$LVI" -w "$a" -- '%p' > "$fa" 2>/dev/null || ! "$LVI" -w "$b" -- '%p' > "$fb" 2>/dev/null; then
+    rm -f "$fa" "$fb"; return 1
+  fi
+  for f in "$fa" "$fb"; do
+    if [ "$(wc -c < "$f")" -gt "$MAXBYTES" ]; then
+      for w in "$a" "$b"; do "$LVI" -w "$w" -- "status diff [lvi-diff off: over ${MAXBYTES}B cap]" >/dev/null 2>&1; done
+      rm -f "$fa" "$fb"; return 2
+    fi
+  done
+  nA=$("$LVI" -w "$a" -- f 2>/dev/null | sed -n 's/^.*" \([0-9][0-9]*\) lines$/\1/p')
+  case "$nA" in ''|*[!0-9]*) nA=$(wc -l < "$fa") ;; esac
+  d=$(diff "$fa" "$fb")
+  mab=$(mapfile "$a" "$b"); mba=$(mapfile "$b" "$a")
+
+  # Line map. Normal-diff hunk lines are `<oldrange><op><newrange>` (op a/c/d).
+  # Between hunks maps 1:1; inside a hunk each source line SNAPS to the hunk start
+  # on the other side. mab: one line per A line (its B target); mba the mirror.
+  printf '%s\n' "$d" | awk -v nA="$nA" -v abf="$mab" -v baf="$mba" '
+    BEGIN { ia = 1; ib = 1 }
+    /^[0-9]/ {
+      match($0, /[acd]/); op = substr($0, RSTART, 1)
+      old = substr($0, 1, RSTART-1); new = substr($0, RSTART+1)
+      oa = old+0; ob = oa
+      if (index(old, ",")) { oa = substr(old,1,index(old,",")-1)+0; ob = substr(old,index(old,",")+1)+0 }
+      na = new+0; nb = na
+      if (index(new, ",")) { na = substr(new,1,index(new,",")-1)+0; nb = substr(new,index(new,",")+1)+0 }
+      if      (op == "a") { as = oa+1; ae = oa;  bs = na;   be = nb }
+      else if (op == "d") { as = oa;   ae = ob;  bs = na+1; be = na }
+      else                { as = oa;   ae = ob;  bs = na;   be = nb }
+      while (ia < as) { print ib > abf; print ia > baf; ia++; ib++ }
+      t = bs; if (t < 1) t = 1; for (j = as; j <= ae; j++) print t > abf
+      t = as; if (t < 1) t = 1; for (j = bs; j <= be; j++) print t > baf
+      ia = ae+1; ib = be+1
+    }
+    END { while (ia <= nA) { print ib > abf; print ia > baf; ia++; ib++ } }'
+
+  # Highlight lists: changed lines both sides, deletes on A, adds on B.
+  hl=$(printf '%s\n' "$d" | awk '
+    /^[0-9]/ {
+      match($0, /[acd]/); op = substr($0, RSTART, 1)
+      old = substr($0, 1, RSTART-1); new = substr($0, RSTART+1)
+      oa = old+0; ob = oa
+      if (index(old, ",")) { oa = substr(old,1,index(old,",")-1)+0; ob = substr(old,index(old,",")+1)+0 }
+      na = new+0; nb = na
+      if (index(new, ",")) { na = substr(new,1,index(new,",")-1)+0; nb = substr(new,index(new,",")+1)+0 }
+      if      (op == "c") { for (i=oa;i<=ob;i++) ac=ac" "i; for (i=na;i<=nb;i++) bc=bc" "i }
+      else if (op == "d") { for (i=oa;i<=ob;i++) ad=ad" "i }
+      else                { for (i=na;i<=nb;i++) ba=ba" "i }
+    }
+    END { print ac; print ad; print bc; print ba }')
+  ac=$(printf '%s\n' "$hl" | sed -n 1p); ad=$(printf '%s\n' "$hl" | sed -n 2p)
+  bc=$(printf '%s\n' "$hl" | sed -n 3p); ba=$(printf '%s\n' "$hl" | sed -n 4p)
+  "$LVI" -w "$a" -- "hl DiffChange$ac" "hl DiffDelete$ad" >/dev/null 2>&1
+  "$LVI" -w "$b" -- "hl DiffChange$bc" "hl DiffAdd$ba"    >/dev/null 2>&1
+  rm -f "$fa" "$fb"
+}
+
+# on scroll handler: lvi fires this with $LVI_WID = the view that scrolled and
+# $LVI_TOP = its new top. Translate that top through the cached map and set the
+# peer's top -- absolute, so no drift. (SELF/TOP overridable as $2/$3 for tests.)
+scrollsync() {
+  peer=$1; self=${2:-$LVI_WID}; top=${3:-$LVI_TOP}
+  { [ -n "$peer" ] && [ -n "$self" ] && [ -n "$top" ]; } || return 0
+  m=$(mapfile "$self" "$peer"); [ -f "$m" ] || return 0
+  tgt=$(sed -n "${top}p" "$m"); case "$tgt" in ''|*[!0-9]*) return 0 ;; esac
+  "$LVI" -w "$peer" -- "top $tgt" >/dev/null 2>&1
+}
+
+# One-shot hunk transfer -- diffput/diffget. Fired by \p/\o with $LVI_WID/$LVI_LINE.
+#   xfer put PEER   -- push the hunk under the cursor from THIS view onto PEER
+#   xfer get PEER   -- pull PEER's version of the hunk under the cursor into THIS view
+xfer() {
+  dir=$1; peer=$2; self=${3:-$LVI_WID}; cl=${4:-$LVI_LINE}
+  { [ -n "$dir" ] && [ -n "$peer" ] && [ -n "$self" ] && [ -n "$cl" ]; } || {
+    echo "lvi-diff --xfer: need DIR PEER (+ \$LVI_WID/\$LVI_LINE)" >&2; return 1; }
+  sf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.self.XXXXXX") || return 1
+  pf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.peer.XXXXXX") || return 1
+  trap 'rm -f "$sf" "$pf"' EXIT
+  "$LVI" -w "$self" -- '%p' > "$sf" || { echo "lvi-diff: cannot read $self" >&2; return 1; }
+  "$LVI" -w "$peer" -- '%p' > "$pf" || { echo "lvi-diff: cannot read $peer" >&2; return 1; }
+
+  set -- $(diff "$sf" "$pf" | awk -v cl="$cl" '
+    /^[0-9]/ {
+      match($0,/[acd]/); op=substr($0,RSTART,1)
+      old=substr($0,1,RSTART-1); new=substr($0,RSTART+1)
+      oa=old+0; ob=oa; if(index(old,",")){oa=substr(old,1,index(old,",")-1)+0; ob=substr(old,index(old,",")+1)+0}
+      na=new+0; nb=na; if(index(new,",")){na=substr(new,1,index(new,",")-1)+0; nb=substr(new,index(new,",")+1)+0}
+      if(op=="a"){as=oa+1;ae=oa;bs=na;be=nb} else if(op=="d"){as=oa;ae=ob;bs=na+1;be=na} else {as=oa;ae=ob;bs=na;be=nb}
+      if((as<=cl && cl<=ae) || (op=="a" && (cl==oa || cl==oa+1))) { print as, ae, bs, be; exit }
+    }')
+  [ $# -eq 4 ] || { echo "lvi-diff: no hunk under line $cl in view $self" >&2; return 0; }
+  as=$1; ae=$2; bs=$3; be=$4
+  if [ "$dir" = put ]; then dstw=$peer; ds=$bs; de=$be; srcf=$sf; ss=$as; se=$ae
+  else                      dstw=$self; ds=$as; de=$ae; srcf=$pf; ss=$bs; se=$be
+  fi
+  set --
+  [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d"
+  [ "$ss" -le "$se" ] && set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$srcf'"
+  [ $# -gt 0 ] && "$LVI" -w "$dstw" -- "$@"
+}
+
+# One-shot hunk navigation -- ]c / [c. Jump SELF to the next/prev hunk, top-anchor
+# it, and align the PEER via the cached map (a socket :top won't fire the peer's
+# scroll hook, so we set both here). No wraparound -- no-op at the ends.
+hunk() {
+  dir=$1; peer=$2; self=${3:-$LVI_WID}; line=${4:-$LVI_LINE}
+  { [ -n "$dir" ] && [ -n "$peer" ] && [ -n "$self" ] && [ -n "$line" ]; } || return 1
+  sf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.hs.XXXXXX") || return 1
+  pf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.hp.XXXXXX") || return 1
+  trap 'rm -f "$sf" "$pf"' EXIT
+  "$LVI" -w "$self" -- '%p' > "$sf" || return 1
+  "$LVI" -w "$peer" -- '%p' > "$pf" || return 1
+  target=$(diff "$sf" "$pf" | awk -v l="$line" -v d="$dir" '
+    /^[0-9]/ {
+      match($0,/[acd]/); op=substr($0,RSTART,1); old=substr($0,1,RSTART-1)
+      oa=old+0; if(index(old,",")) oa=substr(old,1,index(old,",")-1)+0
+      a[++n] = (op=="a") ? oa+1 : oa
+    }
+    END {
+      if(d=="next"){ for(i=1;i<=n;i++) if(a[i]>l){print a[i]; exit} }
+      else         { for(i=n;i>=1;i--) if(a[i]<l){print a[i]; exit} }
+    }')
+  [ -n "$target" ] || return 0
+  ctx=$((target - 3)); [ "$ctx" -lt 1 ] && ctx=1
+  "$LVI" -w "$self" -- "top $ctx" "$target"
+  m=$(mapfile "$self" "$peer")
+  if [ -f "$m" ]; then
+    ptgt=$(sed -n "${ctx}p" "$m"); case "$ptgt" in ''|*[!0-9]*) ptgt="" ;; esac
+    [ -n "$ptgt" ] && "$LVI" -w "$peer" -- "top $ptgt" >/dev/null 2>&1
+  fi
+}
+
+case "$1" in
+  --xfer)       shift; xfer "$@"; exit $? ;;
+  --hunk)       shift; hunk "$@"; exit $? ;;
+  --scrollsync) shift; scrollsync "$@"; exit $? ;;
+  --refresh)    shift; build "$1" "$2"; exit 0 ;;   # the `on change` hook
+  --stop)       gc; exit 0 ;;
+esac
+
+command -v diff >/dev/null 2>&1 || { echo "lvi-diff: diff not found on PATH" >&2; exit 1; }
+
+# Resolve the two view ids: the two args, or -- with none -- the sole live pair.
+A=$1; B=$2
+if [ -z "$A" ]; then
+  wids=$("$LVI" -l | cut -f1)
+  n=$(printf '%s\n' "$wids" | grep -c .)
+  if [ "$n" -ne 2 ]; then
+    echo "lvi-diff: found $n live views; name the two: lvi-diff WID_A WID_B" >&2; exit 1
+  fi
+  A=$(printf '%s\n' "$wids" | sed -n 1p); B=$(printf '%s\n' "$wids" | sed -n 2p)
+fi
+[ -n "$A" ] && [ -n "$B" ] || { echo "lvi-diff: need two view ids" >&2; exit 1; }
+
+gc                                  # reap any dead sessions' caches first
+build "$A" "$B" || exit 0           # first diff + caches + highlights (bails loudly if over cap)
+
+if [ -z "$LVI_DIFF_NOSTYLE" ]; then
+  "$LVI" -w "$A" -- 'hi DiffChange bg=yellow fg=black' 'hi DiffDelete bg=red fg=black' >/dev/null 2>&1
+  "$LVI" -w "$B" -- 'hi DiffChange bg=yellow fg=black' 'hi DiffAdd bg=green fg=black'  >/dev/null 2>&1
+fi
+
+# Wire both views, then exit. ]c/[c (hunk nav) and -- unless NOMAP -- \p/\o (move)
+# are maps; `on change` re-diffs (tracks edits) and `on scroll` scrollbinds. Each
+# bakes in the peer wid and our path. That's the whole session -- it lives inside
+# the views and ends when a pane closes; nothing runs in between.
+for pair in "$A $B" "$B $A"; do
+  set -- $pair; self=$1; peer=$2
+  "$LVI" -w "$self" -- \
+    "map ]c :bg LVI=$LVI $SELF --hunk next $peer<CR>" \
+    "map [c :bg LVI=$LVI $SELF --hunk prev $peer<CR>" \
+    "on change LVI=$LVI $SELF --refresh $A $B" \
+    "on scroll LVI=$LVI $SELF --scrollsync $peer" >/dev/null 2>&1
+  [ -z "$LVI_DIFF_NOMAP" ] && "$LVI" -w "$self" -- \
+    "map \\p :bg LVI=$LVI $SELF --xfer put $peer<CR>" \
+    "map \\o :bg LVI=$LVI $SELF --xfer get $peer<CR>" >/dev/null 2>&1
+done
+exit 0   # a completed setup succeeds regardless of that last conditional's status
