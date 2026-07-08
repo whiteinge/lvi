@@ -56,6 +56,7 @@ function M.new_ed()
     inject_deferred = nil,    -- socket keys held until a command boundary
     at_boundary = true,       -- interpreter parked BETWEEN commands (safe to feed)
     pending = {},             -- map-RHS bytes, consumed unmapped (non-recursive)
+    key_budget = nil,         -- per-pump replay cap (set by pump; recursive-macro brake)
     keylog = {},              -- keys of the current command (feeds last_change)
     recording = nil,          -- register name while `q` records, else nil
     macro_buf = nil,          -- keys captured while recording
@@ -89,9 +90,23 @@ end
 -- Resume the interpreter coroutine so it consumes whatever is queued in
 -- ed.inject (keyboard bytes, or keys pushed by ':normal'/'.'). It parks again
 -- when the queue drains or a command needs more input.
+--
+-- The key budget is the runaway backstop: a self-referencing macro (@a whose
+-- register text is "@a") re-fills ed.inject on every replay, so the coroutine
+-- would consume keys forever and pump would never return -- with the poll loop
+-- dead, even Ctrl-C is just an unread byte, and the only exit is SIGKILL. The
+-- interpreter decrements ed.key_budget per key and yields when it hits zero;
+-- we then clear both queues and say why. No legitimate burst comes close (the
+-- budget resets on every pump, i.e. per keyboard/socket event).
+local KEY_BUDGET = 100000
 local function pump(ed)
+  ed.key_budget = KEY_BUDGET
   local ok, err = coroutine.resume(ed.interp)
   if not ok then error("interpreter: " .. tostring(err)) end
+  if ed.key_budget <= 0 then
+    ed.inject, ed.pending = {}, {}
+    ed.message = "runaway key replay aborted (recursive macro?)"
+  end
 end
 
 -- ---- connection state -------------------------------------------------------

@@ -185,6 +185,16 @@ describe("socket-key boundary discipline", function()
     expect(ed.cy).to.equal(2)                        -- ran at once, nothing deferred
     expect(ed.inject_deferred).to_not.exist()
   end)
+
+  it("aborts a self-referencing macro instead of hanging forever", function()
+    local ed = ed_live("hello")
+    ed.regs.a = { text = "@a", linewise = false }    -- @a replays itself
+    editor.handle_socket_command(ed, "normal @a")    -- would never return unbudgeted
+    expect(ed.message).to.equal("runaway key replay aborted (recursive macro?)")
+    expect(#ed.inject).to.equal(0)                   -- queues cleared
+    editor.handle_socket_command(ed, "normal x")     -- and the editor still works
+    expect(ed.buf:line(1)).to.equal("ello")
+  end)
 end)
 
 describe("mark/jumplist adjustment across edits (make_splice_hook)", function()

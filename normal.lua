@@ -24,6 +24,14 @@ local b = string.byte
 -- Pull the next raw key without logging: from the map-output queue first (so
 -- map expansions are never re-mapped -> non-recursive), else the input funnel.
 local function getkey_raw(ed)
+  -- Replay budget (set per-pump by the driver; nil when a test drives the
+  -- coroutine directly): hitting zero parks the coroutine so the driver can
+  -- clear the queues -- the escape from a self-feeding macro (see editor.lua's
+  -- pump).
+  if ed.key_budget then
+    ed.key_budget = ed.key_budget - 1
+    if ed.key_budget <= 0 then coroutine.yield() end
+  end
   if #ed.pending > 0 then return table.remove(ed.pending, 1) end
   while #ed.inject == 0 do coroutine.yield() end
   return table.remove(ed.inject, 1)
