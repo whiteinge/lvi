@@ -41,10 +41,14 @@
 # delta) it's self-correcting, never accumulating down the file.
 #
 # SYNOPSIS
-#   lvi-diff WID_A WID_B     diff+bind those two views (A = "old", B = "new")
-#   lvi-diff                 auto-pick when EXACTLY two views are live
-#   lvi-diff --stop          sweep stale map caches (there's no process to kill --
-#                            a session ends when you close a pane)
+#   lvi-diff WID_A WID_B      diff+bind those two live views (A = "old", B = "new")
+#   lvi-diff                  auto-pick when EXACTLY two views are live
+#   lvi-diff FILE_A FILE_B    open the two files in a new tmux window and diff
+#                             them, blocking until you quit A -- a vimdiff-alike
+#   lvi-diff LOCAL REMOTE OUT as above, and on accept (:x) copy the resolved A to
+#                             OUT -- the git mergetool form (see contrib/README.md)
+#   lvi-diff --stop           sweep stale map caches (there's no process to kill --
+#                             a session ends when you close a pane)
 #   (Installed in both views: ]c/[c jump hunks; \p/\o move a hunk across.)
 #
 # SUGGESTED BINDING (~/.lvirc, or run by hand). Launch it once per diff session.
@@ -242,6 +246,49 @@ case "$1" in
 esac
 
 command -v diff >/dev/null 2>&1 || { echo "lvi-diff: diff not found on PATH" >&2; exit 1; }
+
+# FILE MODE -- `lvi-diff FILE_A FILE_B [OUT]` (A and B are readable files). Opens
+# the two in a NEW tmux window (A left, B right), wires the diff, and BLOCKS until
+# you quit A, exiting with A's status. That's a vimdiff-alike, and the shape a git
+# mergetool wants: point it at $LOCAL $REMOTE $MERGED, resolve into A (the clean,
+# marker-free left pane -- with `mergetool.<tool>.hideResolved` on, Git has
+# stripped the agreed regions so A-vs-B shows only the real conflicts), and quit.
+# :x/:wq exit 0 (accept), :cq exits non-zero (abort). If OUT is given, an accept
+# copies the resolved A onto it: Git stages $MERGED (never LOCAL) on tool success
+# -- it does NOT reassemble from LOCAL -- so the resolution has to land in $MERGED
+# ourselves. Abort leaves OUT untouched for Git to restore. (A is the foreground
+# child so $? is lvi's exit code; hence tmux for the B pane.)
+if [ -f "$1" ] && [ -f "$2" ]; then
+  fa=$1; fb=$2; out=$3
+  [ -n "$TMUX" ] || { echo "lvi-diff: file mode opens a tmux window -- run it inside tmux" >&2; exit 1; }
+  # Open A|B in a NEW window (A left, B right), not a split of the caller's pane --
+  # a split gets cramped in a busy window with no easy "maximize"; its own window
+  # is clean and full-size. A isn't our child anymore, so it writes its exit code
+  # to a temp on quit and we block on that (:x/:wq -> 0 accept, :cq -> non-zero).
+  codef="$PIDDIR/lvi-diff.mt.$$"; rm -f "$codef"
+  awin=$(tmux new-window -P -F '#{window_id}' "${LVI} '$fa'; printf %s \"\$?\" > '$codef'") || exit 1
+  tmux split-window -h -d -t "$awin" "exec ${LVI} '$fb'"
+  # Wire the diff once both views register (just calls our own wid mode).
+  i=0; while [ $i -lt 50 ]; do
+    wa=""; wb=""
+    for w in $("$LVI" -l 2>/dev/null | cut -f1); do
+      f=$("$LVI" -w "$w" -- f 2>/dev/null | sed -n 's/^"\(.*\)" .*/\1/p')
+      [ "$f" = "$fa" ] && wa=$w
+      [ "$f" = "$fb" ] && wb=$w
+    done
+    [ -n "$wa" ] && [ -n "$wb" ] && { "$SELF" "$wa" "$wb"; break; }
+    i=$((i + 1)); sleep 0.1
+  done
+  # Block until A quits (writes $codef); stop early if the window is torn down.
+  while [ ! -f "$codef" ]; do
+    tmux display -p -t "$awin" '#{window_id}' >/dev/null 2>&1 || break
+    sleep 0.3
+  done
+  code=$(cat "$codef" 2>/dev/null || echo 1); rm -f "$codef"
+  tmux kill-window -t "$awin" 2>/dev/null
+  [ "$code" -eq 0 ] && [ -n "$out" ] && cp -- "$fa" "$out"   # accept -> land it in $MERGED
+  exit "${code:-1}"
+fi
 
 # Resolve the two view ids: the two args, or -- with none -- the sole live pair.
 A=$1; B=$2

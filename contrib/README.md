@@ -127,7 +127,10 @@ is lvi firing those hooks. `]c`/`[c` jump to the next/prev hunk (top-anchoring
 `on scroll` hook: when a pane's viewport moves, its top is translated through the
 diff map and pushed to the peer, so they stay aligned even across a lopsided hunk.
 Launch it on two live views — `lvi-diff` (auto-picks the sole pair) or
-`lvi-diff WID_A WID_B`.
+`lvi-diff WID_A WID_B`. Or hand it **two files** — `lvi-diff old new` — and it
+opens them in a **new tmux window**, wires the same diff, and blocks until you
+quit the left one: a `vimdiff foo bar` for lvi. That file mode is also what makes
+it a git mergetool (below).
 
 ### `lvi-stagediff` — `git add -p`, as a diff you edit
 
@@ -141,6 +144,29 @@ state; that is how unstaging works. It reblobs the whole buffer (`git hash-objec
 -w` + `git update-index`), so there's no partial-patch fuzz to misapply. Built on
 `lvi-diff`, so the highlighting, scrollbind, and `]c`/`[c` come free. Run
 `lvi-stagediff FILE` inside tmux.
+
+### Git mergetool
+
+`lvi-diff`'s file mode drops into git's mergetool protocol — paired with
+**`hideResolved`**, it's a genuinely pleasant conflict resolver. `hideResolved`
+pre-resolves everything both sides agree on and rewrites LOCAL/REMOTE so only the
+*real* conflicts differ, markers gone — so the two-way diff shows exactly the
+hunks you must decide. You resolve them the way you'd move any hunk (`\o` to take
+theirs into the left pane, or hand-edit), then `:x` to accept or `:cq` to abort.
+In `~/.gitconfig`:
+
+    [merge]
+        tool = lvi
+    [mergetool "lvi"]
+        cmd = lvi-diff "$LOCAL" "$REMOTE" "$MERGED"
+        hideResolved = true
+        trustExitCode = true
+
+Then `git mergetool` (inside tmux) steps you through each conflict. `trustExitCode`
+maps lvi's exit straight through: `:x`/`:wq` (0) stages your resolution, `:cq`
+(non-zero) leaves the conflict for later. The `$MERGED` argument is there because
+Git stages `$MERGED`, not LOCAL — it does not reassemble the result from your
+edited LOCAL — so on accept the tool copies your resolved left pane onto it.
 
 ## The shared machinery
 
