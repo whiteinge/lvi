@@ -73,10 +73,17 @@ end
 
 -- :e path -- switch to the buffer for `path` if resident, else open it.
 function M.open(ed, path)
-  save(ed)
   for i, rec in ipairs(ed.buffers) do
-    if rec.buf.path == path then load(ed, i); return end
+    if rec.buf.path == path then
+      -- Already resident. Current? Then nothing to do -- crucially, no save():
+      -- save() repoints the alternate at the buffer being left, and pointing
+      -- the alternate at itself would destroy it (:e <current-file> used to
+      -- eat Ctrl-^). A real switch saves as usual.
+      if i ~= ed.bufidx then save(ed); load(ed, i) end
+      return
+    end
   end
+  save(ed)
   local buf = buffer.open(path)
   if ed.stamp then ed.stamp(buf) end        -- read-stamp for :w conflict checks
   ed.buffers[#ed.buffers + 1] = fresh(buf)

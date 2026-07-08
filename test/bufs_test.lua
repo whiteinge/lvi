@@ -136,6 +136,16 @@ describe("bufs", function()
       local _, s = ex.dispatch(ed, "b #")
       expect(s).to.equal("err")
     end)
+    it(":e <current-file> is a no-op that preserves the alternate", function()
+      local ed = make_ed(); bufs.init(ed, buffer.new("A"))
+      local p = tmpfile("B"); bufs.open(ed, p)          -- current 2 (B), alt 1 (A)
+      bufs.open(ed, p)                                  -- :e the file already current
+      expect(ed.bufidx).to.equal(2)
+      expect(ed.altbuf).to.equal(1)                     -- used to become 2 (itself)
+      expect(bufs.alt(ed)).to.be.truthy()               -- Ctrl-^ still works
+      expect(ed.buf:line(1)).to.equal("A")
+      os.remove(p)
+    end)
   end)
 
   describe("close (:bd)", function()
