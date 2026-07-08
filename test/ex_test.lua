@@ -218,6 +218,22 @@ describe("ex.dispatch", function()
       expect(body).to.equal("X\nb\n")
       os.remove(target)
     end)
+    it(":wa fires the write event with each written buffer, not the current one", function()
+      local buffer_ = require("buffer")
+      local ed = ed_with("cur\n")
+      local other = buffer_.new("oth\n")
+      ed.buf.path, other.path = os.tmpname(), os.tmpname()
+      ed.buf:set(1, "CUR"); other:set(1, "OTH")     -- both modified
+      ed.buffers = { { buf = ed.buf }, { buf = other } }
+      local fired = {}
+      ed.fire_event = function(ev, buf) fired[#fired + 1] = { ev, buf } end
+      local _, s = ex.dispatch(ed, "wa")
+      expect(s).to.equal("ok")
+      expect(#fired).to.equal(2)
+      expect(fired[1][2]).to.be(ed.buf)             -- each event names its buffer
+      expect(fired[2][2]).to.be(other)
+      os.remove(ed.buf.path); os.remove(other.path)
+    end)
   end)
 
   describe("set", function()

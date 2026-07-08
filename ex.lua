@@ -364,7 +364,9 @@ local function write_all(ed, force)
       local ok, err = pcall(buf.write, buf)
       if not ok then return nil, "write failed: " .. tostring(err) end
       if ed.stamp then ed.stamp(buf) end
-      if ed.fire_event then ed.fire_event("write") end
+      -- Pass the buffer so the hook's LVI_FILE names the file actually written,
+      -- not whichever buffer happens to be current (same contract as bufdelete).
+      if ed.fire_event then ed.fire_event("write", buf) end
       n = n + 1
     end
   end
