@@ -58,4 +58,4 @@ Four docs, four audiences — keep content in its lane and don't duplicate acros
 
 ## POSIX references
 
-`RESOURCES/MANPAGE-vi.txt` and `RESOURCES/MANPAGE-ex.txt` are the POSIX vi/ex specs — consult them for exact command/addressing semantics rather than guessing. Note POSIX vi specifies no arrow keys (commands are literal characters); escape-sequence decoding is intentionally deferred.
+Consult the POSIX vi/ex specifications for exact command/addressing semantics rather than guessing. Note POSIX vi specifies no arrow keys (commands are literal characters); escape-sequence decoding is intentionally deferred.
