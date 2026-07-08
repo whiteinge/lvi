@@ -1139,7 +1139,7 @@ actions = {
           ed.message = payload:gsub("\n", " ")
         end
         return
-      elseif k == 27 then ed.mode = "normal"; ed.cmdline = ""; return
+      elseif k == 27 or k == 3 then ed.mode = "normal"; ed.cmdline = ""; return  -- Esc / Ctrl-C cancel
       elseif k == 127 or k == 8 then
         if #ed.cmdline == 0 then ed.mode = "normal"; return end
         ed.cmdline = ed.cmdline:sub(1, -2)
