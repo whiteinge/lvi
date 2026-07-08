@@ -233,9 +233,13 @@ write` (a `:w`), and `on scroll` (a keyboard move of the viewport top) are the
 editor's *push* seams — each fires a command with the relevant state in the
 environment (`$LVI_FILE`, `$LVI_TOP`, …). They're keyboard-gated, so a tool's own
 socket-driven edits and scrolls never re-fire them, and cross-view features can't
-ring. `lvi-diff` is how far that reaches: diff highlighting, hunk-aware scrollbind,
-and staging are *all* just these hooks plus one-shots — no polling, no daemon; the
-session lives as hooks and maps inside the two views and ends when a pane closes.
+ring. The flip side of that gate: if your tool *edits* the buffer over the
+socket, `change` consumers (live highlighting) won't hear about it until the
+user's next keystroke — send `:fire` after your edits to arm them explicitly
+(it rides the same idle debounce a keystroke does). `lvi-diff` is how far the
+hook model reaches: diff highlighting, hunk-aware scrollbind, and staging are
+*all* just these hooks plus one-shots — no polling, no daemon; the session
+lives as hooks and maps inside the two views and ends when a pane closes.
 
 **The dirty flag is a socket primitive.** The buffer's modified state is exposed
 through the ordinary `:set` surface — `set modified?` queries it, `set
