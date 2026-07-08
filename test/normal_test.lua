@@ -1079,6 +1079,33 @@ describe("normal-mode interpreter", function()
       expect(ed.buf:line(1)).to.equal("foobar")
     end)
   end)
+
+  describe("jumplist (Ctrl-O / Ctrl-I)", function()
+    local CO, CI = "\15", "\9"                    -- Ctrl-O, Ctrl-I (Tab)
+    it("Ctrl-O walks back over jumps and Ctrl-I forward", function()
+      local ed = make("l1\nl2\nl3\nl4\nl5")
+      feed(ed, "G");  expect(ed.cy).to.equal(5)   -- jump from line 1
+      feed(ed, "2G"); expect(ed.cy).to.equal(2)   -- jump from line 5
+      feed(ed, CO);   expect(ed.cy).to.equal(5)   -- back to the line 2 jump's origin
+      feed(ed, CO);   expect(ed.cy).to.equal(1)   -- back to the G jump's origin
+      feed(ed, CO);   expect(ed.cy).to.equal(1)   -- nothing older: stays put
+      feed(ed, CI);   expect(ed.cy).to.equal(5)   -- forward again
+      feed(ed, CI);   expect(ed.cy).to.equal(2)   -- back to the live edge (line 2)
+      feed(ed, CI);   expect(ed.cy).to.equal(2)   -- nothing newer: stays put
+    end)
+    it("non-jump motions do not push, and Ctrl-O/I are no-ops when empty", function()
+      local ed = make("l1\nl2\nl3\nl4\nl5")
+      feed(ed, "jjj"); expect(ed.cy).to.equal(4)  -- j is not jump-class
+      feed(ed, CO);    expect(ed.cy).to.equal(4)  -- empty jumplist: no move
+      feed(ed, CI);    expect(ed.cy).to.equal(4)
+    end)
+    it("dedups by line so revisiting a line doesn't bloat the list", function()
+      local ed = make("l1\nl2\nl3\nl4\nl5")
+      feed(ed, "G");   feed(ed, "1G")             -- jump to 5, then back to 1
+      feed(ed, "G")                               -- jump to 5 again (origin line 1 dup)
+      expect(#ed.jumps.list).to.equal(2)          -- {5, 1}, not {1, 5, 1}
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

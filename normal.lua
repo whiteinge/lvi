@@ -674,7 +674,7 @@ local motions = {
   [b("W")] = { kind = "char", move = function(ed, n) return word_forward(ed, n, true) end },
   [b("B")] = { kind = "char", move = function(ed, n) return word_back(ed, n, true) end },
   [b("E")] = { kind = "char", inclusive = true, move = function(ed, n) return word_end(ed, n, true) end },
-  [b("%")] = { kind = "char", inclusive = true, move = match_bracket },
+  [b("%")] = { kind = "char", inclusive = true, jump = true, move = match_bracket },
   [b("f")] = find_motion("f", true),
   [b("t")] = find_motion("t", true),
   [b("F")] = find_motion("F", false),
@@ -715,12 +715,12 @@ local motions = {
     end
     return l, disp.byteat(line(ed, l), W, ts, sub, ccol)
   end },
-  [96] = { kind = "char", move = function(ed) -- `{mark}: exact position
+  [96] = { kind = "char", jump = true, move = function(ed) -- `{mark}: exact position
     local m = ed.marks and ed.marks[string.char(getkey(ed))]
     if not m then return ed.cy, ed.cx end
     return m[1], m[2]
   end },
-  [39] = { kind = "line", move = function(ed) -- '{mark}: mark's line
+  [39] = { kind = "line", jump = true, move = function(ed) -- '{mark}: mark's line
     local m = ed.marks and ed.marks[string.char(getkey(ed))]
     if not m then return ed.cy, ed.cx end
     local l = math.max(1, math.min(m[1], ed.buf:nlines()))
@@ -732,7 +732,7 @@ local motions = {
   end },
   [b("j")] = { kind = "line", move = function(ed, n) return ed.cy + (n or 1), ed.cx end },
   [b("k")] = { kind = "line", move = function(ed, n) return ed.cy - (n or 1), ed.cx end },
-  [b("G")] = { kind = "line", move = function(ed, n)
+  [b("G")] = { kind = "line", jump = true, move = function(ed, n)
     local t = n or ed.buf:nlines()
     t = math.max(1, math.min(t, ed.buf:nlines()))
     return t, first_nonblank(line(ed, t))
@@ -741,38 +741,91 @@ local motions = {
   -- they compose with operators). Wrap-aware via visible_bottom, which walks
   -- screen rows -- a wrapped line spans several, so plain buffer-line arithmetic
   -- would point past the visible area (and dragging the cursor there scrolls).
-  [b("H")] = { kind = "line", move = function(ed, n)
+  [b("H")] = { kind = "line", jump = true, move = function(ed, n)
     local l = math.min((ed.top or 1) + (n or 1) - 1, visible_bottom(ed))
     return l, first_nonblank(line(ed, l))
   end },
-  [b("L")] = { kind = "line", move = function(ed, n)
+  [b("L")] = { kind = "line", jump = true, move = function(ed, n)
     local l = math.max(ed.top or 1, visible_bottom(ed) - (n or 1) + 1)
     return l, first_nonblank(line(ed, l))
   end },
-  [b("M")] = { kind = "line", move = function(ed)
+  [b("M")] = { kind = "line", jump = true, move = function(ed)
     local l = math.floor(((ed.top or 1) + visible_bottom(ed)) / 2)
     return l, first_nonblank(line(ed, l))
   end },
   -- Paragraph / section motions (charwise-exclusive; land on the boundary's
   -- first column). [[ / ]] read their doubled key like g does gg.
-  [b("}")] = { kind = "char", move = function(ed, count) return para_target(ed, count, true, false), 1 end },
-  [b("{")] = { kind = "char", move = function(ed, count) return para_target(ed, count, false, false), 1 end },
-  [b("]")] = { kind = "char", move = function(ed, count)
+  [b("}")] = { kind = "char", jump = true, move = function(ed, count) return para_target(ed, count, true, false), 1 end },
+  [b("{")] = { kind = "char", jump = true, move = function(ed, count) return para_target(ed, count, false, false), 1 end },
+  [b("]")] = { kind = "char", jump = true, move = function(ed, count)
     if getkey(ed) ~= b("]") then return ed.cy, ed.cx end
     return para_target(ed, count, true, true), 1
   end },
-  [b("[")] = { kind = "char", move = function(ed, count)
+  [b("[")] = { kind = "char", jump = true, move = function(ed, count)
     if getkey(ed) ~= b("[") then return ed.cy, ed.cx end
     return para_target(ed, count, false, true), 1
   end },
-  [b(")")] = { kind = "char", move = function(ed, count) return sent_target(ed, count, true) end },
-  [b("(")] = { kind = "char", move = function(ed, count) return sent_target(ed, count, false) end },
+  [b(")")] = { kind = "char", jump = true, move = function(ed, count) return sent_target(ed, count, true) end },
+  [b("(")] = { kind = "char", jump = true, move = function(ed, count) return sent_target(ed, count, false) end },
 }
 
+-- The jumplist: a per-buffer rolling record of positions a "jump-class" motion
+-- (G, %, marks, {}, (), [[ ]], H/M/L -- the entries flagged jump=true) left
+-- FROM, so Ctrl-O/Ctrl-I can walk back and forth. Mirrors vim's setpcmark:
+-- jumps are per-buffer (swapped by bufs alongside marks), the store is
+-- ed.jumps = { list = {line,col}..., idx }, and idx is a 1-based cursor into
+-- list where idx == #list+1 means "at the live edge, not navigating". Only bare
+-- motions push (via do_motion) -- an operator's motion target (apply_operator)
+-- must not, matching vi. Search (n/N//) is a contrib tool over the socket, so it
+-- doesn't feed this; only the core jump motions do.
+local JUMP_MAX = 100
+
+-- Record a jump origin (dedup by line like vim, cap the list, reset to the edge).
+local function jump_record(j, l, c)
+  for i = #j.list, 1, -1 do
+    if j.list[i][1] == l then table.remove(j.list, i) end
+  end
+  j.list[#j.list + 1] = { l, c }
+  while #j.list > JUMP_MAX do table.remove(j.list, 1) end
+  j.idx = #j.list + 1
+end
+
+-- Ctrl-O: step to an older position. On the first step from the live edge, the
+-- current position is recorded first (like vim), so Ctrl-I can bring you back.
+local function jump_back(ed)
+  local j = ed.jumps
+  if not j or #j.list == 0 then return end
+  if j.idx > #j.list then
+    jump_record(j, ed.cy, ed.cx)  -- save the edge; leaves idx == #list+1
+    j.idx = #j.list               -- ...then step onto the just-saved entry
+  end
+  if j.idx <= 1 then return end   -- nothing older
+  j.idx = j.idx - 1
+  ed.cy, ed.cx = j.list[j.idx][1], j.list[j.idx][2]
+  clamp(ed)
+end
+
+-- Ctrl-I: step back toward newer positions (only meaningful after Ctrl-O).
+local function jump_fwd(ed)
+  local j = ed.jumps
+  if not j or j.idx >= #j.list then return end
+  j.idx = j.idx + 1
+  ed.cy, ed.cx = j.list[j.idx][1], j.list[j.idx][2]
+  clamp(ed)
+end
+
 local function do_motion(ed, m, count)
+  local oy, ox = ed.cy, ed.cx
   local tl, tc = m.move(ed, count)
   ed.cy, ed.cx = tl, tc
   clamp(ed)
+  -- Record the origin in the jumplist -- but only if a jump-class motion
+  -- actually moved us, so a no-op jump (mistyped [[, % off a bracket, missing
+  -- mark) leaves no stray entry.
+  if m.jump and (ed.cy ~= oy or ed.cx ~= ox) then
+    ed.jumps = ed.jumps or { list = {}, idx = 1 }
+    jump_record(ed.jumps, oy, ox)
+  end
 end
 
 -- Shift operators are always linewise, even over a charwise motion (>w shifts
@@ -1065,6 +1118,8 @@ actions = {
   [21] = function(ed, count) scroll_page(ed, -(count or math.max(1, math.floor(textrows(ed) / 2)))) end, -- Ctrl-U
   [5]  = function(ed, count) scroll_reveal(ed,  (count or 1)) end,   -- Ctrl-E
   [25] = function(ed, count) scroll_reveal(ed, -(count or 1)) end,   -- Ctrl-Y
+  [15] = function(ed) jump_back(ed) end,   -- Ctrl-O: older position in the jumplist
+  [9]  = function(ed) jump_fwd(ed) end,    -- Ctrl-I / Tab: newer position
   [b("u")] = function(ed)
     local l = ed.buf:undo()
     if l then ed.cy, ed.cx = l, 1; clamp(ed) else ed.message = "Already at oldest change" end

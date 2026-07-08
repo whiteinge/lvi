@@ -82,6 +82,13 @@ leading count, e.g. *3dw*.
 	returns to where you were typing. (*contrib/lvi-pos* adds a cross-session
 	*`"* -- where you last were when the file was closed.)
 
+*Ctrl-O* *Ctrl-I*
+	Go to an older / newer position in the jumplist -- a per-buffer rolling
+	record of where each _jump-class_ motion left from. A jump is any motion
+	that can move far: *G*, *%*, the mark jumps (*`* *'*), paragraph/section
+	(*{* *}* *[[* *]]*), sentence (*(* *)*), and the screen positions (*H* *M*
+	*L*). Plain moves (*h j k l*, *w*, *f*) are not jumps. *Ctrl-I* is *Tab*.
+
 ## Operators and edits
 
 *d* *c* *y*

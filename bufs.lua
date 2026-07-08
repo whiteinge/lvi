@@ -13,11 +13,11 @@ local M = {}
 
 -- Per-buffer view state (everything else -- text, path, modified, undo -- lives
 -- in the buffer object; the rest of ed is shared across buffers).
-local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights" }
+local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "jumps" }
 
 local function fresh(buf)
   return { buf = buf, cx = 1, cy = 1, top = 1, topsub = 0, leftcol = 0,
-           marks = {}, highlights = {} }
+           marks = {}, highlights = {}, jumps = { list = {}, idx = 1 } }
 end
 
 local function save(ed)
