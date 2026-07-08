@@ -21,6 +21,70 @@ local config = require("config")
 
 local M = {}
 
+-- ---- the editor state object --------------------------------------------------
+-- new_ed() is the ONE place an ed field is born: every module (and every test)
+-- builds on this, so nothing downstream needs a lazy `ed.x = ed.x or {}`
+-- default -- if a field is missing, that is a bug here, not something to paper
+-- over at the use site. Add a field to this registry, with its comment, or not
+-- at all.
+--
+-- Not listed (injected by run(), and only there):
+--   * wid, sock_path, buffer_scratch     -- the view's socket identity
+--   * interp                             -- the normal-mode coroutine
+--   * export_context, spawn_bg, fire_event, stamp, file_changed, splice_hook
+--   * suspend, with_tty, shell, suspend_self, complete_run  -- tty capabilities,
+--     ABSENT headless; ex feature-detects them (`if ed.shell then ...`)
+function M.new_ed()
+  return {
+    -- lifecycle
+    running = true,           -- the poll loop spins while true (:q flips it)
+    exit_code = nil,          -- process exit status (:cq sets non-zero)
+
+    -- modes and transient UI
+    mode = "normal",          -- "normal" | "insert" | "command" (the ':' prompt)
+    cmdline = "",             -- ':' prompt accumulator
+    message = nil,            -- one-line message shown in the status line
+    status = {},              -- named status segments (:status), render-sorted
+    force_clear = false,      -- next paint clears the screen first (Ctrl-L, resize)
+
+    -- geometry (re-read from the tty every wakeup; these are headless defaults)
+    rows = 24, cols = 80,
+
+    -- the input funnel (see normal.lua's header)
+    inject = {},              -- pending raw key bytes; the single input queue
+    inject_deferred = nil,    -- socket keys held until a command boundary
+    at_boundary = true,       -- interpreter parked BETWEEN commands (safe to feed)
+    pending = {},             -- map-RHS bytes, consumed unmapped (non-recursive)
+    keylog = {},              -- keys of the current command (feeds last_change)
+    recording = nil,          -- register name while `q` records, else nil
+    macro_buf = nil,          -- keys captured while recording
+    last_change = nil,        -- keylog of the last buffer-changing command (for .)
+    last_find = nil,          -- last f/t/F/T target (for ; and ,)
+    last_macro = nil,         -- last @-run register (for @@)
+
+    -- shared editing state
+    regs = {},                -- registers a-z + unnamed '"'
+    maps = {},                -- :map LHS -> RHS (byte strings)
+    hooks = {},               -- :on event -> { cmd, ... }
+    change_pending = false,   -- a keyboard edit awaits its debounced change hook
+    opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false },
+    hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
+    hlpri = {},               -- :hi group -> z-order
+
+    -- per-buffer view state (bufs saves/loads these on every switch)
+    buf = nil,                -- current buffer object (set by bufs.init)
+    cx = 1, cy = 1,           -- cursor (byte col, line)
+    top = 1, topsub = 0,      -- viewport top (line, wrapped sub-row)
+    leftcol = 0,              -- horizontal scroll (nowrap)
+    marks = {},               -- mark char -> {line, col}
+    highlights = {},          -- :hl group -> ranges (transient overlay)
+    jumps = { list = {}, idx = 1 },  -- Ctrl-O/Ctrl-I jumplist
+
+    -- the buffer list (bufs.init populates)
+    buffers = nil, bufidx = nil, altbuf = nil,
+  }
+end
+
 -- Resume the interpreter coroutine so it consumes whatever is queued in
 -- ed.inject (keyboard bytes, or keys pushed by ':normal'/'.'). It parks again
 -- when the queue drains or a command needs more input.
@@ -114,7 +178,6 @@ function M.note_keyboard_change(ed, prev_buf, prev_rev)
   if ed.buf ~= prev_buf or ed.buf.rev ~= prev_rev then
     ed.change_pending = true
     if ed.buf == prev_buf then
-      ed.marks = ed.marks or {}
       ed.marks["."] = { ed.cy, ed.cx }
     end
   end
@@ -125,7 +188,7 @@ end
 -- generic firer behind both the idle `change` hook and the buffer events; bufs
 -- calls it through the injected ed.fire_event so it needn't require editor.
 function M.fire(ed, event, buf)
-  local hooks = ed.hooks and ed.hooks[event]
+  local hooks = ed.hooks[event]
   if not hooks then return end
   for _, cmd in ipairs(hooks) do ed.spawn_bg(cmd, buf) end
 end
@@ -133,7 +196,7 @@ end
 -- Called when the poll loop goes idle: run each registered `change` hook once,
 -- detached, then disarm until the next keyboard change.
 function M.on_idle(ed)
-  local hooks = ed.change_pending and ed.hooks and ed.hooks.change
+  local hooks = ed.change_pending and ed.hooks.change
   if not hooks or #hooks == 0 then return end
   ed.change_pending = false
   M.fire(ed, "change")
@@ -162,10 +225,8 @@ function M.make_splice_hook(ed)
       if pos[1] > nl then pos[1] = nl end
       if pos[1] < 1 then pos[1] = 1 end
     end
-    for _, m in pairs(ed.marks or {}) do adj(m) end
-    if ed.jumps then
-      for _, p in ipairs(ed.jumps.list) do adj(p) end
-    end
+    for _, m in pairs(ed.marks) do adj(m) end
+    for _, p in ipairs(ed.jumps.list) do adj(p) end
   end
 end
 
@@ -201,21 +262,20 @@ end
 -- ---- cursor / scroll invariants ---------------------------------------------
 -- Runs after any mutation or motion (keyboard OR socket). The interpreter also
 -- clamps the cursor itself; this additionally handles the socket path and does
--- the vertical scroll to keep the cursor on screen.
+-- the vertical scroll to keep the cursor on screen. Cursor bounds are
+-- normal.clamp -- the one definition -- so the two paths cannot drift.
 local function refresh(ed)
+  normal.clamp(ed)
   local nl = ed.buf:nlines()
-  ed.cy = math.max(1, math.min(ed.cy, nl))
   local curline = ed.buf:line(ed.cy) or ""
-  local maxc = (ed.mode == "insert") and (#curline + 1) or disp.last_char(curline)
-  ed.cx = math.max(1, math.min(ed.cx, maxc))
 
   local textrows = ed.rows - 1
   local W = ed.cols
-  local ts = (ed.opts and ed.opts.tabstop) or 8
+  local ts = ed.opts.tabstop
 
-  if ed.opts and ed.opts.wrap then
+  if ed.opts.wrap then
     ed.leftcol = 0
-    ed.topsub = ed.topsub or 0
+    ed.topsub = ed.topsub
     local csub = select(1, disp.locate(curline, W, ts, ed.cx))
     if ed.cy < ed.top or (ed.cy == ed.top and csub < ed.topsub) then
       ed.top, ed.topsub = ed.cy, csub                 -- cursor above top: scroll up
@@ -261,13 +321,8 @@ M.refresh = refresh -- exposed for tests
 -- ---- main loop --------------------------------------------------------------
 function M.run(opts)
   opts = opts or {}
-  local ed = {
-    running = true,
-    mode = "normal", cmdline = "", message = nil,
-    inject = {}, pending = {}, keylog = {}, regs = {},
-    opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false },
-    hooks = {}, change_pending = true, -- seed one fire so an opened file highlights
-  }
+  local ed = M.new_ed()
+  ed.change_pending = true -- seed one fire so an opened file highlights
   -- Refresh the per-spawn context env vars, so a child (a `:!` command, a hook)
   -- reads the cursor's world straight from its environment -- no expansion
   -- mini-language in the editor, just values a POSIX shell can slice
@@ -281,7 +336,7 @@ function M.run(opts)
     sys.setenv("LVI_FILE", buf.path or "")
     sys.setenv("LVI_LINE", ed.cy)
     sys.setenv("LVI_COL", ed.cx)
-    sys.setenv("LVI_TOP", ed.top or 1)          -- viewport top line, for `on scroll`
+    sys.setenv("LVI_TOP", ed.top)          -- viewport top line, for `on scroll`
     sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
   end
   -- Spawn a shell command detached and non-blocking, with its output discarded
@@ -483,7 +538,7 @@ function M.run(opts)
     sys.close(lfd)
     sys.unlink(ed.sock_path)
     os.remove(ed.buffer_scratch)                 -- reap the :wbuf snapshot, if any
-    for _, rec in ipairs(ed.buffers or {}) do    -- reap the conflict stamps
+    for _, rec in ipairs(ed.buffers) do          -- reap the conflict stamps
       if rec.buf._stamp then os.remove(rec.buf._stamp) end
     end
     if tty then sys.write(1, term.show .. term.alt_off) end
@@ -538,7 +593,7 @@ function M.run(opts)
           end
         end
       end
-      local ptop, psub, kbd = ed.top, ed.topsub or 0, false
+      local ptop, psub, kbd = ed.top, ed.topsub, false
       if tty and ready[0] then
         local data = sys.read(0)
         if not data then
@@ -562,7 +617,7 @@ function M.run(opts)
       -- false, so they never re-fire: that's the anti-echo gate, same discipline
       -- as note_keyboard_change. Undebounced (unlike `change`) so a bound peer
       -- tracks promptly. spawn_bg is non-blocking, so the pump stays responsive.
-      if kbd and ed.running and (ed.top ~= ptop or (ed.topsub or 0) ~= psub) then
+      if kbd and ed.running and (ed.top ~= ptop or ed.topsub ~= psub) then
         M.fire(ed, "scroll")
       end
       if tty and ed.running then

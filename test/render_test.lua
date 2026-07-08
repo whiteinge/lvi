@@ -4,12 +4,14 @@ package.path = "vendor/lust/?.lua;./?.lua;" .. package.path
 local lust   = require("lust")
 local buffer = require("buffer")
 local render = require("render")
+local editor = require("editor")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
 local function ed_with(text, over)
-  local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, topsub = 0,
-               leftcol = 0, mode = "normal", cmdline = "", rows = 5, cols = 12,
-               opts = { wrap = false, tabstop = 8 } }
+  local ed = editor.new_ed()
+  ed.buf = buffer.new(text)
+  ed.rows, ed.cols = 5, 12
+  ed.opts.wrap = false
   for k, v in pairs(over or {}) do ed[k] = v end
   return ed
 end

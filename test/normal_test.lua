@@ -10,9 +10,8 @@ local describe, it, expect = lust.describe, lust.it, lust.expect
 
 -- Build an editor state with a live interpreter coroutine, primed to getkey.
 local function make(text)
-  local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, rows = 24,
-    cols = 80, mode = "normal", cmdline = "", message = nil,
-    inject = {}, pending = {}, keylog = {}, regs = {}, marks = {}, running = true }
+  local ed = editor.new_ed()
+  ed.buf = buffer.new(text)
   ed.interp = coroutine.create(function() normal.loop(ed) end)
   assert(coroutine.resume(ed.interp))
   return ed

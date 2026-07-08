@@ -72,7 +72,6 @@ end
 -- minus the I/O), so it composes with later edits/undos; setting parks the
 -- marker at a never-reached id (-1) so the buffer reads dirty until a real save.
 local function do_set(ed, args)
-  ed.opts = ed.opts or { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false }
   local out = {}
   for opt in args:gmatch("%S+") do
     local name, val = opt:match("^(%a+)=(.+)$")
@@ -92,7 +91,7 @@ local function do_set(ed, args)
       local n = opt:sub(1, -2)
       if n == "wrap" then out[#out + 1] = ed.opts.wrap and "wrap" or "nowrap"
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
-      elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. (ed.opts.shiftwidth or 8)
+      elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
       elseif n == "expandtab" or n == "et" then out[#out + 1] = ed.opts.expandtab and "expandtab" or "noexpandtab"
       elseif n == "modified" or n == "mod" then out[#out + 1] = ed.buf.modified and "modified" or "nomodified"
       else return "unknown option: " .. n, "err" end
@@ -119,7 +118,6 @@ end
 -- no specs clears the group. Specs: L:C1-C2 (byte cols), L:C (one col), L (whole
 -- line). Named groups let independent lists (search, qf-current, ...) coexist.
 local function do_hl(ed, args)
-  ed.highlights = ed.highlights or {}
   local group, rest = args:match("^(%S+)%s*(.-)%s*$")
   if not group then return "usage: hl GROUP [L:C1-C2 ...]", "err" end
   local ranges = {}
@@ -188,10 +186,8 @@ end
 local function do_histyle(ed, args)
   local group, rest = args:match("^(%S+)%s*(.-)%s*$")
   if not group or group == "" then return "usage: hi GROUP [fg=.. bg=.. bold .. pri=N]", "err" end
-  ed.hlstyles = ed.hlstyles or {}
   local pri = rest:match("pri=(%-?%d+)")        -- z-order is not an SGR param; pull it out
   if pri then
-    ed.hlpri = ed.hlpri or {}
     ed.hlpri[group] = tonumber(pri)
     rest = rest:gsub("%s*pri=%-?%d+%s*", " "):match("^%s*(.-)%s*$")
   end
@@ -297,7 +293,7 @@ local function do_ex(ed, line)
   local exe = os.getenv("LVI_EX") or "ex"
   local src = ed.buf:text()
   local pre = {}
-  for m, pos in pairs(ed.marks or {}) do
+  for m, pos in pairs(ed.marks) do
     if m:match("^%l$") then pre[#pre + 1] = clampline(ed, pos[1]) .. "mark " .. m end
   end
   pre[#pre + 1] = tostring(clampline(ed, ed.cy))      -- set ex's current line to ours
@@ -558,7 +554,6 @@ function M.dispatch(ed, line)
   elseif cmd == "map" then
     local lhs, rhs = args:match("^(%S+)%s+(.+)$")
     if not lhs then return "usage: map LHS RHS", "err" end
-    ed.maps = ed.maps or {}
     ed.maps[parse_keys(lhs)] = parse_keys(rhs)
     return "", "ok"
   elseif cmd == "unmap" then
@@ -658,7 +653,6 @@ function M.dispatch(ed, line)
     local event, rest = args:match("^(%S+)%s*(.-)%s*$")
     if not event or event == "" then return "usage: on EVENT [command]", "err" end
     if not EVENTS[event] then return "unknown event: " .. event, "err" end
-    ed.hooks = ed.hooks or {}
     if rest == "" then ed.hooks[event] = nil; return "", "ok" end
     -- `complete` names a single completer (you can't merge two pickers), so it
     -- REPLACES; the fire-and-forget events compose (append).
@@ -694,7 +688,7 @@ function M.dispatch(ed, line)
     -- the top without a visible cursor -- refresh() re-scrolls to keep the cursor
     -- on screen and would undo a bare top set -- so :top N parks the cursor AT the
     -- new top line (== `:N` then `zt`); refresh then sees cursor==top and holds it.
-    if args == "" then return tostring(ed.top or 1), "ok" end
+    if args == "" then return tostring(ed.top), "ok" end
     local n = tonumber(args)
     if not n then return "usage: top [N]", "err" end
     n = clampline(ed, n)
@@ -710,7 +704,6 @@ function M.dispatch(ed, line)
     -- name order (see render.lua).
     local name, text = args:match("^(%S+)%s*(.-)%s*$")
     if not name then return "usage: status NAME [TEXT]", "err" end
-    ed.status = ed.status or {}
     ed.status[name] = (text ~= "") and text or nil
     return "", "ok"
 
@@ -730,7 +723,6 @@ function M.dispatch(ed, line)
     -- the ':' prompt) full normal-mode power for the operations ex can't express
     -- (cursor-relative edits like 2dw, ci"). The driver drives the coroutine to
     -- consume them; from the ':' prompt the running coroutine consumes them next.
-    ed.inject = ed.inject or {}
     for i = 1, #args do ed.inject[#ed.inject + 1] = args:byte(i) end
     return "", "ok"
   end

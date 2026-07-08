@@ -24,7 +24,7 @@ local b = string.byte
 -- Pull the next raw key without logging: from the map-output queue first (so
 -- map expansions are never re-mapped -> non-recursive), else the input funnel.
 local function getkey_raw(ed)
-  if ed.pending and #ed.pending > 0 then return table.remove(ed.pending, 1) end
+  if #ed.pending > 0 then return table.remove(ed.pending, 1) end
   while #ed.inject == 0 do coroutine.yield() end
   return table.remove(ed.inject, 1)
 end
@@ -51,15 +51,14 @@ end
 -- with a non-command key like '\\') avoid ambiguity; there is no timeout, so a
 -- partial LHS blocks until the next key.
 local function first_key(ed)
-  if ed.pending and #ed.pending > 0 then return getkey(ed) end -- RHS: raw, logged
+  if #ed.pending > 0 then return getkey(ed) end -- RHS: raw, logged
   local k = getkey_raw(ed)
-  if not ed.maps or not starts_map(ed, string.char(k)) then return logkey(ed, k) end
+  if not starts_map(ed, string.char(k)) then return logkey(ed, k) end
   local seq = string.char(k)
   while not ed.maps[seq] and starts_map(ed, seq) do
     seq = seq .. string.char(getkey_raw(ed))
   end
   if ed.maps[seq] then
-    ed.pending = ed.pending or {}
     local rhs = ed.maps[seq]
     for i = 1, #rhs do ed.pending[#ed.pending + 1] = rhs:byte(i) end
     return getkey(ed)
@@ -90,13 +89,17 @@ local function first_nonblank(s)
   return (s:find("%S")) or 1
 end
 
-local function clamp(ed)
+-- Clamp the cursor to the buffer: the ONE cursor-bounds rule. Exported because
+-- the driver's refresh() applies the same invariant after socket-driven motion
+-- -- a single definition, so the insert-mode EOL+1 special case cannot drift.
+function M.clamp(ed)
   local nl = ed.buf:nlines()
   ed.cy = math.max(1, math.min(ed.cy, nl))
   local s = line(ed, ed.cy)
   local maxc = (ed.mode == "insert") and (#s + 1) or disp.last_char(s) -- char-aware cap
   ed.cx = math.max(1, math.min(ed.cx, maxc))
 end
+local clamp = M.clamp
 
 local function char_class(c)
   if not c or c == "" then return "none" end
@@ -145,7 +148,7 @@ local function get_reg(ed, name) return ed.regs[name or '"'] end
 -- (ed.complete_run absent). Byte-based like insert_char, so a multibyte token
 -- round-trips. dir (prev/next) is advisory -- the completer may ignore it.
 local function complete(ed, dir)
-  local cmd = ed.hooks and ed.hooks.complete and ed.hooks.complete[1]
+  local cmd = ed.hooks.complete and ed.hooks.complete[1]
   if not cmd or not ed.complete_run then return end
   local s = line(ed, ed.cy)
   local left = s:sub(1, ed.cx - 1)
@@ -292,9 +295,9 @@ local function op_lines(ed, op, a, c, reg)
   a = math.max(1, a); c = math.min(c, ed.buf:nlines())
   if a > c then return end
   if op == "shift_r" or op == "shift_l" then
-    local sw = (ed.opts and ed.opts.shiftwidth) or 8
-    local ts = (ed.opts and ed.opts.tabstop) or 8
-    local et = ed.opts and ed.opts.expandtab
+    local sw = ed.opts.shiftwidth
+    local ts = ed.opts.tabstop
+    local et = ed.opts.expandtab
     local delta = (op == "shift_r" and 1 or -1) * sw
     local out = {}
     for i = a, c do out[#out + 1] = reindent(line(ed, i), delta, et, ts) end
@@ -622,16 +625,16 @@ local function match_bracket(ed)
 end
 
 -- ---- screen geometry (shared by H/M/L and the scroll commands) --------------
-local function textrows(ed) return (ed.rows or 24) - 1 end
+local function textrows(ed) return ed.rows - 1 end
 
 -- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
 -- up), honoring wrap, clamped to the buffer. In nowrap each line is one row.
 local function advance_rows(ed, l, sub, rows)
   local N = ed.buf:nlines()
-  if not (ed.opts and ed.opts.wrap) then
+  if not ed.opts.wrap then
     return math.max(1, math.min(l + rows, N)), 0
   end
-  local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+  local W, ts = ed.cols, ed.opts.tabstop
   if rows > 0 then
     for _ = 1, rows do
       if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
@@ -651,7 +654,7 @@ end
 -- from the top; in wrap a single line spans several rows, so this is well below
 -- top+textrows-1. (nowrap collapses to exactly top+textrows-1, clamped.)
 local function visible_bottom(ed)
-  return (advance_rows(ed, ed.top or 1, ed.topsub or 0, textrows(ed) - 1))
+  return (advance_rows(ed, ed.top, ed.topsub, textrows(ed) - 1))
 end
 
 local motions = {
@@ -696,11 +699,11 @@ local motions = {
     end
     if k2 ~= b("j") and k2 ~= b("k") then return ed.cy, ed.cx end
     local down, n = (k2 == b("j")), (count or 1)
-    if not (ed.opts and ed.opts.wrap) then           -- no wrapping: gj == j
+    if not ed.opts.wrap then           -- no wrapping: gj == j
       return ed.cy + (down and n or -n), ed.cx
     end
     -- Move by screen (display) rows, holding the current visual column.
-    local W, ts = ed.cols or 80, ed.opts.tabstop or 8
+    local W, ts = ed.cols, ed.opts.tabstop
     local N, l = ed.buf:nlines(), ed.cy
     local sub, ccol = disp.locate(line(ed, l), W, ts, ed.cx)
     for _ = 1, n do
@@ -716,18 +719,18 @@ local motions = {
     return l, disp.byteat(line(ed, l), W, ts, sub, ccol)
   end },
   [96] = { kind = "char", jump = true, move = function(ed) -- `{mark}: exact position
-    local m = ed.marks and ed.marks[string.char(getkey(ed))]
+    local m = ed.marks[string.char(getkey(ed))]
     if not m then return ed.cy, ed.cx end
     return m[1], m[2]
   end },
   [39] = { kind = "line", jump = true, move = function(ed) -- '{mark}: mark's line
-    local m = ed.marks and ed.marks[string.char(getkey(ed))]
+    local m = ed.marks[string.char(getkey(ed))]
     if not m then return ed.cy, ed.cx end
     local l = math.max(1, math.min(m[1], ed.buf:nlines()))
     return l, first_nonblank(line(ed, l))
   end },
   [124] = { kind = "char", move = function(ed, count) -- N| : goto display column N
-    local ts = (ed.opts and ed.opts.tabstop) or 8
+    local ts = ed.opts.tabstop
     return ed.cy, disp.byte_at_dispcol(line(ed, ed.cy), ts, (count or 1) - 1)
   end },
   [b("j")] = { kind = "line", move = function(ed, n) return ed.cy + (n or 1), ed.cx end },
@@ -742,15 +745,15 @@ local motions = {
   -- screen rows -- a wrapped line spans several, so plain buffer-line arithmetic
   -- would point past the visible area (and dragging the cursor there scrolls).
   [b("H")] = { kind = "line", jump = true, move = function(ed, n)
-    local l = math.min((ed.top or 1) + (n or 1) - 1, visible_bottom(ed))
+    local l = math.min(ed.top + (n or 1) - 1, visible_bottom(ed))
     return l, first_nonblank(line(ed, l))
   end },
   [b("L")] = { kind = "line", jump = true, move = function(ed, n)
-    local l = math.max(ed.top or 1, visible_bottom(ed) - (n or 1) + 1)
+    local l = math.max(ed.top, visible_bottom(ed) - (n or 1) + 1)
     return l, first_nonblank(line(ed, l))
   end },
   [b("M")] = { kind = "line", jump = true, move = function(ed)
-    local l = math.floor(((ed.top or 1) + visible_bottom(ed)) / 2)
+    local l = math.floor((ed.top + visible_bottom(ed)) / 2)
     return l, first_nonblank(line(ed, l))
   end },
   -- Paragraph / section motions (charwise-exclusive; land on the boundary's
@@ -794,7 +797,7 @@ end
 -- current position is recorded first (like vim), so Ctrl-I can bring you back.
 local function jump_back(ed)
   local j = ed.jumps
-  if not j or #j.list == 0 then return end
+  if #j.list == 0 then return end
   if j.idx > #j.list then
     jump_record(j, ed.cy, ed.cx)  -- save the edge; leaves idx == #list+1
     j.idx = #j.list               -- ...then step onto the just-saved entry
@@ -808,7 +811,7 @@ end
 -- Ctrl-I: step back toward newer positions (only meaningful after Ctrl-O).
 local function jump_fwd(ed)
   local j = ed.jumps
-  if not j or j.idx >= #j.list then return end
+  if j.idx >= #j.list then return end
   j.idx = j.idx + 1
   ed.cy, ed.cx = j.list[j.idx][1], j.list[j.idx][2]
   clamp(ed)
@@ -823,7 +826,6 @@ local function do_motion(ed, m, count)
   -- actually moved us, so a no-op jump (mistyped [[, % off a bracket, missing
   -- mark) leaves no stray entry.
   if m.jump and (ed.cy ~= oy or ed.cx ~= ox) then
-    ed.jumps = ed.jumps or { list = {}, idx = 1 }
     jump_record(ed.jumps, oy, ox)
   end
 end
@@ -855,10 +857,10 @@ end
 -- top row). Assumes the cursor is at or below the top (true whenever we scroll,
 -- since the cursor is on-screen beforehand).
 local function cursor_row_offset(ed)
-  if not (ed.opts and ed.opts.wrap) then return ed.cy - (ed.top or 1) end
-  local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+  if not ed.opts.wrap then return ed.cy - ed.top end
+  local W, ts = ed.cols, ed.opts.tabstop
   local csub = select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx))
-  local l, sub, n = ed.top or 1, ed.topsub or 0, 0
+  local l, sub, n = ed.top, ed.topsub, 0
   while l < ed.cy or (l == ed.cy and sub < csub) do
     if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1 else l, sub = l + 1, 0 end
     n = n + 1
@@ -869,12 +871,12 @@ end
 -- Place the cursor `off` screen rows below the (already-updated) top, holding
 -- the visual column.
 local function place_cursor_at_offset(ed, off)
-  if not (ed.opts and ed.opts.wrap) then
-    ed.cy = (ed.top or 1) + off                       -- column (ed.cx) preserved
+  if not ed.opts.wrap then
+    ed.cy = ed.top + off                       -- column (ed.cx) preserved
   else
-    local W, ts = ed.cols or 80, (ed.opts and ed.opts.tabstop) or 8
+    local W, ts = ed.cols, ed.opts.tabstop
     local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx)
-    local cl, csub = advance_rows(ed, ed.top or 1, ed.topsub or 0, off)
+    local cl, csub = advance_rows(ed, ed.top, ed.topsub, off)
     ed.cy = cl
     ed.cx = disp.byteat(line(ed, cl), W, ts, csub, ccol)
   end
@@ -885,7 +887,7 @@ end
 -- same screen row.
 local function scroll_page(ed, rows)
   local off = cursor_row_offset(ed)
-  ed.top, ed.topsub = advance_rows(ed, ed.top or 1, ed.topsub or 0, rows)
+  ed.top, ed.topsub = advance_rows(ed, ed.top, ed.topsub, rows)
   place_cursor_at_offset(ed, off)
 end
 
@@ -893,8 +895,8 @@ end
 -- line while that line stays on screen; only drag it at the window edge.
 local function scroll_reveal(ed, rows)
   local off = cursor_row_offset(ed)
-  local nt, ns = advance_rows(ed, ed.top or 1, ed.topsub or 0, rows)
-  if nt == (ed.top or 1) and ns == (ed.topsub or 0) then return end   -- at a buffer edge
+  local nt, ns = advance_rows(ed, ed.top, ed.topsub, rows)
+  if nt == ed.top and ns == ed.topsub then return end   -- at a buffer edge
   ed.top, ed.topsub = nt, ns
   local noff = off - rows
   noff = math.max(0, math.min(noff, textrows(ed) - 1))
@@ -1022,7 +1024,7 @@ actions = {
   -- refresh() won't re-scroll and fight us.
   [b("z")] = function(ed, count)
     local k = getkey(ed)
-    local tr = (ed.rows or 24) - 1
+    local tr = ed.rows - 1
     local target = count and math.max(1, math.min(count, ed.buf:nlines())) or ed.cy
     -- How many screen rows above `target` the window top should sit: 0 (top),
     -- half a screen (center), or a full screen minus one (bottom).
@@ -1039,7 +1041,7 @@ actions = {
     -- from the target line's first row. advance_rows honors wrap and clamps at
     -- the buffer top; in nowrap it collapses to one row per line (top = target -
     -- offset). Leaving the cursor on-screen keeps refresh() from re-scrolling.
-    if ed.opts and ed.opts.wrap then
+    if ed.opts.wrap then
       ed.top, ed.topsub = advance_rows(ed, target, 0, -offset)
     else
       ed.top = math.max(1, target - offset)
@@ -1097,7 +1099,6 @@ actions = {
   [b("p")] = function(ed, _, reg) do_put(ed, true, reg) end,
   [b("P")] = function(ed, _, reg) do_put(ed, false, reg) end,
   [b("m")] = function(ed) -- m{mark}: set a mark at the cursor
-    ed.marks = ed.marks or {}
     ed.marks[string.char(getkey(ed))] = { ed.cy, ed.cx }
   end,
   [26] = function(ed) if ed.suspend_self then ed.suspend_self() end end, -- Ctrl-Z: suspend

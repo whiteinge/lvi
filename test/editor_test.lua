@@ -8,9 +8,10 @@ local normal = require("normal")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
 local function ed_with(text, over)
-  local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, topsub = 0,
-    leftcol = 0, mode = "normal", rows = 3, cols = 4,
-    opts = { wrap = false, tabstop = 8 } }
+  local ed = editor.new_ed()
+  ed.buf = buffer.new(text)
+  ed.rows, ed.cols = 3, 4
+  ed.opts.wrap = false
   for k, v in pairs(over or {}) do ed[k] = v end
   return ed
 end
@@ -53,10 +54,10 @@ describe("editor.refresh does not fight a scroll", function()
   local function live_tall(wrap)
     local t = {}
     for i = 1, 100 do t[i] = "line " .. i end
-    local ed = { buf = buffer.new(table.concat(t, "\n")), cx = 1, cy = 1,
-      top = 1, topsub = 0, leftcol = 0, mode = "normal", rows = 12, cols = 80,
-      opts = { wrap = wrap, tabstop = 8 }, inject = {}, pending = {},
-      keylog = {}, regs = {}, marks = {}, running = true }
+    local ed = editor.new_ed()
+    ed.buf = buffer.new(table.concat(t, "\n"))
+    ed.rows = 12
+    ed.opts.wrap = wrap
     ed.interp = coroutine.create(function() normal.loop(ed) end)
     assert(coroutine.resume(ed.interp))
     return ed
@@ -85,11 +86,11 @@ end)
 -- socket-driven edits can't retrigger it and loop.
 describe("change-hook attribution and firing", function()
   local function ed_hooked(text)
-    local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, topsub = 0,
-      leftcol = 0, mode = "normal", cmdline = "", rows = 12, cols = 80,
-      opts = { wrap = false, tabstop = 8 }, inject = {}, pending = {},
-      keylog = {}, regs = {}, marks = {}, running = true,
-      hooks = { change = { "lvi-highlight" } }, change_pending = false }
+    local ed = editor.new_ed()
+    ed.buf = buffer.new(text)
+    ed.rows = 12
+    ed.opts.wrap = false
+    ed.hooks.change = { "lvi-highlight" }
     ed.interp = coroutine.create(function() normal.loop(ed) end)
     assert(coroutine.resume(ed.interp))              -- prime to first getkey
     local spawned = {}
@@ -141,10 +142,10 @@ end)
 
 describe("socket-key boundary discipline", function()
   local function ed_live(text)
-    local ed = { buf = buffer.new(text), cx = 1, cy = 1, top = 1, topsub = 0,
-      leftcol = 0, mode = "normal", cmdline = "", rows = 12, cols = 80,
-      opts = { wrap = false, tabstop = 8 }, inject = {}, pending = {},
-      keylog = {}, regs = {}, marks = {}, running = true, hooks = {} }
+    local ed = editor.new_ed()
+    ed.buf = buffer.new(text)
+    ed.rows = 12
+    ed.opts.wrap = false
     ed.interp = coroutine.create(function() normal.loop(ed) end)
     assert(coroutine.resume(ed.interp))
     return ed
@@ -188,9 +189,10 @@ end)
 
 describe("mark/jumplist adjustment across edits (make_splice_hook)", function()
   local function ed_marked(text)
-    local ed = { buf = buffer.new(text), cx = 1, cy = 1,
-      marks = { a = { 5, 2 }, b = { 2, 1 } },
-      jumps = { list = { { 4, 1 } }, idx = 2 } }
+    local ed = editor.new_ed()
+    ed.buf = buffer.new(text)
+    ed.marks = { a = { 5, 2 }, b = { 2, 1 } }
+    ed.jumps = { list = { { 4, 1 } }, idx = 2 }
     ed.splice_hook = editor.make_splice_hook(ed)
     ed.buf.on_splice = ed.splice_hook
     return ed

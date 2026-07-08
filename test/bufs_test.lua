@@ -7,10 +7,11 @@ local bufs   = require("bufs")
 local ex     = require("ex")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
--- Minimal ed with the shared (non-buffer) state ex/bufs touch.
+local editor = require("editor")
+
+-- Full ed state from the one constructor (bufs swaps several of its fields).
 local function make_ed()
-  return { mode = "normal", regs = {}, inject = {}, keylog = {},
-           opts = { wrap = true, tabstop = 8 }, rows = 24, cols = 80, running = true }
+  return editor.new_ed()
 end
 
 local function tmpfile(text)

@@ -7,10 +7,13 @@ local buffer = require("buffer")
 local config = require("config")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
--- A minimal editor state: enough for the ex commands the rc file exercises.
+local editor = require("editor")
+
+-- Full editor state from the one constructor, on a small buffer.
 local function fake_ed()
-  return { opts = { wrap = true, tabstop = 8 }, buf = buffer.new("a\nb\nc"),
-           cy = 1, cx = 1, inject = {}, maps = {} }
+  local ed = editor.new_ed()
+  ed.buf = buffer.new("a\nb\nc")
+  return ed
 end
 
 local function writerc(text)

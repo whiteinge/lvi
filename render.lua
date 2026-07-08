@@ -22,9 +22,8 @@ local M = {}
 -- O(1) lookup per visible line.
 local function hl_index(ed)
   local idx = {}
-  if not ed.highlights then return idx end
-  local styles = ed.hlstyles or {}
-  local pris = ed.hlpri or {}
+  local styles = ed.hlstyles
+  local pris = ed.hlpri
   for group, ranges in pairs(ed.highlights) do
     local sgr = styles[group]                 -- nil -> plain text (invisible, in slice)
     local pri = pris[group] or 0              -- z-order; higher wins per cell (see intervals)
@@ -56,7 +55,7 @@ end
 -- middle string. Generic: the editor doesn't know a list from a clock; a tool
 -- fills them. Empty when nothing is set.
 local function status_mid(ed)
-  if not ed.status then return "" end
+
   local names = {}
   for name in pairs(ed.status) do names[#names + 1] = name end
   table.sort(names)
@@ -86,8 +85,8 @@ function M.frame(ed)
   local W = cols
   local textrows = rows - 1
   local buf = ed.buf
-  local ts = (ed.opts and ed.opts.tabstop) or 8
-  local wrap = ed.opts and ed.opts.wrap
+  local ts = ed.opts.tabstop
+  local wrap = ed.opts.wrap
   local hidx = hl_index(ed)
   local out = { term.hide, term.home }
   local crow, ccol
@@ -96,7 +95,7 @@ function M.frame(ed)
     -- Each buffer line occupies one or more screen rows; paint from
     -- (ed.top, ed.topsub), noting the cursor's screen row as we pass it.
     local ccsub, cccol = disp.locate(buf:line(ed.cy) or "", W, ts, ed.cx)
-    local l, skip, sr = ed.top, (ed.topsub or 0), 0
+    local l, skip, sr = ed.top, ed.topsub, 0
     while sr < textrows and l <= buf:nlines() do
       local orig = buf:line(l) or ""
       local ivs = intervals(hidx[l], orig, ts)

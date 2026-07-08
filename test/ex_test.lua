@@ -4,11 +4,15 @@ package.path = "vendor/lust/?.lua;./?.lua;" .. package.path
 local lust   = require("lust")
 local buffer = require("buffer")
 local ex     = require("ex")
+local editor = require("editor")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
+-- All ed state comes from the one constructor (editor.new_ed), so these tests
+-- exercise dispatch against exactly the fields a real session has.
 local function ed_with(text)
-  return { buf = buffer.new(text), cx = 1, cy = 1, top = 1, running = true,
-           rows = 24, cols = 80, mode = "normal" }
+  local ed = editor.new_ed()
+  ed.buf = buffer.new(text)
+  return ed
 end
 
 describe("ex.dispatch", function()
