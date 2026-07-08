@@ -41,6 +41,9 @@ local function load(ed, i)
   ed.bufidx = i
   local rec = ed.buffers[i]
   ed.buf = rec.buf
+  -- The current buffer reports its splices so the editor can shift this view's
+  -- marks/jumps (editor.make_splice_hook; absent in headless/unit contexts).
+  ed.buf.on_splice = ed.splice_hook
   for _, k in ipairs(VIEW) do ed[k] = rec[k] end
   -- bufenter fires after the entered buffer is current, so the hook (a list
   -- repaint) sees it in LVI_FILE and paints the right buffer's subset.
@@ -85,6 +88,7 @@ function M.reload(ed)
   if not ed.buf.path then return false end
   ed.buf = buffer.open(ed.buf.path)
   if ed.stamp then ed.stamp(ed.buf) end     -- fresh read: reset the conflict stamp
+  ed.buf.on_splice = ed.splice_hook         -- new object: re-attach the position hook
   ed.buffers[ed.bufidx].buf = ed.buf
   ed.cx, ed.cy, ed.top, ed.topsub, ed.leftcol = 1, 1, 1, 0, 0
   return true

@@ -550,6 +550,30 @@ describe("ex.dispatch", function()
       expect(s).to.equal("ok")
       expect(ed.buf:get()).to.equal({ "x", "y", "z" })
     end)
+
+    it("splices only the changed window, so distant marks survive", function()
+      if not have_ex then return end
+      local editor = require("editor")
+      local ed = ed_with("aaa\nbbb\nccc\nddd\neee")
+      ed.marks = { m = { 5, 1 } }
+      ed.splice_hook = editor.make_splice_hook(ed)
+      ed.buf.on_splice = ed.splice_hook
+      ex.dispatch(ed, "2s/bbb/BBB/")             -- one-line edit far above the mark
+      expect(ed.buf:line(2)).to.equal("BBB")
+      expect(ed.marks.m).to.equal({ 5, 1 })      -- whole-buffer splice would clamp to 1
+      ex.dispatch(ed, "1d")                      -- a deletion above shifts it
+      expect(ed.marks.m).to.equal({ 4, 1 })
+    end)
+
+    it("trims to a small splice: one :s produces a one-line undo record", function()
+      if not have_ex then return end
+      local ed = ed_with("aaa\nbbb\nccc")
+      ed.buf:undo_checkpoint()
+      ex.dispatch(ed, "2s/bbb/BBB/")
+      local l = ed.buf:undo()
+      expect(l).to.equal(2)                      -- inverse lands on line 2, not line 1
+      expect(ed.buf:get()).to.equal({ "aaa", "bbb", "ccc" })
+    end)
   end)
 end)
 

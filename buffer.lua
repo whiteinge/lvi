@@ -173,6 +173,11 @@ function Buffer:splice(start, ndel, ins)
   record(self, { start = guard and 1 or start, ndel = guard and 1 or nins, ins = old })
   update_modified(self)
   self.rev = self.rev + 1   -- monotonic mutation counter (undo/redo bump it too)
+  -- Optional line-shape notification for position bookkeeping (marks, the
+  -- jumplist) -- wired by the editor, absent in unit/headless use. Because ALL
+  -- mutations funnel through splice, a subscriber sees every edit, including
+  -- undo/redo replaying inverse splices (which un-adjusts positions for free).
+  if self.on_splice then self.on_splice(self, start, ndel, nins) end
 end
 
 -- Replace line n.

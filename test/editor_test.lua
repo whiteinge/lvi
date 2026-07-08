@@ -186,6 +186,61 @@ describe("socket-key boundary discipline", function()
   end)
 end)
 
+describe("mark/jumplist adjustment across edits (make_splice_hook)", function()
+  local function ed_marked(text)
+    local ed = { buf = buffer.new(text), cx = 1, cy = 1,
+      marks = { a = { 5, 2 }, b = { 2, 1 } },
+      jumps = { list = { { 4, 1 } }, idx = 2 } }
+    ed.splice_hook = editor.make_splice_hook(ed)
+    ed.buf.on_splice = ed.splice_hook
+    return ed
+  end
+
+  it("shifts marks and jumps below a deletion, leaves those above alone", function()
+    local ed = ed_marked("1\n2\n3\n4\n5\n6")
+    ed.buf:delete(3, 3)                        -- one line gone above mark a
+    expect(ed.marks.a).to.equal({ 4, 2 })      -- slid up
+    expect(ed.marks.b).to.equal({ 2, 1 })      -- above the edit: untouched
+    expect(ed.jumps.list[1]).to.equal({ 3, 1 })
+  end)
+
+  it("shifts marks below an insertion", function()
+    local ed = ed_marked("1\n2\n3\n4\n5\n6")
+    ed.buf:insert(2, { "x", "y" })
+    expect(ed.marks.a).to.equal({ 7, 2 })
+    expect(ed.marks.b).to.equal({ 4, 1 })      -- at the insert point: pushed down
+  end)
+
+  it("clamps a mark inside the replaced region to its start", function()
+    local ed = ed_marked("1\n2\n3\n4\n5\n6")
+    ed.buf:splice(4, 3, { "only" })            -- lines 4-6 -> one line
+    expect(ed.marks.a).to.equal({ 4, 2 })      -- was line 5, inside the region
+  end)
+
+  it("in-place single-line set (typing) moves nothing", function()
+    local ed = ed_marked("1\n2\n3\n4\n5\n6")
+    ed.buf:set(5, "edited")
+    expect(ed.marks.a).to.equal({ 5, 2 })
+  end)
+
+  it("undo replays the inverse splice and un-adjusts", function()
+    local ed = ed_marked("1\n2\n3\n4\n5\n6")
+    ed.buf:undo_checkpoint()
+    ed.buf:delete(1, 2)
+    expect(ed.marks.a).to.equal({ 3, 2 })
+    ed.buf:undo()
+    expect(ed.marks.a).to.equal({ 5, 2 })      -- restored with the lines
+  end)
+
+  it("ignores splices on a non-current buffer (stale hook)", function()
+    local ed = ed_marked("1\n2\n3\n4\n5\n6")
+    local old = ed.buf
+    ed.buf = buffer.new("other")               -- switched away; hook still on old
+    old:delete(1, 1)
+    expect(ed.marks.a).to.equal({ 5, 2 })      -- current view's marks untouched
+  end)
+end)
+
 describe("editor.preserve (crash salvage)", function()
   it("dumps each modified buffer beside its file", function()
     local tmp = os.tmpname()

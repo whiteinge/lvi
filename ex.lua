@@ -307,7 +307,28 @@ local function do_ex(ed, line)
     return ("cannot run '%s': not found (set $LVI_EX)"):format(exe), "err"
   end
   if result ~= src then                               -- skip a no-op (e.g. read-only cmd)
-    ed.buf:splice(1, ed.buf:nlines(), buffer.split((result:gsub("\n$", ""))))
+    -- Splice only the window that actually changed: trim the common line
+    -- prefix and suffix first. An ex one-liner (`:s` on one line of a large
+    -- file) becomes a small splice instead of a whole-buffer one, keeping the
+    -- undo record proportional to the change -- and, critically, giving the
+    -- splice hook (mark/jumplist adjustment) a truthful region: a whole-buffer
+    -- splice would read as "everything replaced" and clamp every mark to line
+    -- 1. Scattered edits (`:g//d`) still collapse to one first-to-last window,
+    -- so marks inside it clamp -- an accepted approximation.
+    local new = buffer.split((result:gsub("\n$", "")))
+    local old_n, new_n = ed.buf:nlines(), #new
+    local pre = 0
+    while pre < old_n and pre < new_n and ed.buf:line(pre + 1) == new[pre + 1] do
+      pre = pre + 1
+    end
+    local suf = 0
+    while suf < old_n - pre and suf < new_n - pre
+      and ed.buf:line(old_n - suf) == new[new_n - suf] do
+      suf = suf + 1
+    end
+    local mid = {}
+    for i = pre + 1, new_n - suf do mid[#mid + 1] = new[i] end
+    ed.buf:splice(pre + 1, old_n - pre - suf, mid)
     ed.cy, ed.cx = clampline(ed, ed.cy), 1
   end
   return "", "ok"

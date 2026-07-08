@@ -131,6 +131,36 @@ function M.on_idle(ed)
   M.fire(ed, "change")
 end
 
+-- ---- position bookkeeping across edits ----------------------------------------
+-- Marks and jumplist entries are absolute (line, col) pairs; without adjustment
+-- any line inserted or deleted above one leaves it pointing at the wrong line
+-- (POSIX vi adjusts marks on edits). Every mutation funnels through
+-- buffer.splice, so one subscriber sees them all: lines at or past the end of
+-- the replaced region slide by the insert/delete delta; lines inside it clamp
+-- to its start (vi deletes such marks; clamping keeps `'a` usable after the
+-- region is rewritten). The in-place single-line set() of ordinary typing is
+-- delta 0 and moves nothing. Undo/redo replay inverse splices through the same
+-- funnel, so positions un-adjust symmetrically. Wired to each buffer by bufs
+-- as it becomes current; the buf guard drops events from a stale hook on a
+-- non-current buffer (nothing edits one today).
+function M.make_splice_hook(ed)
+  return function(buf, start, ndel, nins)
+    if buf ~= ed.buf then return end
+    local delta = nins - ndel
+    local nl = buf:nlines()
+    local function adj(pos)
+      if pos[1] >= start + ndel then pos[1] = pos[1] + delta
+      elseif pos[1] >= start then pos[1] = start end
+      if pos[1] > nl then pos[1] = nl end
+      if pos[1] < 1 then pos[1] = 1 end
+    end
+    for _, m in pairs(ed.marks or {}) do adj(m) end
+    if ed.jumps then
+      for _, p in ipairs(ed.jumps.list) do adj(p) end
+    end
+  end
+end
+
 -- ---- crash salvage ------------------------------------------------------------
 -- Last-ditch preserve: a Lua error anywhere -- a motion, a command handler, the
 -- driver itself -- unwinds to run()'s pcall with the session unrecoverable (a
@@ -250,6 +280,9 @@ function M.run(opts)
   -- (a hook must not write to the tty or block the poll loop). Used to fire
   -- event hooks; the subshell backgrounds so os.execute returns at once.
   ed.spawn_bg = function(cmd, buf) ed.export_context(buf); os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
+  -- Keep marks/jumps honest across edits (see make_splice_hook); bufs attaches
+  -- this to each buffer as it becomes current, so it must exist before init.
+  ed.splice_hook = M.make_splice_hook(ed)
   -- Per-buffer view state (buf, cx/cy, top/topsub, leftcol, marks, highlights)
   -- is set up here and swapped by bufs on :e / buffer switch. Positional files
   -- open as buffers; the first is current.
