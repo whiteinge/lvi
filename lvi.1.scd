@@ -373,6 +373,9 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
 - *lvi-complete* -- insert-mode word completion from the open buffers
   (*on complete lvi-complete*).
+- *lvi-diff* / *lvi-stagediff* -- a two-way vimdiff of two panes (highlight,
+  scrollbind, move hunks with *\\p*/*\\o*, jump with *]c*/*[c*) and, atop it,
+  *git add -p* as a side-by-side diff you stage from with *\\s*.
 
 This is only a taste. For what each tool does, its configuration, and
 ready-to-copy bindings and themes, see *contrib/README.md* and

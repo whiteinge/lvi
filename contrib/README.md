@@ -114,9 +114,37 @@ socket-sourced edits never re-arm the `change` hook, so A→B never rings back
 B→A. It also carries the dirty flag across panes via the `set modified?` /
 `set nomodified` primitive (see below).
 
+### `lvi-diff` — two-way diff of two panes
+
+Two files, two panes, side by side: highlight the differences, **scrollbind** the
+views so they scroll together, and move hunks between them. Same bet as
+`lvi-mirror` — no in-editor split; two `lvi` processes, two sockets, this script
+the thread between. And, like everything here, **no daemon**: it's a one-shot that
+diffs the buffers, paints DiffChange/DiffAdd/DiffDelete through `:hl`, writes a
+line-map cache, and installs the maps and hooks — then exits. What happens after
+is lvi firing those hooks. `]c`/`[c` jump to the next/prev hunk (top-anchoring
+*both* panes); `\p`/`\o` put/obtain the hunk under the cursor. Scrollbind rides the
+`on scroll` hook: when a pane's viewport moves, its top is translated through the
+diff map and pushed to the peer, so they stay aligned even across a lopsided hunk.
+Launch it on two live views — `lvi-diff` (auto-picks the sole pair) or
+`lvi-diff WID_A WID_B`.
+
+### `lvi-stagediff` — `git add -p`, as a diff you edit
+
+`git add -p` reimagined as a side-by-side diff (concept borrowed from Fugitive).
+It opens a split: **left is the git index** (`git show :file`), **right is the
+working tree**, so the diff between them is exactly your *unstaged* changes. `\s`
+stages the hunk under the cursor — it moves into the index pane and the index
+updates at once. And because the index pane's text simply **is** the staged
+content, you can hand-edit it — or `u`-undo a stage — and `:w` to commit that exact
+state; that is how unstaging works. It reblobs the whole buffer (`git hash-object
+-w` + `git update-index`), so there's no partial-patch fuzz to misapply. Built on
+`lvi-diff`, so the highlighting, scrollbind, and `]c`/`[c` come free. Run
+`lvi-stagediff FILE` inside tmux.
+
 ## The shared machinery
 
-Everything above is built from five ideas the core provides — worth
+Everything above is built from six ideas the core provides — worth
 understanding once, because they're all *you* need to write the next tool.
 
 **The `:hl` overlay is the substrate.** One styled overlay (`:hl` paints ranges,
@@ -154,6 +182,15 @@ frees the loop but surrenders the tty the picker needs. So the binding snapshots
 the buffer to `$LVI_BUFFER` with `:wbuf` *before* handing over the tty, and the
 frozen picker reads that file: `map \t :wbuf<CR>:silent !lvi-tags<CR>`. The
 manpage's *Shelling out* table lays the verbs side by side.
+
+**Reactive hooks push; nothing polls.** `on change` (the buffer settled), `on
+write` (a `:w`), and `on scroll` (a keyboard move of the viewport top) are the
+editor's *push* seams — each fires a command with the relevant state in the
+environment (`$LVI_FILE`, `$LVI_TOP`, …). They're keyboard-gated, so a tool's own
+socket-driven edits and scrolls never re-fire them, and cross-view features can't
+ring. `lvi-diff` is how far that reaches: diff highlighting, hunk-aware scrollbind,
+and staging are *all* just these hooks plus one-shots — no polling, no daemon; the
+session lives as hooks and maps inside the two views and ends when a pane closes.
 
 **The dirty flag is a socket primitive.** The buffer's modified state is exposed
 through the ordinary `:set` surface — `set modified?` queries it, `set
