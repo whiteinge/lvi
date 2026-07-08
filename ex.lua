@@ -334,6 +334,15 @@ local function parse_keys(s)
   return table.concat(out)
 end
 
+-- True when writing buf to `p` risks clobbering another writer: p is the
+-- buffer's own file and its mtime moved since our last read/write of it (the
+-- stamp machinery wired in editor.lua; absent headless, where the check is
+-- skipped). A save-as to a different path is not a conflict -- the user is
+-- explicitly aiming elsewhere.
+local function write_conflict(ed, buf, p)
+  return p == buf.path and ed.file_changed ~= nil and ed.file_changed(buf)
+end
+
 -- Write every modified buffer to its own path (the :wa/:xa engine). Iterates
 -- ed.buffers -- each rec.buf is the live object (ed.buf IS the current slot's
 -- buf by reference, so its unsaved edits are seen without a save()); falls back
@@ -342,14 +351,18 @@ end
 -- name is an error (E141-style) -- you can't write what has no path -- and stops
 -- the run before any quit. Fires `write` once per buffer actually written.
 -- Returns nwritten, or nil, errmsg.
-local function write_all(ed)
+local function write_all(ed, force)
   local n = 0
   for _, rec in ipairs(ed.buffers or { { buf = ed.buf } }) do
     local buf = rec.buf
     if buf.modified then
       if not buf.path then return nil, "No file name for a buffer" end
+      if not force and write_conflict(ed, buf, buf.path) then
+        return nil, ("File changed since last read: %s (add ! to override)"):format(buf.path)
+      end
       local ok, err = pcall(buf.write, buf)
       if not ok then return nil, "write failed: " .. tostring(err) end
+      if ed.stamp then ed.stamp(buf) end
       if ed.fire_event then ed.fire_event("write") end
       n = n + 1
     end
@@ -386,8 +399,12 @@ function M.dispatch(ed, line)
   elseif cmd == "w" or cmd == "write" then
     local p = (args ~= "" and args) or ed.buf.path
     if not p then return "No file name", "err" end
+    if bang ~= "!" and write_conflict(ed, ed.buf, p) then
+      return "File changed since last read (add ! to override)", "err"
+    end
     local ok, n = pcall(ed.buf.write, ed.buf, p)
     if not ok then return "write failed: " .. tostring(n), "err" end
+    if ed.stamp then ed.stamp(ed.buf) end
     if ed.fire_event then ed.fire_event("write") end
     return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
 
@@ -420,8 +437,12 @@ function M.dispatch(ed, line)
     end
     local p = (args ~= "" and args) or ed.buf.path
     if not p then return "No file name", "err" end
+    if bang ~= "!" and write_conflict(ed, ed.buf, p) then
+      return "File changed since last read (add ! to override)", "err"
+    end
     local ok, n = pcall(ed.buf.write, ed.buf, p)
     if not ok then return "write failed: " .. tostring(n), "err" end
+    if ed.stamp then ed.stamp(ed.buf) end
     if ed.fire_event then ed.fire_event("write") end
     ed.running = false
     return "", "ok"
@@ -551,7 +572,7 @@ function M.dispatch(ed, line)
     return "", "ok"
 
   elseif cmd == "wa" or cmd == "wall" then
-    local n, err = write_all(ed)
+    local n, err = write_all(ed, bang == "!")
     if not n then return err, "err" end
     return ("%d buffer%s written"):format(n, n == 1 and "" or "s"), "ok"
 
@@ -559,7 +580,7 @@ function M.dispatch(ed, line)
     -- Write all changed buffers, then quit -- :wa + :qa. Changed-only (see
     -- write_all), so like :x it leaves clean buffers' files untouched; xa and
     -- wqa are aliases here (lvi has no readonly notion for wqa to force past).
-    local _, err = write_all(ed)
+    local _, err = write_all(ed, bang == "!")
     if err then return err, "err" end
     ed.running = false
     return "", "ok"

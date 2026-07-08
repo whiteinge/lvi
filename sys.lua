@@ -136,6 +136,24 @@ function M.unlink(path) return C.unlink(path) == 0 end
 --- it falls back to a shared /tmp.
 function M.mkdir(path, mode) return C.mkdir(path, mode or 0x1c0) == 0 end -- 0700
 
+-- Shell-quote one word for the /bin/sh one-liners below.
+local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+
+--- Mirror src's mtime onto dst, creating dst (`touch -r`, POSIX). The mtime
+--- primitive without stat(2), whose struct is as platform-divergent as termios
+--- -- the same dodge as raw_mode's stty (see the decision record above). Fails
+--- silently when src does not exist (dst is then not created/updated).
+function M.stamp(dst, src)
+  os.execute(("touch -r %s %s 2>/dev/null"):format(shq(src), shq(dst)))
+end
+
+--- True when file `a` is strictly newer than `b` (POSIX `test -nt`; also true
+--- when a exists and b does not -- which reads correctly for our caller: a
+--- file that appeared after a failed read-stamp WAS changed under us).
+function M.newer(a, b)
+  return os.execute(("[ %s -nt %s ]"):format(shq(a), shq(b))) == 0
+end
+
 --- Build a filled-in sockaddr_un for `path`. Internal.
 local function sockaddr(path)
   assert(#path < 104, "socket path too long: " .. path)

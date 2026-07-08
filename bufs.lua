@@ -74,7 +74,9 @@ function M.open(ed, path)
   for i, rec in ipairs(ed.buffers) do
     if rec.buf.path == path then load(ed, i); return end
   end
-  ed.buffers[#ed.buffers + 1] = fresh(buffer.open(path))
+  local buf = buffer.open(path)
+  if ed.stamp then ed.stamp(buf) end        -- read-stamp for :w conflict checks
+  ed.buffers[#ed.buffers + 1] = fresh(buf)
   load(ed, #ed.buffers)
 end
 
@@ -82,6 +84,7 @@ end
 function M.reload(ed)
   if not ed.buf.path then return false end
   ed.buf = buffer.open(ed.buf.path)
+  if ed.stamp then ed.stamp(ed.buf) end     -- fresh read: reset the conflict stamp
   ed.buffers[ed.bufidx].buf = ed.buf
   ed.cx, ed.cy, ed.top, ed.topsub, ed.leftcol = 1, 1, 1, 0, 0
   return true

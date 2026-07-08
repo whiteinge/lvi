@@ -188,16 +188,21 @@ serves both. A leading address or _a_,_b_ range may precede a command; atoms are
 a line number, *.* (current), *$* (last), and *%* (whole buffer). A bare address
 moves the cursor to that line.
 
-*w* [_file_], *wq*, *x*
+*w*[*!*] [_file_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
-	untouched). *ZZ* is *x*.
+	untouched). *ZZ* is *x*. If the file on disk changed since lvi last read or
+	wrote it (another writer), the write is refused; *w!* overrides. During the
+	write the full new text sits in a sibling _file.lvi~_ safety copy, removed
+	when the write completes -- a surviving _.lvi~_ means the write was cut
+	short and holds the intended contents.
 
-*wa*, *xa*
+*wa*[*!*], *xa*[*!*]
 	Write every modified buffer to its own path (*wa*, alias *wall*), or write
 	them all and then quit (*xa*, aliases *xall* *wqa* *wqall*). Changed-only,
 	like *x*: a clean buffer's file is left untouched. A modified buffer with no
-	name is an error and no quit happens.
+	name, or a file changed on disk since last read (see *w!*), is an error and
+	no quit happens; *!* forces past changed-on-disk files.
 
 *wbuf*
 	Snapshot the live buffer (unsaved edits and all) to *$LVI_BUFFER*, a per-view
@@ -433,6 +438,16 @@ _~/.lvirc_, _$XDG_CONFIG_HOME/lvi/lvirc_
 
 _$XDG_RUNTIME_DIR/lvi-$uid/$wid_
 	A view's control socket.
+
+_file.lvi~_
+	Transient safety copy of the new text during a write (see *w*). Present
+	only while a write is in flight -- or after one that failed part-way, in
+	which case it holds the complete text the write intended.
+
+_file.lvi-recover_
+	Crash salvage: if the editor dies from an internal error, every modified
+	buffer is dumped beside its file (nameless buffers land beside the socket)
+	and the paths are reported on stderr.
 
 # EXIT STATUS
 

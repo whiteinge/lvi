@@ -108,6 +108,32 @@ describe("ex.dispatch", function()
       local _, s = ex.dispatch(ed, "w")
       expect(s).to.equal("err")
     end)
+
+    it("refuses to clobber a file changed since last read, unless forced", function()
+      local tmp = os.tmpname()
+      local ed = ed_with("a\n")
+      ed.buf.path = tmp
+      ed.file_changed = function() return true end   -- stamp says: file moved
+      local stamped = {}
+      ed.stamp = function(buf) stamped[#stamped + 1] = buf end
+      local p, s = ex.dispatch(ed, "w")
+      expect(s).to.equal("err")
+      expect(p:find("changed", 1, true)).to.exist()
+      local _, s2 = ex.dispatch(ed, "w!")            -- forced: writes and re-stamps
+      expect(s2).to.equal("ok")
+      expect(#stamped).to.equal(1)
+      os.remove(tmp)
+    end)
+
+    it("does not treat a save-as to another path as a conflict", function()
+      local tmp, other = os.tmpname(), os.tmpname()
+      local ed = ed_with("a\n")
+      ed.buf.path = tmp
+      ed.file_changed = function() return true end
+      local _, s = ex.dispatch(ed, "w " .. other)    -- explicit different target
+      expect(s).to.equal("ok")
+      os.remove(tmp); os.remove(other)
+    end)
   end)
 
   describe("wbuf", function()

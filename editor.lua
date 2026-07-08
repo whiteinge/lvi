@@ -237,6 +237,26 @@ function M.run(opts)
   -- tty verbs freeze the poll loop and a `%p` read would deadlock. Reaped on
   -- exit like the socket.
   ed.buffer_scratch = ed.sock_path .. ".buf"
+  -- File-conflict stamps. Each file-backed buffer gets a stamp file beside the
+  -- socket whose mtime mirrors the file's as of our last read/write (touch -r,
+  -- so clock skew can't lie). ex's :w asks file_changed -- `[ file -nt stamp ]`
+  -- -- to catch another writer having touched the file since, and refuses
+  -- without `!`. Policy lives here; the two shell-outs live in sys. Buffers are
+  -- re-stamped by bufs on open/reload and by ex after each write. The initial
+  -- buffers (built above, before sock_path existed) are stamped below.
+  local stamp_n = 0
+  ed.stamp = function(buf)
+    if not buf.path then return end
+    if not buf._stamp then
+      stamp_n = stamp_n + 1
+      buf._stamp = ed.sock_path .. ".stamp." .. stamp_n
+    end
+    sys.stamp(buf._stamp, buf.path)
+  end
+  ed.file_changed = function(buf)
+    return (buf.path and buf._stamp and sys.newer(buf.path, buf._stamp)) or false
+  end
+  for _, rec in ipairs(ed.buffers) do ed.stamp(rec.buf) end
   -- Export the view id/socket so external programs (`:!`, pickers) can drive
   -- this view back over the socket (`lvi -w "$LVI_WID" -- ...`); LVI_BUFFER is
   -- the scratch path above.
@@ -392,6 +412,9 @@ function M.run(opts)
     sys.close(lfd)
     sys.unlink(ed.sock_path)
     os.remove(ed.buffer_scratch)                 -- reap the :wbuf snapshot, if any
+    for _, rec in ipairs(ed.buffers or {}) do    -- reap the conflict stamps
+      if rec.buf._stamp then os.remove(rec.buf._stamp) end
+    end
     if tty then sys.write(1, term.show .. term.alt_off) end
     if saved ~= nil then sys.restore(saved) end
   end
