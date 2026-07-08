@@ -133,13 +133,17 @@ function M.frame(ed)
     out[#out + 1] = disp.slice(pline, ts, 0, cols, nil)
     crow, ccol = rows, math.min(cols, 1 + disp.width(pline, ts))
   else
+    -- Padding by DISPLAY width, truncation char-aware: a multibyte path or
+    -- message is wider in bytes than cells, and a byte :sub could bisect a
+    -- UTF-8 char at the screen edge -- the same care the text area gets.
     local left_s, right = status_halves(ed)
     local mid = status_mid(ed)
+    local lw, mw, rw = disp.width(left_s, ts), disp.width(mid, ts), disp.width(right, ts)
     local line
     if mid ~= "" then
       -- left ... mid ... right, centering the middle in the slack; overflow is
-      -- truncated by the :sub below (position on the right is the first to go).
-      local room = cols - #left_s - #mid - #right
+      -- truncated by the slice below (position on the right is the first to go).
+      local room = cols - lw - mw - rw
       if room >= 2 then
         local lpad = math.floor(room / 2)
         line = left_s .. string.rep(" ", lpad) .. mid .. string.rep(" ", room - lpad) .. right
@@ -147,11 +151,11 @@ function M.frame(ed)
         line = left_s .. "  " .. mid .. "  " .. right
       end
     else
-      local pad = cols - #left_s - #right
+      local pad = cols - lw - rw
       line = (pad >= 1) and (left_s .. string.rep(" ", pad) .. right)
                          or  (left_s .. " " .. right)
     end
-    out[#out + 1] = line:sub(1, cols)
+    out[#out + 1] = disp.slice(line, ts, 0, cols, nil)
   end
 
   crow = math.max(1, math.min(crow, rows))

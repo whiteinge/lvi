@@ -486,9 +486,15 @@ function M.run(opts)
     local rc, errs = config.load(ed)
     if #ed.inject > 0 then pump(ed) end          -- config may queue :normal keys
     if #errs > 0 then
-      local last = errs[#errs]
-      local msg = ("%s: %d error%s (line %d: %s)"):format(
-        rc, #errs, #errs > 1 and "s" or "", last.lnum, last.err)
+      -- Report the first few failures, not just a count with the last one --
+      -- the first is usually the root cause (later ones often cascade from it).
+      local parts = {}
+      for i = 1, math.min(#errs, 3) do
+        parts[#parts + 1] = ("line %d: %s"):format(errs[i].lnum, errs[i].err)
+      end
+      if #errs > 3 then parts[#parts + 1] = ("+%d more"):format(#errs - 3) end
+      local msg = ("%s: %d error%s -- %s"):format(
+        rc, #errs, #errs > 1 and "s" or "", table.concat(parts, "; "))
       if tty then ed.message = msg else io.stderr:write("lvi: " .. msg .. "\n") end
     end
   end
