@@ -76,6 +76,13 @@ local function flush_deferred(ed)
 end
 M.flush_deferred = flush_deferred
 
+-- A request line has no length framing (commands are single ex lines), so a
+-- client that streams bytes with no newline would grow c.inbuf without bound.
+-- Big is legitimate -- a highlighter's :hl for a huge file is one long line --
+-- so the cap is a runaway backstop, not a budget.
+local INBUF_MAX = 16 * 1024 * 1024
+
+-- Returns false when the connection should be dropped (runaway line).
 local function feed_conn(ed, c, data)
   c.inbuf = c.inbuf .. data
   while true do
@@ -87,6 +94,7 @@ local function feed_conn(ed, c, data)
     local payload, status = handle_socket_command(ed, line)
     proto.send_response(c.fd, id, payload, status)
   end
+  return #c.inbuf <= INBUF_MAX
 end
 
 -- ---- change hooks (`:on change`) --------------------------------------------
@@ -494,7 +502,10 @@ function M.run(opts)
       local armed = ed.change_pending and ch and #ch > 0
       local ready = sys.poll(fds, armed and IDLE_MS or -1)
 
-      if not next(ready) then M.on_idle(ed) end -- poll timed out: idle
+      -- Genuine timeout only: a nil ready is EINTR (suspend/resume, a signal),
+      -- which must not masquerade as "the debounce elapsed".
+      if ready and not next(ready) then M.on_idle(ed) end
+      ready = ready or {}
 
       -- Terminal resize handling without SIGWINCH. The alternative -- a signal
       -- handler -- is a poor fit under LuaJIT (an FFI callback reentering the VM
@@ -522,8 +533,9 @@ function M.run(opts)
       for fd, c in pairs(conns) do
         if ready[fd] then
           local data = sys.read(fd)
-          if data then feed_conn(ed, c, data)
-          else sys.close(fd); conns[fd] = nil end
+          if not (data and feed_conn(ed, c, data)) then
+            sys.close(fd); conns[fd] = nil       -- EOF, or a runaway line
+          end
         end
       end
       local ptop, psub, kbd = ed.top, ed.topsub or 0, false

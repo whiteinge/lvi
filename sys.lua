@@ -208,7 +208,9 @@ function M.connect(path)
 end
 
 --- Poll a list of fds for readability (and error/hangup). `fds` is an array of
---- integer fds. Returns a table mapping ready fd -> revents bitmask.
+--- integer fds. Returns a table mapping ready fd -> revents bitmask; an empty
+--- table on timeout; nil on error (EINTR after a suspend/resume or a signal),
+--- so a caller with timeout-triggered work does not run it on interruptions.
 function M.poll(fds, timeout_ms)
   local n = #fds
   local pfds = ffi.new("struct pollfd[?]", n)
@@ -218,8 +220,9 @@ function M.poll(fds, timeout_ms)
     pfds[i - 1].revents = 0
   end
   local rc = C.poll(pfds, n, timeout_ms or -1)
+  if rc < 0 then return nil end     -- interrupted/error: NOT a timeout
   local ready = {}
-  if rc <= 0 then return ready end -- timeout or error: nothing ready
+  if rc == 0 then return ready end  -- timeout
   for i = 1, n do
     local re = pfds[i - 1].revents
     if re ~= 0 then ready[pfds[i - 1].fd] = re end
