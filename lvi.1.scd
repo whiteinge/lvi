@@ -188,6 +188,14 @@ serves both. A leading address or _a_,_b_ range may precede a command; atoms are
 a line number, *.* (current), *$* (last), and *%* (whole buffer). A bare address
 moves the cursor to that line.
 
+Any command lvi does not implement itself is delegated to the system *ex*(1)
+(override with *$LVI_EX*) -- that is where *s*, *g*, *m*, *t*, *j* and full
+address syntax come from. The command names documented in this section are the
+ones lvi OWNS: for these, lvi's semantics apply, shadowing ex's command of the
+same name (lvi's *d* is not ex's *d*). A future lvi release may claim further
+names; a script that must have the system ex's reading of a line regardless
+should pin it with *sysex*.
+
 *w*[*!*] [_file_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
@@ -316,6 +324,13 @@ moves the cursor to that line.
 *f*, *pos*, *echo* _text_, *silent* _cmd_
 	Show the file name and line count; report the cursor as _line_<TAB>_col_;
 	echo _text_; run _cmd_ suppressing its interactive prompt.
+
+*sysex* _ex-line_
+	Hand _ex-line_ to the system *ex*(1) verbatim, bypassing lvi's own command
+	table -- the pin for scripts that need ex's semantics for a name lvi also
+	owns (e.g. *sysex 2d* is ex's delete with ex's addressing), immune to lvi
+	claiming more names later. Same limits as all delegation: output is
+	discarded, and a failing command is a safe no-op.
 
 ## Shelling out -- which verb
 

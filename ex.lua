@@ -396,13 +396,363 @@ local function write_all(ed, force)
   return n
 end
 
+-- ---- the command table --------------------------------------------------------
+-- Every spelling lvi answers to maps to one handler; handlers receive
+-- (ed, c) with c = { a, b (parsed range), bang (boolean), args, line (verbatim) }.
+-- These names are the ones lvi OWNS: they shadow the system ex's commands of
+-- the same name (everything else falls through to do_ex), so ADDING a name
+-- here silently changes the meaning of any script that was reaching ex through
+-- the fallthrough. Additions must also land in the manpage's owned-names note;
+-- :sysex is the pin for scripts that want the system ex's semantics regardless.
+local CMDS = {}
+local function def(names, fn)
+  for name in names:gmatch("%S+") do CMDS[name] = fn end
+end
+
+def("q quit", function(ed, c)
+  if ed.buf.modified and not c.bang then
+    return "No write since last change (add ! to override)", "err"
+  end
+  ed.running = false
+  return "", "ok"
+end)
+
+def("w write", function(ed, c)
+  local p = (c.args ~= "" and c.args) or ed.buf.path
+  if not p then return "No file name", "err" end
+  if not c.bang and write_conflict(ed, ed.buf, p) then
+    return "File changed since last read (add ! to override)", "err"
+  end
+  local ok, n = pcall(ed.buf.write, ed.buf, p)
+  if not ok then return "write failed: " .. tostring(n), "err" end
+  if ed.stamp then ed.stamp(ed.buf) end
+  if ed.fire_event then ed.fire_event("write") end
+  return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
+end)
+
+-- Snapshot the live buffer (unsaved edits and all) to the per-view scratch
+-- path (ed.buffer_scratch, exported as $LVI_BUFFER). The companion to
+-- `:silent !` for a tool that needs BOTH the terminal and the live buffer (a
+-- picker built from unsaved text, e.g. contrib/lvi-tags), which the frozen
+-- poll loop otherwise can't serve over the socket. Runs inline, before any
+-- shell-out freezes us. We write the bytes ourselves rather than via
+-- buf:write, which would REPOINT buf.path to the scratch file and clear
+-- modified -- this must leave the buffer's identity and dirty state alone.
+def("wbuf", function(ed)
+  local p = ed.buffer_scratch
+  if not p then return "no buffer scratch path", "err" end
+  local ok, err = pcall(function()
+    local f = assert(io.open(p, "wb"))
+    f:write(ed.buf:text()); f:close()
+  end)
+  if not ok then return "wbuf failed: " .. tostring(err), "err" end
+  return "", "ok"
+end)
+
+-- :x writes only when the buffer is modified, then quits -- so on a clean
+-- buffer it leaves the file's mtime untouched (its whole reason to exist
+-- over :wq, which always writes). An explicit target (:x file) is a save-as,
+-- so it still writes. ZZ routes here, inheriting the skip.
+def("wq x", function(ed, c)
+  if c.name == "x" and c.args == "" and not ed.buf.modified then
+    ed.running = false
+    return "", "ok"
+  end
+  local p = (c.args ~= "" and c.args) or ed.buf.path
+  if not p then return "No file name", "err" end
+  if not c.bang and write_conflict(ed, ed.buf, p) then
+    return "File changed since last read (add ! to override)", "err"
+  end
+  local ok, n = pcall(ed.buf.write, ed.buf, p)
+  if not ok then return "write failed: " .. tostring(n), "err" end
+  if ed.stamp then ed.stamp(ed.buf) end
+  if ed.fire_event then ed.fire_event("write") end
+  ed.running = false
+  return "", "ok"
+end)
+
+def("d delete", function(ed, c)
+  local from, to = line_range(ed, c.a, c.b)
+  ed.buf:delete(from, to)
+  ed.cy = clampline(ed, from)
+  ed.cx = 1
+  return "", "ok"
+end)
+
+def("p print", function(ed, c)
+  local from, to = line_range(ed, c.a, c.b)
+  return table.concat(ed.buf:get(from, to), "\n"), "ok"
+end)
+
+def("f file", function(ed)
+  return ('"%s" %d lines'):format(ed.buf.path or "[No File]", ed.buf:nlines()), "ok"
+end)
+
+def("u undo", function(ed)
+  local l = ed.buf:undo()
+  if l then ed.cy, ed.cx = l, 1 end
+  return "", "ok"
+end)
+
+def("redo", function(ed)
+  local l = ed.buf:redo()
+  if l then ed.cy, ed.cx = l, 1 end
+  return "", "ok"
+end)
+
+def("e edit", function(ed, c)
+  if c.args == "#" then                               -- :e # -- the alternate buffer
+    if bufs.alt(ed) then return "", "ok" end
+    return "No alternate file", "err"
+  elseif c.args ~= "" then
+    bufs.open(ed, c.args)
+    return "", "ok"
+  elseif ed.buf.path then
+    if ed.buf.modified and not c.bang then
+      return "No write since last change (add ! to override)", "err"
+    end
+    bufs.reload(ed)
+    return "", "ok"
+  end
+  return "No file name", "err"
+end)
+
+def("bn bnext", function(ed) bufs.next(ed); return "", "ok" end)
+def("bp bprev bprevious", function(ed) bufs.prev(ed); return "", "ok" end)
+
+def("b buffer", function(ed, c)
+  if c.args == "#" then                               -- :b # -- the alternate buffer
+    if bufs.alt(ed) then return "", "ok" end
+    return "No alternate file", "err"
+  end
+  local n = tonumber(c.args)
+  if n then
+    if bufs.switch(ed, n) then return "", "ok" end
+  elseif c.args ~= "" then
+    local i = bufs.find(ed, c.args)
+    if i then bufs.switch(ed, i); return "", "ok" end
+  end
+  return "no such buffer: " .. c.args, "err"
+end)
+
+def("r read", function(ed, c)
+  if c.args == "" then return "No file name", "err" end
+  local text
+  if c.args:sub(1, 1) == "!" then
+    local code, err
+    text, code, err = run_capture(ed, c.args:sub(2))
+    if code ~= 0 then return "read failed: " .. fail_reason(err, code), "err" end
+  else
+    local fh = io.open(c.args, "rb")
+    if not fh then return "can't open " .. c.args, "err" end
+    text = fh:read("*a") or ""; fh:close()
+  end
+  local lines = {}
+  if text ~= "" then
+    lines = buffer.split((text:sub(-1) == "\n") and text:sub(1, -2) or text)
+  end
+  local at = (c.a or ed.cy) + 1                       -- read after the addressed line
+  ed.buf:insert(at, lines)
+  ed.cy, ed.cx = clampline(ed, at), 1
+  return "", "ok"
+end)
+
+def("map", function(ed, c)
+  local lhs, rhs = c.args:match("^(%S+)%s+(.+)$")
+  if not lhs then return "usage: map LHS RHS", "err" end
+  ed.maps[parse_keys(lhs)] = parse_keys(rhs)
+  return "", "ok"
+end)
+
+def("unmap", function(ed, c)
+  if c.args == "" then return "usage: unmap LHS", "err" end
+  ed.maps[parse_keys(c.args)] = nil
+  return "", "ok"
+end)
+
+def("silent sil", function(ed, c)
+  ed._silent = true
+  -- pcall so a Lua error in the sub-command cannot leak the flag (which would
+  -- silence every later :! for the rest of the session); the error itself
+  -- still propagates to the caller's handler.
+  local ok, p, s = pcall(M.dispatch, ed, c.args)
+  ed._silent = nil
+  if not ok then error(p, 0) end
+  return p, s
+end)
+
+-- :bg CMD -- run a shell command detached, output discarded, WITHOUT handing
+-- over the terminal (unlike :!/:silent !, which drop out of and back into the
+-- alt screen -- a full-screen flash that is jarring when a map fires it
+-- repeatedly, e.g. n/N stepping a list). Same mechanism as :on hooks; the
+-- poll loop stays live, so the command's socket callbacks are serviced at
+-- once. For non-interactive tools only -- a command that needs the tty (a
+-- prompt, a pager) must use :! / :silent !.
+def("bg", function(ed, c)
+  if c.args == "" then return "no command", "err" end
+  if ed.spawn_bg then ed.spawn_bg(c.args) end
+  return "", "ok"
+end)
+
+def("ls buffers files", function(ed) return bufs.list(ed), "ok" end)
+
+def("bd bdelete", function(ed, c)
+  local ok, err = bufs.close(ed, c.bang, tonumber(c.args))
+  if not ok then return err, "err" end
+  return "", "ok"
+end)
+
+def("qa qall quitall", function(ed, c)
+  if not c.bang then
+    for _, rec in ipairs(ed.buffers or {}) do
+      if rec.buf.modified then
+        return "No write since last change in a buffer (add ! to override)", "err"
+      end
+    end
+  end
+  ed.running = false
+  return "", "ok"
+end)
+
+def("wa wall", function(ed, c)
+  local n, err = write_all(ed, c.bang)
+  if not n then return err, "err" end
+  return ("%d buffer%s written"):format(n, n == 1 and "" or "s"), "ok"
+end)
+
+-- Write all changed buffers, then quit -- :wa + :qa. Changed-only (see
+-- write_all), so like :x it leaves clean buffers' files untouched; xa and
+-- wqa are aliases here (lvi has no readonly notion for wqa to force past).
+def("xa xall wqa wqall", function(ed, c)
+  local _, err = write_all(ed, c.bang)
+  if err then return err, "err" end
+  ed.running = false
+  return "", "ok"
+end)
+
+-- Quit unconditionally, discarding any changes, and make the editor process
+-- exit non-zero -- the scriptable "abort" (git commit et al. treat a nonzero
+-- editor as "cancel this operation"). No modified check: cancelling is the
+-- whole point. :cq N exits with code N; bare :cq (and :cq!) exits 1.
+def("cq cquit", function(ed, c)
+  ed.exit_code = tonumber(c.args) or 1
+  ed.running = false
+  return "", "ok"
+end)
+
+def("set se", function(ed, c) return do_set(ed, c.args) end)
+def("hl", function(ed, c) return do_hl(ed, c.args) end)          -- transient ranges
+def("hi highlight", function(ed, c) return do_histyle(ed, c.args) end) -- theme
+def("nohl nohlsearch", function(ed) ed.highlights = {}; return "", "ok" end)
+
+-- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
+-- but pointed at external tools). EVENT is change|bufenter|bufleave|bufdelete.
+-- Multiple hooks per event compose; `:on EVENT` with no command clears them.
+-- Hooks run detached and non-blocking (editor.lua's spawn_bg). Only
+-- keyboard-initiated changes fire `change`, so a hook's own socket-driven
+-- edits can't retrigger it (see editor.lua). The buf* events fire on buffer
+-- switches with that buffer's path in LVI_FILE -- the glue that lets a
+-- cross-file list repaint the current buffer's subset on arrival.
+-- `complete` is the exception to all of the above: not auto-fired but read
+-- SYNCHRONOUSLY by insert-mode Ctrl-P/Ctrl-N, which runs the single registered
+-- command with the tty and inserts its stdout -- the completion funnel (see
+-- editor.lua's complete_run and normal.lua). Being single, it REPLACES on
+-- re-register instead of composing.
+def("on", function(ed, c)
+  local event, rest = c.args:match("^(%S+)%s*(.-)%s*$")
+  if not event or event == "" then return "usage: on EVENT [command]", "err" end
+  if not EVENTS[event] then return "unknown event: " .. event, "err" end
+  if rest == "" then ed.hooks[event] = nil; return "", "ok" end
+  -- `complete` names a single completer (you can't merge two pickers), so it
+  -- REPLACES; the fire-and-forget events compose (append).
+  if event == "complete" then ed.hooks.complete = { rest }; return "", "ok" end
+  ed.hooks[event] = ed.hooks[event] or {}
+  table.insert(ed.hooks[event], rest)
+  return "", "ok"
+end)
+
+-- :fire [EVENT] -- raise an event by hand (default: change). The change
+-- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
+-- see :on above), which leaves a tool that edits over the socket -- a
+-- formatter, a diff-hunk applier -- with stale hook consumers (e.g. syntax
+-- highlighting) until the next keystroke. Running `:fire` after its edits
+-- is the explicit opt-in: `change` arms the normal idle debounce exactly
+-- like a keystroke; any other event fires its hooks immediately. A tool
+-- whose own `on change` hook edits and then fires change WILL loop -- but
+-- now by its own explicit hand, not by accident.
+def("fire", function(ed, c)
+  local event = (c.args ~= "" and c.args) or "change"
+  if not EVENTS[event] then return "unknown event: " .. event, "err" end
+  if event == "change" then ed.change_pending = true
+  elseif ed.fire_event then ed.fire_event(event) end
+  return "", "ok"
+end)
+
+def("pos", function(ed) return ed.cy .. "\t" .. ed.cx, "ok" end)
+
+-- Viewport-top query/set -- the socket sibling of :pos, exposing the scroll
+-- position so an external tool can read it and drive it (scrollbind: bind two
+-- views' tops so they scroll together; see contrib/lvi-diff). Bare :top reports
+-- the top buffer line. `:top N` scrolls so line N is the top row. We can't move
+-- the top without a visible cursor -- refresh() re-scrolls to keep the cursor
+-- on screen and would undo a bare top set -- so :top N parks the cursor AT the
+-- new top line (== `:N` then `zt`); refresh then sees cursor==top and holds it.
+def("top", function(ed, c)
+  if c.args == "" then return tostring(ed.top), "ok" end
+  local n = tonumber(c.args)
+  if not n then return "usage: top [N]", "err" end
+  n = clampline(ed, n)
+  ed.cy, ed.cx = n, 1
+  ed.top, ed.topsub = n, 0
+  return "", "ok"
+end)
+
+-- :status NAME [TEXT] -- set (or clear, if TEXT is empty) a named segment in
+-- the status line. Generic: the editor knows nothing about what fills it --
+-- an external list tool drives "[3/57] search", git a branch, etc. -- the
+-- same relationship :hl has with the highlight overlay. Segments render in
+-- name order (see render.lua).
+def("status", function(ed, c)
+  local name, text = c.args:match("^(%S+)%s*(.-)%s*$")
+  if not name then return "usage: status NAME [TEXT]", "err" end
+  ed.status[name] = (text ~= "") and text or nil
+  return "", "ok"
+end)
+
+def("echo", function(ed, c) return c.args, "ok" end)
+
+-- Force a full-screen redraw on the next paint (the driver honors
+-- ed.force_clear). Same gesture as Ctrl-L, reachable over the socket so a
+-- tool can repair the screen -- e.g. after a resize while the view is idle.
+def("redraw", function(ed) ed.force_clear = true; return "", "ok" end)
+
+-- The send-keys escape hatch: feed the argument as normal-mode keystrokes
+-- into the interpreter's input funnel. This is what gives the socket (and
+-- the ':' prompt) full normal-mode power for the operations ex can't express
+-- (cursor-relative edits like 2dw, ci"). The driver drives the coroutine to
+-- consume them; from the ':' prompt the running coroutine consumes them next.
+def("normal norm", function(ed, c)
+  for i = 1, #c.args do ed.inject[#ed.inject + 1] = c.args:byte(i) end
+  return "", "ok"
+end)
+
+-- :sysex EX-LINE -- hand a line to the system ex VERBATIM, bypassing lvi's
+-- command table above. The pin for scripts that need ex's semantics for a
+-- name lvi also owns (lvi's :d, :u, ... shadow ex's), and insurance against
+-- future lvi commands changing the meaning of a line that today reaches ex
+-- through the fallthrough.
+def("sysex", function(ed, c)
+  if c.args == "" then return "usage: sysex EX-COMMAND", "err" end
+  return do_ex(ed, c.args)
+end)
+
 function M.dispatch(ed, line)
   local a, b, rest = parse_range(ed, line)
   rest = rest:gsub("^%s+", "")
-  local cmd, bang, args = rest:match("^(%a*)(!?)%s*(.-)%s*$")
-  cmd = cmd or ""
+  local cmdword, bang, args = rest:match("^(%a*)(!?)%s*(.-)%s*$")
+  cmdword = cmdword or ""
 
-  if cmd == "" then
+  if cmdword == "" then
     if bang == "!" then                                 -- :[range]!cmd
       if a then return do_filter(ed, a, b, args)        -- filter the range
       else return do_shell(ed, args) end                -- :!cmd -- run it
@@ -415,316 +765,10 @@ function M.dispatch(ed, line)
     return "", "ok"
   end
 
-  if cmd == "q" or cmd == "quit" then
-    if ed.buf.modified and bang ~= "!" then
-      return "No write since last change (add ! to override)", "err"
-    end
-    ed.running = false
-    return "", "ok"
-
-  elseif cmd == "w" or cmd == "write" then
-    local p = (args ~= "" and args) or ed.buf.path
-    if not p then return "No file name", "err" end
-    if bang ~= "!" and write_conflict(ed, ed.buf, p) then
-      return "File changed since last read (add ! to override)", "err"
-    end
-    local ok, n = pcall(ed.buf.write, ed.buf, p)
-    if not ok then return "write failed: " .. tostring(n), "err" end
-    if ed.stamp then ed.stamp(ed.buf) end
-    if ed.fire_event then ed.fire_event("write") end
-    return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
-
-  elseif cmd == "wbuf" then
-    -- Snapshot the live buffer (unsaved edits and all) to the per-view scratch
-    -- path (ed.buffer_scratch, exported as $LVI_BUFFER). The companion to
-    -- `:silent !` for a tool that needs BOTH the terminal and the live buffer (a
-    -- picker built from unsaved text, e.g. contrib/lvi-tags), which the frozen
-    -- poll loop otherwise can't serve over the socket. Runs inline, before any
-    -- shell-out freezes us. We write the bytes ourselves rather than via
-    -- buf:write, which would REPOINT buf.path to the scratch file and clear
-    -- modified -- this must leave the buffer's identity and dirty state alone.
-    local p = ed.buffer_scratch
-    if not p then return "no buffer scratch path", "err" end
-    local ok, err = pcall(function()
-      local f = assert(io.open(p, "wb"))
-      f:write(ed.buf:text()); f:close()
-    end)
-    if not ok then return "wbuf failed: " .. tostring(err), "err" end
-    return "", "ok"
-
-  elseif cmd == "wq" or cmd == "x" then
-    -- :x writes only when the buffer is modified, then quits -- so on a clean
-    -- buffer it leaves the file's mtime untouched (its whole reason to exist
-    -- over :wq, which always writes). An explicit target (:x file) is a save-as,
-    -- so it still writes. ZZ routes here, inheriting the skip.
-    if cmd == "x" and args == "" and not ed.buf.modified then
-      ed.running = false
-      return "", "ok"
-    end
-    local p = (args ~= "" and args) or ed.buf.path
-    if not p then return "No file name", "err" end
-    if bang ~= "!" and write_conflict(ed, ed.buf, p) then
-      return "File changed since last read (add ! to override)", "err"
-    end
-    local ok, n = pcall(ed.buf.write, ed.buf, p)
-    if not ok then return "write failed: " .. tostring(n), "err" end
-    if ed.stamp then ed.stamp(ed.buf) end
-    if ed.fire_event then ed.fire_event("write") end
-    ed.running = false
-    return "", "ok"
-
-  elseif cmd == "d" or cmd == "delete" then
-    local from, to = line_range(ed, a, b)
-    ed.buf:delete(from, to)
-    ed.cy = clampline(ed, from)
-    ed.cx = 1
-    return "", "ok"
-
-  elseif cmd == "p" or cmd == "print" then
-    local from, to = line_range(ed, a, b)
-    return table.concat(ed.buf:get(from, to), "\n"), "ok"
-
-  elseif cmd == "f" or cmd == "file" then
-    return ('"%s" %d lines'):format(ed.buf.path or "[No File]", ed.buf:nlines()), "ok"
-
-  elseif cmd == "u" or cmd == "undo" then
-    local l = ed.buf:undo()
-    if l then ed.cy, ed.cx = l, 1 end
-    return "", "ok"
-
-  elseif cmd == "redo" then
-    local l = ed.buf:redo()
-    if l then ed.cy, ed.cx = l, 1 end
-    return "", "ok"
-
-  elseif cmd == "e" or cmd == "edit" then
-    if args == "#" then                                 -- :e # -- the alternate buffer
-      if bufs.alt(ed) then return "", "ok" end
-      return "No alternate file", "err"
-    elseif args ~= "" then
-      bufs.open(ed, args)
-      return "", "ok"
-    elseif ed.buf.path then
-      if ed.buf.modified and bang ~= "!" then
-        return "No write since last change (add ! to override)", "err"
-      end
-      bufs.reload(ed)
-      return "", "ok"
-    end
-    return "No file name", "err"
-
-  elseif cmd == "bn" or cmd == "bnext" then
-    bufs.next(ed); return "", "ok"
-  elseif cmd == "bp" or cmd == "bprev" or cmd == "bprevious" then
-    bufs.prev(ed); return "", "ok"
-  elseif cmd == "b" or cmd == "buffer" then
-    if args == "#" then                                 -- :b # -- the alternate buffer
-      if bufs.alt(ed) then return "", "ok" end
-      return "No alternate file", "err"
-    end
-    local n = tonumber(args)
-    if n then
-      if bufs.switch(ed, n) then return "", "ok" end
-    elseif args ~= "" then
-      local i = bufs.find(ed, args)
-      if i then bufs.switch(ed, i); return "", "ok" end
-    end
-    return "no such buffer: " .. args, "err"
-  elseif cmd == "r" or cmd == "read" then
-    if args == "" then return "No file name", "err" end
-    local text
-    if args:sub(1, 1) == "!" then
-      local code, err
-      text, code, err = run_capture(ed, args:sub(2))
-      if code ~= 0 then return "read failed: " .. fail_reason(err, code), "err" end
-    else
-      local fh = io.open(args, "rb")
-      if not fh then return "can't open " .. args, "err" end
-      text = fh:read("*a") or ""; fh:close()
-    end
-    local lines = {}
-    if text ~= "" then
-      lines = buffer.split((text:sub(-1) == "\n") and text:sub(1, -2) or text)
-    end
-    local at = (a or ed.cy) + 1                         -- read after the addressed line
-    ed.buf:insert(at, lines)
-    ed.cy, ed.cx = clampline(ed, at), 1
-    return "", "ok"
-
-  elseif cmd == "map" then
-    local lhs, rhs = args:match("^(%S+)%s+(.+)$")
-    if not lhs then return "usage: map LHS RHS", "err" end
-    ed.maps[parse_keys(lhs)] = parse_keys(rhs)
-    return "", "ok"
-  elseif cmd == "unmap" then
-    if args == "" then return "usage: unmap LHS", "err" end
-    if ed.maps then ed.maps[parse_keys(args)] = nil end
-    return "", "ok"
-
-  elseif cmd == "silent" or cmd == "sil" then
-    ed._silent = true
-    -- pcall so a Lua error in the sub-command cannot leak the flag (which would
-    -- silence every later :! for the rest of the session); the error itself
-    -- still propagates to the caller's handler.
-    local ok, p, s = pcall(M.dispatch, ed, args)
-    ed._silent = nil
-    if not ok then error(p, 0) end
-    return p, s
-
-  elseif cmd == "bg" then
-    -- :bg CMD -- run a shell command detached, output discarded, WITHOUT handing
-    -- over the terminal (unlike :!/:silent !, which drop out of and back into the
-    -- alt screen -- a full-screen flash that is jarring when a map fires it
-    -- repeatedly, e.g. n/N stepping a list). Same mechanism as :on hooks; the
-    -- poll loop stays live, so the command's socket callbacks are serviced at
-    -- once. For non-interactive tools only -- a command that needs the tty (a
-    -- prompt, a pager) must use :! / :silent !.
-    if args == "" then return "no command", "err" end
-    if ed.spawn_bg then ed.spawn_bg(args) end
-    return "", "ok"
-
-  elseif cmd == "ls" or cmd == "buffers" or cmd == "files" then
-    return bufs.list(ed), "ok"
-  elseif cmd == "bd" or cmd == "bdelete" then
-    local ok, err = bufs.close(ed, bang == "!", tonumber(args))
-    if not ok then return err, "err" end
-    return "", "ok"
-  elseif cmd == "qa" or cmd == "qall" or cmd == "quitall" then
-    if bang ~= "!" then
-      for _, rec in ipairs(ed.buffers or {}) do
-        if rec.buf.modified then
-          return "No write since last change in a buffer (add ! to override)", "err"
-        end
-      end
-    end
-    ed.running = false
-    return "", "ok"
-
-  elseif cmd == "wa" or cmd == "wall" then
-    local n, err = write_all(ed, bang == "!")
-    if not n then return err, "err" end
-    return ("%d buffer%s written"):format(n, n == 1 and "" or "s"), "ok"
-
-  elseif cmd == "xa" or cmd == "xall" or cmd == "wqa" or cmd == "wqall" then
-    -- Write all changed buffers, then quit -- :wa + :qa. Changed-only (see
-    -- write_all), so like :x it leaves clean buffers' files untouched; xa and
-    -- wqa are aliases here (lvi has no readonly notion for wqa to force past).
-    local _, err = write_all(ed, bang == "!")
-    if err then return err, "err" end
-    ed.running = false
-    return "", "ok"
-
-  elseif cmd == "cq" or cmd == "cquit" then
-    -- Quit unconditionally, discarding any changes, and make the editor process
-    -- exit non-zero -- the scriptable "abort" (git commit et al. treat a nonzero
-    -- editor as "cancel this operation"). No modified check: cancelling is the
-    -- whole point. :cq N exits with code N; bare :cq (and :cq!) exits 1.
-    ed.exit_code = tonumber(args) or 1
-    ed.running = false
-    return "", "ok"
-
-  elseif cmd == "set" or cmd == "se" then
-    return do_set(ed, args)
-
-  elseif cmd == "hl" then
-    return do_hl(ed, args)                    -- apply a group's ranges (transient)
-
-  elseif cmd == "hi" or cmd == "highlight" then
-    return do_histyle(ed, args)               -- define a group's color (theme)
-
-  elseif cmd == "nohl" or cmd == "nohlsearch" then
-    ed.highlights = {}
-    return "", "ok"
-
-  elseif cmd == "on" then
-    -- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
-    -- but pointed at external tools). EVENT is change|bufenter|bufleave|bufdelete.
-    -- Multiple hooks per event compose; `:on EVENT` with no command clears them.
-    -- Hooks run detached and non-blocking (editor.lua's spawn_bg). Only
-    -- keyboard-initiated changes fire `change`, so a hook's own socket-driven
-    -- edits can't retrigger it (see editor.lua). The buf* events fire on buffer
-    -- switches with that buffer's path in LVI_FILE -- the glue that lets a
-    -- cross-file list repaint the current buffer's subset on arrival.
-    -- `complete` is the exception to all of the above: not auto-fired but read
-    -- SYNCHRONOUSLY by insert-mode Ctrl-P/Ctrl-N, which runs the single registered
-    -- command with the tty and inserts its stdout -- the completion funnel (see
-    -- editor.lua's complete_run and normal.lua). Being single, it REPLACES on
-    -- re-register instead of composing.
-    local event, rest = args:match("^(%S+)%s*(.-)%s*$")
-    if not event or event == "" then return "usage: on EVENT [command]", "err" end
-    if not EVENTS[event] then return "unknown event: " .. event, "err" end
-    if rest == "" then ed.hooks[event] = nil; return "", "ok" end
-    -- `complete` names a single completer (you can't merge two pickers), so it
-    -- REPLACES; the fire-and-forget events compose (append).
-    if event == "complete" then ed.hooks.complete = { rest }; return "", "ok" end
-    ed.hooks[event] = ed.hooks[event] or {}
-    table.insert(ed.hooks[event], rest)
-    return "", "ok"
-
-  elseif cmd == "fire" then
-    -- :fire [EVENT] -- raise an event by hand (default: change). The change
-    -- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
-    -- see :on above), which leaves a tool that edits over the socket -- a
-    -- formatter, a diff-hunk applier -- with stale hook consumers (e.g. syntax
-    -- highlighting) until the next keystroke. Running `:fire` after its edits
-    -- is the explicit opt-in: `change` arms the normal idle debounce exactly
-    -- like a keystroke; any other event fires its hooks immediately. A tool
-    -- whose own `on change` hook edits and then fires change WILL loop -- but
-    -- now by its own explicit hand, not by accident.
-    local event = (args ~= "" and args) or "change"
-    if not EVENTS[event] then return "unknown event: " .. event, "err" end
-    if event == "change" then ed.change_pending = true
-    elseif ed.fire_event then ed.fire_event(event) end
-    return "", "ok"
-
-  elseif cmd == "pos" then                  -- cursor position query: line<TAB>col
-    return ed.cy .. "\t" .. ed.cx, "ok"
-
-  elseif cmd == "top" then
-    -- Viewport-top query/set -- the socket sibling of :pos, exposing the scroll
-    -- position so an external tool can read it and drive it (scrollbind: bind two
-    -- views' tops so they scroll together; see contrib/lvi-diff). Bare :top reports
-    -- the top buffer line. `:top N` scrolls so line N is the top row. We can't move
-    -- the top without a visible cursor -- refresh() re-scrolls to keep the cursor
-    -- on screen and would undo a bare top set -- so :top N parks the cursor AT the
-    -- new top line (== `:N` then `zt`); refresh then sees cursor==top and holds it.
-    if args == "" then return tostring(ed.top), "ok" end
-    local n = tonumber(args)
-    if not n then return "usage: top [N]", "err" end
-    n = clampline(ed, n)
-    ed.cy, ed.cx = n, 1
-    ed.top, ed.topsub = n, 0
-    return "", "ok"
-
-  elseif cmd == "status" then
-    -- :status NAME [TEXT] -- set (or clear, if TEXT is empty) a named segment in
-    -- the status line. Generic: the editor knows nothing about what fills it --
-    -- an external list tool drives "[3/57] search", git a branch, etc. -- the
-    -- same relationship :hl has with the highlight overlay. Segments render in
-    -- name order (see render.lua).
-    local name, text = args:match("^(%S+)%s*(.-)%s*$")
-    if not name then return "usage: status NAME [TEXT]", "err" end
-    ed.status[name] = (text ~= "") and text or nil
-    return "", "ok"
-
-  elseif cmd == "echo" then
-    return args, "ok"
-
-  elseif cmd == "redraw" then
-    -- Force a full-screen redraw on the next paint (the driver honors
-    -- ed.force_clear). Same gesture as Ctrl-L, reachable over the socket so a
-    -- tool can repair the screen -- e.g. after a resize while the view is idle.
-    ed.force_clear = true
-    return "", "ok"
-
-  elseif cmd == "normal" or cmd == "norm" then
-    -- The send-keys escape hatch: feed the argument as normal-mode keystrokes
-    -- into the interpreter's input funnel. This is what gives the socket (and
-    -- the ':' prompt) full normal-mode power for the operations ex can't express
-    -- (cursor-relative edits like 2dw, ci"). The driver drives the coroutine to
-    -- consume them; from the ':' prompt the running coroutine consumes them next.
-    for i = 1, #args do ed.inject[#ed.inject + 1] = args:byte(i) end
-    return "", "ok"
+  local fn = CMDS[cmdword]
+  if fn then
+    return fn(ed, { name = cmdword, a = a, b = b, bang = bang == "!",
+                    args = args, line = line })
   end
 
   -- Anything lvi does not handle itself is delegated to the system ex, so vi's

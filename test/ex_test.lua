@@ -579,6 +579,16 @@ describe("ex.dispatch", function()
       expect(ed.marks.m).to.equal({ 4, 1 })
     end)
 
+    it(":sysex hands the line to the system ex verbatim (bypasses lvi's table)", function()
+      if not have_ex then return end
+      local ed = ed_with("a\nb\nc")
+      local _, s = ex.dispatch(ed, "sysex 2d")     -- ex's :d, not lvi's
+      expect(s).to.equal("ok")
+      expect(ed.buf:get()).to.equal({ "a", "c" })
+      local _, s2 = ex.dispatch(ed, "sysex")
+      expect(s2).to.equal("err")                   -- usage error when empty
+    end)
+
     it("trims to a small splice: one :s produces a one-line undo record", function()
       if not have_ex then return end
       local ed = ed_with("aaa\nbbb\nccc")
