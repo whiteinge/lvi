@@ -32,6 +32,12 @@
 #                        monokai, solarized-dark, gruvbox-dark, nord). Ignored
 #                        outside --theme -- highlighting is positional, so the
 #                        per-change path never touches colors.
+#   LVI_PYGMENTS_DEPTH   Color depth of the `--theme` block: truecolor (default,
+#                        exact 24-bit color), 256 (nearest xterm-256 slot -- the
+#                        same one `pygmentize -f terminal256` would pick), 16 or
+#                        8 (nearest ANSI color, which then follows your terminal
+#                        palette). Only affects --theme; the positional path
+#                        emits no color at any depth.
 import os
 import sys
 from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, guess_lexer
@@ -75,21 +81,77 @@ def group_for(ttype):
     return None
 
 
+# --theme color depth (LVI_PYGMENTS_DEPTH). lvi's :hi already speaks every one
+# of these, so the depth only picks which encoding we emit -- lvi's core needs
+# no change. Downscaling a style's hex is a nearest match in RGB: 256 reuses
+# Pygments' own table so lvi and a `pygmentize -f terminal256` pager pick the
+# SAME slot; 16/8 match nominal ANSI RGB, and the color you actually see then
+# follows the terminal's palette (that palette-tracking is the point of asking
+# for low color in the first place).
+DEPTHS = ("truecolor", "256", "16", "8")
+
+# Nominal xterm RGB for the 16 ANSI colors, in ANSI order (0-15; bright = 8-15).
+ANSI16 = [
+    (0x00, 0x00, 0x00), (0x80, 0x00, 0x00), (0x00, 0x80, 0x00), (0x80, 0x80, 0x00),
+    (0x00, 0x00, 0x80), (0x80, 0x00, 0x80), (0x00, 0x80, 0x80), (0xc0, 0xc0, 0xc0),
+    (0x80, 0x80, 0x80), (0xff, 0x00, 0x00), (0x00, 0xff, 0x00), (0xff, 0xff, 0x00),
+    (0x00, 0x00, 0xff), (0xff, 0x00, 0xff), (0x00, 0xff, 0xff), (0xff, 0xff, 0xff),
+]
+# lvi's 8 base color names, in ANSI order 0-7.
+ANSI8_NAMES = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+
+
+def _nearest(rgb, palette):
+    r, g, b = rgb
+    best, bi = None, 0
+    for i, (pr, pg, pb) in enumerate(palette):
+        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if best is None or d < best:
+            best, bi = d, i
+    return bi
+
+
+def make_encoder(depth):
+    # Return enc(role, hexstr) -> a single `:hi` spec token ("fg=.."/"bg=.."/
+    # "sgr=..") for one color at this depth. role is "fg" or "bg".
+    closest = None
+    if depth == "256":                          # same slot as pygmentize/less
+        from pygments.formatters.terminal256 import Terminal256Formatter
+        closest = Terminal256Formatter()._closest_color
+
+    def enc(role, hexstr):
+        r, g, b = (int(hexstr[i:i + 2], 16) for i in (0, 2, 4))
+        if depth == "truecolor":                # exact color, sgr= passthrough
+            return "sgr=%s;2;%d;%d;%d" % ("38" if role == "fg" else "48", r, g, b)
+        if depth == "256":
+            return "%s=%d" % (role, closest(r, g, b))
+        if depth == "16":                        # palette index 0-15 (fg=/bg= n)
+            return "%s=%d" % (role, _nearest((r, g, b), ANSI16))
+        return "%s=%s" % (role, ANSI8_NAMES[_nearest((r, g, b), ANSI16[:8])])
+    return enc
+
+
 def emit_theme():
     # Print a `hi GROUP ...` block derived from a Pygments built-in style, then
     # exit. For each canonical group we style the first token type that maps to
     # it in GROUP_MAP (its representative), turning the style's hex color and
-    # attributes into an SGR passthrough (lvi's `hi ... sgr=` carries truecolor).
+    # attributes into `:hi` specs at LVI_PYGMENTS_DEPTH (truecolor by default).
     # A group the style leaves unstyled emits a bare `hi GROUP` (plain text).
     from pygments.styles import get_style_by_name
 
     name = os.environ.get("LVI_PYGMENTS_STYLE", "default")
+    depth = os.environ.get("LVI_PYGMENTS_DEPTH", "truecolor")
+    if depth not in DEPTHS:
+        sys.stderr.write("lvi-hl-pygments: bad LVI_PYGMENTS_DEPTH %r (want %s)\n"
+                         % (depth, "|".join(DEPTHS)))
+        sys.exit(1)
     try:
         style = get_style_by_name(name)
     except ClassNotFound:
         sys.stderr.write("lvi-hl-pygments: unknown style: %s\n" % name)
         sys.exit(1)
 
+    enc = make_encoder(depth)
     rep = {}                        # group -> representative token type
     for tt, g in GROUP_MAP:
         rep.setdefault(g, tt)
@@ -97,20 +159,18 @@ def emit_theme():
     out = []
     for g in GROUPS:
         st = style.style_for_token(rep[g]) if g in rep else {}
-        params = []
+        specs = []
         if st.get("color"):
-            r, gc, b = (int(st["color"][i:i + 2], 16) for i in (0, 2, 4))
-            params.append("38;2;%d;%d;%d" % (r, gc, b))
+            specs.append(enc("fg", st["color"]))
         if st.get("bgcolor"):
-            r, gc, b = (int(st["bgcolor"][i:i + 2], 16) for i in (0, 2, 4))
-            params.append("48;2;%d;%d;%d" % (r, gc, b))
+            specs.append(enc("bg", st["bgcolor"]))
         if st.get("bold"):
-            params.append("1")
+            specs.append("bold")
         if st.get("italic"):
-            params.append("3")
+            specs.append("italic")
         if st.get("underline"):
-            params.append("4")
-        out.append("hi %s sgr=%s" % (g, ";".join(params)) if params else "hi %s" % g)
+            specs.append("underline")
+        out.append("hi %s %s" % (g, " ".join(specs)) if specs else "hi %s" % g)
     sys.stdout.write("\n".join(out) + "\n")
 
 

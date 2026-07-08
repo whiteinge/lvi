@@ -32,6 +32,9 @@ hi Deleted  fg=red
 " any `hi` you set after this line still overrides it, group by group. Styles:
 " `pygmentize -L styles` (monokai, solarized-dark, gruvbox-dark, nord, ...).
 "   on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme
+" LVI_PYGMENTS_DEPTH constrains the seed's colors: truecolor (default), 256,
+" 16, or 8 (low depths follow your terminal palette). E.g. for a 256-color term:
+"   on ready LVI_PYGMENTS_STYLE=gruvbox-dark LVI_PYGMENTS_DEPTH=256 lvi-highlight --theme
 
 " ---- trigger -----------------------------------------------------------------
 " Re-highlight automatically a moment after you stop typing. `on change` runs the
