@@ -261,13 +261,18 @@ moves the cursor to that line.
 *on* _event_ [_cmd_]
 	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears
 	that event's hooks. _event_ is *change* (a keyboard edit settled -- for live
-	highlighting), *ready* (once at startup, socket live and rc loaded -- the
-	analog of vim's *VimEnter*, e.g. to load a *-q* list), or
+	highlighting), *write* (after a successful *w*/*wq*/*x*), *scroll* (a keyboard
+	action moved the viewport top -- fired at once, undebounced, with the new top
+	line in *LVI_TOP*; the seam an external tool uses to mirror one view's scroll
+	onto another, see *contrib/lvi-diff*), *ready* (once at startup, socket live
+	and rc loaded -- the analog of vim's *VimEnter*, e.g. to load a *-q* list), or
 	*bufenter*/*bufleave*/*bufdelete* (buffer switches, with that buffer's path in
 	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
 	*contrib/lvi-list*). *complete* is special: not auto-fired but run
 	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and is a single
-	completer that replaces on re-register instead of composing.
+	completer that replaces on re-register instead of composing. Socket-driven
+	changes never fire *change*/*scroll* (only keyboard input does), so a hook's
+	own edits or a scroll pushed onto a view can't loop back.
 
 *status* _name_ [_text_]
 	Set (or clear, if _text_ is empty) a named segment shown in the status line;
@@ -348,9 +353,10 @@ reference.
 	The _errorfile_ given with *-q*, exported for the *ready* hook to load (see
 	*-q*). Unset when *-q* was not given.
 
-*LVI_FILE*, *LVI_LINE*, *LVI_COL*, *LVI_CWORD*
-	The cursor's world -- current file path, 1-based line and byte column, and
-	the word under the cursor -- refreshed into the environment before every
+*LVI_FILE*, *LVI_LINE*, *LVI_COL*, *LVI_TOP*, *LVI_CWORD*
+	The cursor's world -- current file path, 1-based line and byte column,
+	viewport top line (*LVI_TOP*, for *on scroll*), and the word under the cursor
+	-- refreshed into the environment before every
 	shell-out (*:!* commands and *:on* hooks). A command can read them inline
 	with no wrapper, and a POSIX shell slices them further, e.g.
 	*:!ctags* _--_ *"${LVI_FILE%/\*}"* for the directory or *"${LVI_FILE##\*/}"*

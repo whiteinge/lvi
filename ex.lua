@@ -20,7 +20,7 @@ local M = {}
 -- buf* events fire on buffer switches (editor.lua/bufs.lua).
 local EVENTS = { change = true, write = true, ready = true,
                  bufenter = true, bufleave = true, bufdelete = true,
-                 complete = true }
+                 complete = true, scroll = true }
 
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
@@ -596,6 +596,22 @@ function M.dispatch(ed, line)
 
   elseif cmd == "pos" then                  -- cursor position query: line<TAB>col
     return ed.cy .. "\t" .. ed.cx, "ok"
+
+  elseif cmd == "top" then
+    -- Viewport-top query/set -- the socket sibling of :pos, exposing the scroll
+    -- position so an external tool can read it and drive it (scrollbind: bind two
+    -- views' tops so they scroll together; see contrib/lvi-diff). Bare :top reports
+    -- the top buffer line. `:top N` scrolls so line N is the top row. We can't move
+    -- the top without a visible cursor -- refresh() re-scrolls to keep the cursor
+    -- on screen and would undo a bare top set -- so :top N parks the cursor AT the
+    -- new top line (== `:N` then `zt`); refresh then sees cursor==top and holds it.
+    if args == "" then return tostring(ed.top or 1), "ok" end
+    local n = tonumber(args)
+    if not n then return "usage: top [N]", "err" end
+    n = clampline(ed, n)
+    ed.cy, ed.cx = n, 1
+    ed.top, ed.topsub = n, 0
+    return "", "ok"
 
   elseif cmd == "status" then
     -- :status NAME [TEXT] -- set (or clear, if TEXT is empty) a named segment in

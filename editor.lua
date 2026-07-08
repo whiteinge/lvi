@@ -171,6 +171,7 @@ function M.run(opts)
     sys.setenv("LVI_FILE", buf.path or "")
     sys.setenv("LVI_LINE", ed.cy)
     sys.setenv("LVI_COL", ed.cx)
+    sys.setenv("LVI_TOP", ed.top or 1)          -- viewport top line, for `on scroll`
     sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
   end
   -- Spawn a shell command detached and non-blocking, with its output discarded
@@ -388,18 +389,29 @@ function M.run(opts)
           else sys.close(fd); conns[fd] = nil end
         end
       end
+      local ptop, psub, kbd = ed.top, ed.topsub or 0, false
       if tty and ready[0] then
         local data = sys.read(0)
         if not data then
           ed.running = false
         else
           local pb, pr = ed.buf, ed.buf.rev
+          kbd = true
           feed(data)
           M.note_keyboard_change(ed, pb, pr)
         end
       end
 
       refresh(ed)
+      -- `on scroll` fires the instant a KEYBOARD action moved the viewport top
+      -- (checked after refresh, where scroll settles). Socket-driven top changes
+      -- -- e.g. a scrollbind peer's :top -- happen in the conns branch with kbd
+      -- false, so they never re-fire: that's the anti-echo gate, same discipline
+      -- as note_keyboard_change. Undebounced (unlike `change`) so a bound peer
+      -- tracks promptly. spawn_bg is non-blocking, so the pump stays responsive.
+      if kbd and ed.running and (ed.top ~= ptop or (ed.topsub or 0) ~= psub) then
+        M.fire(ed, "scroll")
+      end
       if tty and ed.running then
         -- A full clear precedes the frame only when something requested it (a
         -- resize, Ctrl-L, or :redraw); normal repaints stay incremental via the
