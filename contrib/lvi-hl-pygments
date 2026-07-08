@@ -15,6 +15,24 @@
 # multi-line token (an unclosed string, a block comment) is split into one span
 # per line automatically, which is exactly what colors the "rest of the file" in
 # the unclosed-string case.
+#
+# THEME MODE (`--theme`): print the `hi GROUP ...` block for a Pygments built-in
+# style instead of highlighting stdin, then exit. This seeds the group colors
+# you would otherwise hand-write in your rc, so the two surfaces stay in sync.
+# The adapter only prints to stdout (positional contract); `lvi-highlight
+# --theme` is the piece that runs this and pushes the block over the socket, so
+# wire it up once at startup, NOT on every change:
+#     on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme
+# Because lvi owns the theme, any `hi` you set afterward in the rc still wins;
+# the emitted block is just a starting point you can override group by group.
+#
+# ENVIRONMENT
+#   LVI_PYGMENTS_STYLE   Pygments style name for `--theme` (default "default";
+#                        try `pygmentize -L styles` for the full list, e.g.
+#                        monokai, solarized-dark, gruvbox-dark, nord). Ignored
+#                        outside --theme -- highlighting is positional, so the
+#                        per-change path never touches colors.
+import os
 import sys
 from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, guess_lexer
 from pygments.util import ClassNotFound
@@ -45,6 +63,45 @@ def group_for(ttype):
         if ttype in tt:
             return g
     return None
+
+
+def emit_theme():
+    # Print a `hi GROUP ...` block derived from a Pygments built-in style, then
+    # exit. For each canonical group we style the first token type that maps to
+    # it in GROUP_MAP (its representative), turning the style's hex color and
+    # attributes into an SGR passthrough (lvi's `hi ... sgr=` carries truecolor).
+    # A group the style leaves unstyled emits a bare `hi GROUP` (plain text).
+    from pygments.styles import get_style_by_name
+
+    name = os.environ.get("LVI_PYGMENTS_STYLE", "default")
+    try:
+        style = get_style_by_name(name)
+    except ClassNotFound:
+        sys.stderr.write("lvi-hl-pygments: unknown style: %s\n" % name)
+        sys.exit(1)
+
+    rep = {}                        # group -> representative token type
+    for tt, g in GROUP_MAP:
+        rep.setdefault(g, tt)
+
+    out = []
+    for g in GROUPS:
+        st = style.style_for_token(rep[g]) if g in rep else {}
+        params = []
+        if st.get("color"):
+            r, gc, b = (int(st["color"][i:i + 2], 16) for i in (0, 2, 4))
+            params.append("38;2;%d;%d;%d" % (r, gc, b))
+        if st.get("bgcolor"):
+            r, gc, b = (int(st["bgcolor"][i:i + 2], 16) for i in (0, 2, 4))
+            params.append("48;2;%d;%d;%d" % (r, gc, b))
+        if st.get("bold"):
+            params.append("1")
+        if st.get("italic"):
+            params.append("3")
+        if st.get("underline"):
+            params.append("4")
+        out.append("hi %s sgr=%s" % (g, ";".join(params)) if params else "hi %s" % g)
+    sys.stdout.write("\n".join(out) + "\n")
 
 
 def pick_lexer(text, fname):
@@ -102,4 +159,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--theme":
+        emit_theme()
+    else:
+        main()

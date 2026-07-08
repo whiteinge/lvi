@@ -19,6 +19,11 @@
 #     on bufenter lvi-highlight           " ...and when you switch/open a buffer
 #     map \h :silent !lvi-highlight<CR>   " ...and/or force it on a key
 #
+# The `hi` block above is optional: `lvi-highlight --theme` seeds the group
+# colors from a Pygments built-in style (via $LVI_PYGMENTS_STYLE) in one shot,
+# so `on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme` replaces the
+# hand-written `hi` lines. Theme mode is backend-specific (pygments supports it).
+#
 # `change` is keyboard-only (a hook's own socket edits can't retrigger it, so no
 # loop); pair it with `bufenter` so a socket-driven :e (e.g. lvi-open) highlights
 # the file it lands on.
@@ -36,6 +41,26 @@ LVI=${LVI:-lvi}
 BACKEND=${LVI_HL_BACKEND:-pygments}
 MAXBYTES=${LVI_HL_MAXBYTES:-262144}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# --theme [WID]: push the backend's `--theme` block (a Pygments built-in style,
+# via $LVI_PYGMENTS_STYLE) over the socket, then exit -- a one-shot theme seed
+# for `on ready`, not a per-change hook. No buffer read here, so no worker
+# detach: `on ready` already runs us backgrounded, and lvi's poll loop is live
+# to service the `hi` round-trip. Backend must support --theme (pygments does).
+if [ "$1" = "--theme" ]; then
+  wid=${2:-$LVI_WID}
+  [ -n "$wid" ] || { echo "lvi-highlight: no WID (pass one or run from inside lvi)" >&2; exit 1; }
+  adapter="$DIR/lvi-hl-$BACKEND"
+  [ -x "$adapter" ] || { echo "lvi-highlight: no adapter for backend '$BACKEND' ($adapter)" >&2; exit 1; }
+  set --
+  while IFS= read -r cmd; do
+    [ -n "$cmd" ] && set -- "$@" "$cmd"
+  done <<EOF
+$("$adapter" --theme)
+EOF
+  [ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"
+  exit $?
+fi
 
 # First entry: detach a worker (double-fork -> no zombie for the calling lvi)
 # and return immediately so lvi can resume and service the worker's socket I/O.

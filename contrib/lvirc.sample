@@ -20,6 +20,12 @@ hi Type     fg=cyan
 hi Builtin  fg=yellow
 hi Constant fg=magenta
 hi Preproc  fg=red
+"
+" ...or skip the hand-written block above and seed the groups from a Pygments
+" built-in style (truecolor). `--theme` pushes the `hi` lines once at startup;
+" any `hi` you set after this line still overrides it, group by group. Styles:
+" `pygmentize -L styles` (monokai, solarized-dark, gruvbox-dark, nord, ...).
+"   on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme
 
 " ---- trigger -----------------------------------------------------------------
 " Re-highlight automatically a moment after you stop typing. `on change` runs the
