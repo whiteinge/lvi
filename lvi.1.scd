@@ -418,7 +418,8 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
   bat); turn it on with *on change lvi-highlight*.
 - *lvi-search* -- grep the live (unsaved) buffer and step matches with *n*/*N*.
 - *lvi-list* -- quickfix/location lists from any grep/compiler/linter output
-  (the vim *-q* format), file-backed and steppable.
+  (the vim *-q* format), file-backed and steppable; any number coexist, one is
+  _focused_, and the bare step keys act on it.
 - *lvi-gitchanges* -- step the current file's *git diff* hunks with *n*/*N*.
 - *lvi-open* -- fuzzy-pick a file and open it in the running view.
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.

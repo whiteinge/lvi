@@ -44,7 +44,11 @@ nothing about lists: `lvi-list` owns them and drives the view over the socket,
 jumping the cursor, painting the `:hl` overlay, and setting a `:status` counter.
 Any number of named lists coexist; one is **focused**, and the bare step commands
 act on it — so a *single* pair of keys (`n`/`N`) steps search, grep, lint, and
-git hunks alike.
+git hunks alike. Focus is a default, not a constraint: every step verb also takes
+an explicit name, so a list can instead get its own dedicated keys —
+`map ]c :bg lvi-list next gitchanges<CR>` steps git hunks without touching what
+`n`/`N` point at. The two postures compose per list; re-aim the bare keys with
+`lvi-list focus NAME`, or pick from a menu with `lvi-list switch`.
 
 **`lvi-search`** is the first producer: it greps the *live* buffer (so it finds
 unsaved text), builds the `search` list, focuses it, and jumps to the first
@@ -142,7 +146,11 @@ the thread between. And, like everything here, **no daemon**: it's a one-shot th
 diffs the buffers, paints DiffChange/DiffAdd/DiffDelete through `:hl`, writes a
 line-map cache, and installs the maps and hooks — then exits. What happens after
 is lvi firing those hooks. `]c`/`[c` jump to the next/prev hunk (top-anchoring
-*both* panes); `\p`/`\o` put/obtain the hunk under the cursor. Scrollbind rides the
+*both* panes); `\p`/`\o` put/obtain the hunk under the cursor. Hunk nav is *not*
+an `lvi-list` — a list jump moves one view's cursor, but a diff jump must move
+both panes in step (a socket-driven move never fires the peer's scroll hook, by
+design) — though from the fingers it's the same "pinned keys, never focused"
+posture, and `]c` matching vim's diff-mode is no accident. Scrollbind rides the
 `on scroll` hook: when a pane's viewport moves, its top is translated through the
 diff map and pushed to the peer, so they stay aligned even across a lopsided hunk.
 Launch it on two live views — `lvi-diff` (auto-picks the sole pair) or

@@ -56,14 +56,15 @@ map \h :silent !lvi-highlight<CR>
 " lvi has no built-in search; lvi-search greps the live buffer into a `lvi-list`
 " list and lvi-list steps it. Every list works the same way, so one set of step
 " keys serves search, grep, lint, git hunks -- whichever list is *focused*.
-" `/` prompts, so it needs the terminal (:silent !). The rest touch no tty, so
-" they use :bg -- a detached spawn with NO terminal handover, which avoids the
-" alt-screen flash that :! causes when you hold down n/N.
+" `/` prompts and `\l` runs a picker, so they need the terminal (:silent !). The
+" rest touch no tty, so they use :bg -- a detached spawn with NO terminal
+" handover, which avoids the alt-screen flash that :! causes when you hold down n/N.
 map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus it
 map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
 map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
 map \/ :bg lvi-list hide<CR>                  " :nohl-style -- hide it; next n/N re-shows
+map \l :silent !lvi-list switch<CR>           " re-aim n/N: pick the focused list
 
 " Repaint the current buffer's matches when you switch into it (the glue that
 " makes cross-file lists -- project grep, a compiler -- highlight per file).
