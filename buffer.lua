@@ -250,13 +250,36 @@ end
 
 -- Write to path (default: the buffer's own path). Clears modified. Returns the
 -- number of bytes written.
+--
+-- Discipline: backup-then-write. The new text goes to a sibling safety copy
+-- (PATH.lvi~) FIRST, then the target is truncated and rewritten in place, then
+-- the copy is removed. In-place keeps every inode property intact -- symlinks
+-- still point through, hardlinks stay linked, owner/mode/ACLs untouched --
+-- which rename-into-place would silently break. The copy closes the loss
+-- window that in-place opens: once it is on disk, a crash or ENOSPC mid-write
+-- can no longer destroy both the old and the new contents. A surviving .lvi~
+-- therefore means "the last write did not complete"; its absence means the
+-- write finished. The copy is best-effort (an unwritable directory just falls
+-- back to today's unguarded write rather than blocking the save).
 function Buffer:write(path)
   path = path or self.path
   assert(path, "write: no path")
   local body = self:text()
-  local f = assert(io.open(path, "wb"))
-  f:write(body)
+  local bak = path .. ".lvi~"
+  local bf = io.open(bak, "wb")
+  if bf then bf:write(body); bf:close() end
+  local f, oerr = io.open(path, "wb")
+  if not f then
+    if bf then os.remove(bak) end            -- target untouched; copy not needed
+    error("cannot open " .. path .. ": " .. tostring(oerr))
+  end
+  local ok, werr = f:write(body)
   f:close()
+  if not ok then
+    error(("short write to %s: %s%s"):format(path, tostring(werr),
+      bf and (" (new text preserved in " .. bak .. ")") or ""))
+  end
+  os.remove(bak)
   self.path = path
   self:undo_checkpoint()                 -- close the open group so the next edit is new
   self._undo.saved = self._undo.now      -- mark this state as saved

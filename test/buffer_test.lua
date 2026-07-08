@@ -151,6 +151,25 @@ describe("buffer", function()
       expect(b:nlines()).to.equal(1)
       expect(b.path).to.equal(p)
     end)
+
+    it("removes the .lvi~ safety copy after a completed write", function()
+      local tmp = os.tmpname()
+      local b = buffer.new("one\ntwo\n")
+      b:write(tmp)
+      local bak = io.open(tmp .. ".lvi~", "rb")
+      expect(bak).to_not.exist()              -- completed write reaps the copy
+      expect(buffer.open(tmp):text()).to.equal("one\ntwo\n")
+      os.remove(tmp)
+    end)
+
+    it("removes the safety copy when the target cannot even be opened", function()
+      local dir = os.tmpname(); os.remove(dir)
+      local target = dir .. "/nope"            -- parent dir does not exist
+      local b = buffer.new("x\n")
+      local ok = pcall(b.write, b, target)
+      expect(ok).to.be(false)
+      expect(io.open(target .. ".lvi~", "rb")).to_not.exist()
+    end)
   end)
 
   describe("undo / redo", function()
