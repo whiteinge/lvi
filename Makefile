@@ -36,6 +36,26 @@ lvi.1: lvi.1.scd
 test:
 	@for t in $(TESTS); do echo "== $$t"; $(LUAJIT) $$t || exit 1; done
 
+# Release-notes SLOC: core (the .lua modules + the lvi entry point) vs contrib
+# vs tests, counted from the git index so it tracks what actually ships (vendor
+# excluded). --script-lang=Lua,luajit makes the extensionless `lvi` script (and
+# the one luajit contrib helper) count as Lua instead of vanishing from cloc's
+# extension/shebang detection. --csv drops cloc's rules/titles/version banner;
+# awk then tags each row with its group, reorders to group,language,files,…, and
+# skips cloc's per-run header + SUM row; column aligns the merged runs into one
+# table (drop the `column` pipe for raw CSV). Out of .PHONY: on-demand.
+sloc:
+	@{ printf 'group,language,files,blank,comment,code\n'; \
+	   for g in \
+	     "CORE:$$(git ls-files -- '*.lua' lvi ':!:test' ':!:vendor')" \
+	     "CONTRIB:$$(git ls-files -- contrib ':!:*.md' ':!:*.sample')" \
+	     "TESTS:$$(git ls-files -- test)"; do \
+	       printf '%s\n' "$${g#*:}" | tr ' ' '\n' | \
+	         cloc --script-lang=Lua,luajit --quiet --hide-rate --csv --list-file=- | \
+	         awk -F, -v grp="$${g%%:*}" \
+	           'NR>1 && $$2!="SUM"{print grp","$$2","$$1","$$3","$$4","$$5}'; \
+	   done; } | column -t -s,
+
 clean:
 	rm -f lvi.1
 
