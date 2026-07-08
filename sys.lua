@@ -49,6 +49,7 @@
 -- ============================================================================
 
 local ffi = require("ffi")
+local bit = require("bit")
 local C = ffi.C
 
 ffi.cdef[[
@@ -79,6 +80,7 @@ int   connect(int sockfd, const void *addr, socklen_t addrlen);
 
 struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; };
 int   ioctl(int fd, unsigned long request, void *arg);
+int   fcntl(int fd, int cmd, ...);
 ]]
 
 -- sockaddr_un: the one struct that diverges. AF_UNIX == 1 and SOCK_STREAM == 1
@@ -99,9 +101,16 @@ local M = {}
 local AF_UNIX     = 1
 local SOCK_STREAM = 1
 M.POLLIN  = 0x01
+M.POLLOUT = 0x04
 M.POLLERR = 0x08
 M.POLLHUP = 0x10
 M.POLLNVAL= 0x20
+
+-- Non-blocking I/O: O_NONBLOCK and EAGAIN are per-OS, handled like SIGTSTP /
+-- TIOCGWINSZ below -- one constant per branch. F_GETFL/F_SETFL are uniform.
+local F_GETFL, F_SETFL = 3, 4
+local O_NONBLOCK = (ffi.os == "Linux") and 0x800 or 0x4
+local EAGAIN     = (ffi.os == "Linux") and 11 or 35  -- == EWOULDBLOCK on all targets
 
 --- Identity / filesystem primitives (syscalls; path policy lives in the driver).
 function M.getuid() return tonumber(C.getuid()) end
@@ -207,16 +216,23 @@ function M.connect(path)
   return fd
 end
 
---- Poll a list of fds for readability (and error/hangup). `fds` is an array of
---- integer fds. Returns a table mapping ready fd -> revents bitmask; an empty
---- table on timeout; nil on error (EINTR after a suspend/resume or a signal),
---- so a caller with timeout-triggered work does not run it on interruptions.
-function M.poll(fds, timeout_ms)
-  local n = #fds
+--- Poll a list of fds for readability (and error/hangup); fds listed in the
+--- optional `wfds` array are additionally watched for writability (an fd may
+--- appear in both). Returns a table mapping ready fd -> revents bitmask; an
+--- empty table on timeout; nil on error (EINTR after a suspend/resume or a
+--- signal), so a caller with timeout-triggered work does not run it on
+--- interruptions.
+function M.poll(fds, timeout_ms, wfds)
+  local want = {}
+  for _, fd in ipairs(fds) do want[fd] = M.POLLIN end
+  for _, fd in ipairs(wfds or {}) do want[fd] = bit.bor(want[fd] or 0, M.POLLOUT) end
+  local list = {}
+  for fd in pairs(want) do list[#list + 1] = fd end
+  local n = #list
   local pfds = ffi.new("struct pollfd[?]", n)
   for i = 1, n do
-    pfds[i - 1].fd = fds[i]
-    pfds[i - 1].events = M.POLLIN
+    pfds[i - 1].fd = list[i]
+    pfds[i - 1].events = want[list[i]]
     pfds[i - 1].revents = 0
   end
   local rc = C.poll(pfds, n, timeout_ms or -1)
@@ -230,14 +246,39 @@ function M.poll(fds, timeout_ms)
   return ready
 end
 
---- Read up to `n` bytes from `fd`. Returns a string, or nil on EOF/error.
+--- Read up to `n` bytes from `fd`. Returns a string, or nil on EOF/error. A
+--- would-block read on a non-blocking fd (a spurious poll wakeup) returns ""
+--- -- no data, but not a reason to hang up.
 local RBUF_MAX = 4096
 function M.read(fd, n)
   n = n or RBUF_MAX
   local buf = ffi.new("char[?]", n)
   local r = tonumber(C.read(fd, buf, n))
-  if r <= 0 then return nil end
-  return ffi.string(buf, r)
+  if r > 0 then return ffi.string(buf, r) end
+  if r < 0 and ffi.errno() == EAGAIN then return "" end
+  return nil
+end
+
+--- Put an fd into non-blocking mode. Returns true on success. fcntl is
+--- variadic, so the int arg must be cast explicitly (the FFI would otherwise
+--- promote a Lua number to double).
+function M.set_nonblock(fd)
+  local fl = C.fcntl(fd, F_GETFL, ffi.new("int", 0))
+  if fl < 0 then return false end
+  return C.fcntl(fd, F_SETFL, ffi.new("int", bit.bor(fl, O_NONBLOCK))) >= 0
+end
+
+--- One write attempt from byte offset `off` (0-based), for non-blocking fds.
+--- Returns bytes written (0 == would-block: no progress, not fatal), or nil on
+--- a real error. Unlike M.write it never loops -- the caller owns the buffer
+--- and retries when poll() reports the fd writable again.
+function M.write1(fd, s, off)
+  off = off or 0
+  local p = ffi.cast("const char *", s)
+  local w = tonumber(C.write(fd, p + off, #s - off))
+  if w >= 0 then return w end
+  if ffi.errno() == EAGAIN then return 0 end
+  return nil
 end
 
 --- Write the whole string `s` to `fd`, looping over partial writes. Returns

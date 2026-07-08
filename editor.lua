@@ -7,6 +7,7 @@
 --- command is half-typed. The ':' prompt and socket both still run ex.dispatch,
 --- so a command behaves identically on every surface.
 
+local bit    = require("bit")
 local sys    = require("sys")
 local path   = require("path")
 local proto  = require("proto")
@@ -94,7 +95,29 @@ local function pump(ed)
 end
 
 -- ---- connection state -------------------------------------------------------
-local function new_conn(fd) return { fd = fd, inbuf = "", next_id = 1 } end
+-- Responses are buffered per connection and drained as poll() reports the fd
+-- writable, so a client that stops reading (suspended, wedged) can never park
+-- the whole editor inside a blocking write -- the failure the old direct
+-- sys.write had once the socket buffer filled. outbuf/outoff advance lazily;
+-- both reset when fully drained.
+local function new_conn(fd) return { fd = fd, inbuf = "", next_id = 1, outbuf = "", outoff = 0 } end
+
+-- Cap on UNDRAINED response bytes: past this the client is not reading its
+-- replies (a broken tool), and we drop it rather than hold its output forever.
+local OUTBUF_MAX = 32 * 1024 * 1024
+
+-- Push what we can of c.outbuf; returns false when the connection is dead
+-- (write error) or hopeless (cap exceeded while unwritable).
+local function conn_flush(c)
+  while c.outoff < #c.outbuf do
+    local w = sys.write1(c.fd, c.outbuf, c.outoff)
+    if not w then return false end            -- real write error: drop
+    if w == 0 then break end                  -- would block: wait for POLLOUT
+    c.outoff = c.outoff + w
+  end
+  if c.outoff >= #c.outbuf then c.outbuf, c.outoff = "", 0 end
+  return (#c.outbuf - c.outoff) <= OUTBUF_MAX
+end
 
 -- Process one socket command line: dispatch it and drive any ':normal' keys it
 -- queued (so a following command in the same batch sees the result). Split out
@@ -146,7 +169,8 @@ M.flush_deferred = flush_deferred
 -- so the cap is a runaway backstop, not a budget.
 local INBUF_MAX = 16 * 1024 * 1024
 
--- Returns false when the connection should be dropped (runaway line).
+-- Returns false when the connection should be dropped (runaway line, write
+-- error, or a client drowning in unread responses).
 local function feed_conn(ed, c, data)
   c.inbuf = c.inbuf .. data
   while true do
@@ -156,8 +180,11 @@ local function feed_conn(ed, c, data)
     local id = c.next_id
     c.next_id = id + 1
     local payload, status = handle_socket_command(ed, line)
-    proto.send_response(c.fd, id, payload, status)
+    c.outbuf = c.outbuf .. proto.response(id, payload, status)
   end
+  -- Opportunistic drain: the common case (a reading client) completes here,
+  -- keeping reply latency at one write; leftovers wait for POLLOUT.
+  if not conn_flush(c) then return false end
   return #c.inbuf <= INBUF_MAX
 end
 
@@ -547,15 +574,19 @@ function M.run(opts)
 
   local ok, err = pcall(function()
     while ed.running do
-      local fds = { lfd }
-      for fd in pairs(conns) do fds[#fds + 1] = fd end
+      local fds, wfds = { lfd }, {}
+      for fd, c in pairs(conns) do
+        fds[#fds + 1] = fd
+        -- Watch for writability only while a response is stuck half-sent.
+        if #c.outbuf - c.outoff > 0 then wfds[#wfds + 1] = fd end
+      end
       if tty then fds[#fds + 1] = 0 end
 
       -- Only arm the idle timeout when a keyboard change is waiting for its
       -- `change` hooks; otherwise block indefinitely (no idle wakeups).
       local ch = ed.hooks.change
       local armed = ed.change_pending and ch and #ch > 0
-      local ready = sys.poll(fds, armed and IDLE_MS or -1)
+      local ready = sys.poll(fds, armed and IDLE_MS or -1, wfds)
 
       -- Genuine timeout only: a nil ready is EINTR (suspend/resume, a signal),
       -- which must not masquerade as "the debounce elapsed".
@@ -583,13 +614,21 @@ function M.run(opts)
 
       if ready[lfd] then
         local cfd = sys.accept(lfd)
-        if cfd then conns[cfd] = new_conn(cfd) end
+        if cfd then
+          sys.set_nonblock(cfd)              -- writes drain via poll, never block
+          conns[cfd] = new_conn(cfd)
+        end
       end
       for fd, c in pairs(conns) do
-        if ready[fd] then
-          local data = sys.read(fd)
-          if not (data and feed_conn(ed, c, data)) then
-            sys.close(fd); conns[fd] = nil       -- EOF, or a runaway line
+        local re = ready[fd]
+        if re then
+          if bit.band(re, sys.POLLOUT) ~= 0 and not conn_flush(c) then
+            sys.close(fd); conns[fd] = nil     -- write error / client not reading
+          elseif bit.band(re, bit.bnot(sys.POLLOUT)) ~= 0 then
+            local data = sys.read(fd)
+            if not (data and feed_conn(ed, c, data)) then
+              sys.close(fd); conns[fd] = nil   -- EOF, runaway line, or dead writer
+            end
           end
         end
       end
