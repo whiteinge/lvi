@@ -17,10 +17,31 @@
 --- terminated, so raw buffer text -- including a line that literally reads
 --- "%end 1 ok" -- can never corrupt the frame. Reading text out (`:%p`) is a
 --- first-class use case, so the wire must be binary-safe.
+---
+--- The REQUEST side: a connection starts as bare newline-delimited command
+--- lines (which therefore cannot carry a newline in any argument). A client
+--- that needs more sends the version handshake "%hello 1"; a server that
+--- understands it replies with payload "lvi <ver>" and thereafter also accepts
+---   %cmd <N>\n<N raw bytes>
+--- carrying ONE command that may contain any byte, newlines included (e.g.
+--- `:normal` inserting multi-line text). An old server treats the hello as an
+--- ordinary line and no-ops it through the ex fallthrough with an EMPTY
+--- payload -- which is exactly how a client detects it must stay on bare
+--- lines. Bare lines remain valid forever, on every connection, handshake or
+--- not: existing clients and the `echo ':w' > socket` idiom never break. The
+--- handshake is gated (rather than %cmd being recognized unconditionally)
+--- because a bare line reading "%cmd 5" is today a legal ex range command,
+--- and only a client that asked for the new grammar should have it re-read.
 
 local sys = require("sys")
 
 local M = {}
+
+-- The request-side handshake line and the framed-request builder (see header).
+M.HELLO = "%hello 1\n"
+function M.request(cmd)
+  return "%cmd " .. #cmd .. "\n" .. cmd
+end
 
 -- Build the bytes of a framed response.
 function M.response(id, payload, status)

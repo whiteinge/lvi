@@ -381,6 +381,15 @@ Over the socket, ex commands are sent *without* the leading colon. A running
 editor exports *LVI_WID* and *LVI_SOCK* into its child environment, so a program
 launched from *:!* can drive the same view back (see *contrib/lvi-open*).
 
+On the wire, a connection carries newline-delimited command lines; responses
+come back length-framed and binary-safe (so *%p* output can never corrupt the
+stream). A client may upgrade the connection by sending the *%hello 1*
+handshake, after which *%cmd <N>* followed by _N_ raw bytes carries one command
+that may itself contain newlines -- how *lvi -w* sends e.g. a multi-line
+*normal* insertion. Bare lines stay valid forever, handshake or not, so
+_echo ':w' > $LVI_SOCK_ keeps working. The full grammar is specified in
+_proto.lua_.
+
 # CONFIGURATION
 
 At startup *lvi* reads an rc file -- simply a file of ex commands, one per line,

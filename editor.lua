@@ -184,24 +184,51 @@ M.flush_deferred = flush_deferred
 -- so the cap is a runaway backstop, not a budget.
 local INBUF_MAX = 16 * 1024 * 1024
 
--- Returns false when the connection should be dropped (runaway line, write
+-- Returns false when the connection should be dropped (runaway input, write
 -- error, or a client drowning in unread responses).
+--
+-- Request grammar (see proto.lua's header): bare newline-delimited command
+-- lines, always. A "%hello 1" line upgrades the connection: from then on a
+-- "%cmd <N>" line is followed by N raw bytes carrying one command that may
+-- contain newlines (c.need tracks a body in flight across reads). The upgrade
+-- is per-connection and opt-in, so old clients -- and any line that happens
+-- to start with '%' as an ex range -- keep their exact meaning.
 local function feed_conn(ed, c, data)
-  c.inbuf = c.inbuf .. data
-  while true do
-    local line, rest = c.inbuf:match("^(.-)\n(.*)$")
-    if not line then break end
-    c.inbuf = rest
+  local function respond(payload, status)
     local id = c.next_id
     c.next_id = id + 1
-    local payload, status = handle_socket_command(ed, line)
     c.outbuf = c.outbuf .. proto.response(id, payload, status)
+  end
+  c.inbuf = c.inbuf .. data
+  while true do
+    if c.need then                                   -- inside a framed body
+      if #c.inbuf < c.need then break end
+      local body = c.inbuf:sub(1, c.need)
+      c.inbuf = c.inbuf:sub(c.need + 1)
+      c.need = nil
+      respond(handle_socket_command(ed, body))
+    else
+      local line, rest = c.inbuf:match("^(.-)\n(.*)$")
+      if not line then break end
+      c.inbuf = rest
+      local n = c.framed and tonumber(line:match("^%%cmd (%d+)$"))
+      if n then
+        if n > INBUF_MAX then return false end       -- refuse an absurd body
+        c.need = n
+      elseif line == "%hello 1" then
+        c.framed = true
+        respond("lvi 1", "ok")                       -- non-empty == "I speak framed"
+      else
+        respond(handle_socket_command(ed, line))
+      end
+    end
   end
   -- Opportunistic drain: the common case (a reading client) completes here,
   -- keeping reply latency at one write; leftovers wait for POLLOUT.
   if not conn_flush(c) then return false end
   return #c.inbuf <= INBUF_MAX
 end
+M.feed_conn, M.new_conn = feed_conn, new_conn  -- exported for the protocol tests
 
 -- ---- change hooks (`:on change`) --------------------------------------------
 local IDLE_MS = 150 -- debounce: fire change hooks this long after the last key

@@ -253,6 +253,72 @@ describe("mark/jumplist adjustment across edits (make_splice_hook)", function()
   end)
 end)
 
+describe("framed requests (%hello / %cmd)", function()
+  local sys, proto, vpath = require("sys"), require("proto"), require("path")
+
+  -- A real fd pair via a throwaway listening socket, so feed_conn's responses
+  -- travel an actual wire and are parsed by the real client-side reader.
+  local function harness(text)
+    local ed = editor.new_ed()
+    ed.buf = buffer.new(text)
+    ed.interp = coroutine.create(function() normal.loop(ed) end)
+    assert(coroutine.resume(ed.interp))
+    local sp = vpath.tmp()
+    local lfd = sys.listen(sp)
+    local cfd = sys.connect(sp)
+    local afd = sys.accept(lfd)
+    local c = editor.new_conn(afd)
+    local reader = proto.reader(function() return sys.read(cfd) end)
+    local function close()
+      sys.close(cfd); sys.close(afd); sys.close(lfd); sys.unlink(sp)
+    end
+    return ed, c, reader, close
+  end
+
+  it("bare lines keep working with no handshake", function()
+    local ed, c, reader, close = harness("one\ntwo")
+    editor.feed_conn(ed, c, "pos\n")
+    local payload, status = reader:response()
+    expect(status).to.equal("ok")
+    expect(payload).to.equal("1\t1")
+    close()
+  end)
+
+  it("handshake greets back and %cmd carries newlines", function()
+    local ed, c, reader, close = harness("x")
+    editor.feed_conn(ed, c, proto.HELLO)
+    expect((reader:response())).to.equal("lvi 1")
+    local cmd = "normal ihello\nworld\27"           -- multi-line insert
+    editor.feed_conn(ed, c, proto.request(cmd))
+    local _, status = reader:response()
+    expect(status).to.equal("ok")
+    expect(ed.buf:get()).to.equal({ "hello", "worldx" })
+    close()
+  end)
+
+  it("a framed body split across reads reassembles", function()
+    local ed, c, reader, close = harness("abc")
+    editor.feed_conn(ed, c, proto.HELLO)
+    reader:response()
+    local req = proto.request("normal x")
+    editor.feed_conn(ed, c, req:sub(1, 10))         -- header + partial body
+    editor.feed_conn(ed, c, req:sub(11))
+    local _, status = reader:response()
+    expect(status).to.equal("ok")
+    expect(ed.buf:line(1)).to.equal("bc")
+    close()
+  end)
+
+  it("without the handshake, '%cmd 5' stays an ordinary ex line", function()
+    local ed, c, reader, close = harness("x")
+    editor.feed_conn(ed, c, "%cmd 5\n")             -- legal ex range command today
+    local _, status = reader:response()             -- safe no-op via do_ex
+    expect(status).to.equal("ok")
+    expect(c.need).to_not.exist()                   -- did NOT switch to body mode
+    close()
+  end)
+end)
+
 describe("editor.preserve (crash salvage)", function()
   it("dumps each modified buffer beside its file", function()
     local tmp = os.tmpname()
