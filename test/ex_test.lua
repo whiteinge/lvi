@@ -265,6 +265,16 @@ describe("ex.dispatch", function()
       ex.dispatch(ed, "set sw=2")
       expect((ex.dispatch(ed, "set shiftwidth?"))).to.equal("shiftwidth=2")
     end)
+    it("rejects a zero, negative, or non-numeric tabstop/shiftwidth", function()
+      local ed = ed_with("x")
+      for _, bad in ipairs({ "set ts=0", "set ts=-4", "set ts=abc", "set sw=0" }) do
+        local _, s = ex.dispatch(ed, bad)
+        expect(s).to.equal("err")
+      end
+      expect(ed.opts.tabstop).to.equal(8)          -- untouched by the rejects
+      ex.dispatch(ed, "set ts=4.9")                -- fractional: floored
+      expect(ed.opts.tabstop).to.equal(4)
+    end)
     it("toggles expandtab and queries it", function()
       local ed = ed_with("x")
       expect((ex.dispatch(ed, "set expandtab?"))).to.equal("noexpandtab")

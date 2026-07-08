@@ -77,10 +77,16 @@ local function do_set(ed, args)
   for opt in args:gmatch("%S+") do
     local name, val = opt:match("^(%a+)=(.+)$")
     if name then
+      -- Validate, don't coerce: ts=0 would make every `col % ts` in disp NaN
+      -- and render garbage with no error -- reject it here at the one surface.
+      local n = tonumber(val)
+      local valid = n and n >= 1 and math.floor(n) or nil
       if name == "tabstop" or name == "ts" then
-        ed.opts.tabstop = tonumber(val) or ed.opts.tabstop
+        if not valid then return "bad tabstop: " .. val, "err" end
+        ed.opts.tabstop = valid
       elseif name == "shiftwidth" or name == "sw" then
-        ed.opts.shiftwidth = tonumber(val) or ed.opts.shiftwidth
+        if not valid then return "bad shiftwidth: " .. val, "err" end
+        ed.opts.shiftwidth = valid
       else return "unknown option: " .. name, "err" end
     elseif opt:sub(-1) == "?" then
       local n = opt:sub(1, -2)
