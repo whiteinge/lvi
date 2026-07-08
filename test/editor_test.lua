@@ -139,4 +139,35 @@ describe("change-hook attribution and firing", function()
   end)
 end)
 
+describe("editor.preserve (crash salvage)", function()
+  it("dumps each modified buffer beside its file", function()
+    local tmp = os.tmpname()
+    local buf = buffer.new("hello\n"); buf.path = tmp
+    buf:set(1, "edited")                        -- modified, unsaved
+    local clean = buffer.new("x\n"); clean.path = tmp .. ".other"
+    local ed = { buffers = { { buf = buf }, { buf = clean } }, buf = buf }
+    local notes = editor.preserve(ed)
+    expect(#notes).to.equal(1)                  -- clean buffer skipped
+    local f = io.open(tmp .. ".lvi-recover", "rb")
+    expect(f).to.exist()
+    expect(f:read("*a")).to.equal("edited\n")
+    f:close()
+    os.remove(tmp); os.remove(tmp .. ".lvi-recover")
+  end)
+
+  it("parks a nameless modified buffer beside the socket path", function()
+    local tmp = os.tmpname()
+    local buf = buffer.new("")
+    buf:set(1, "scratch work")                  -- modified, no path
+    local ed = { buf = buf, sock_path = tmp }   -- no ed.buffers: lone-buf fallback
+    local notes = editor.preserve(ed)
+    expect(#notes).to.equal(1)
+    local f = io.open(tmp .. ".recover.1", "rb")
+    expect(f).to.exist()
+    expect(f:read("*a")).to.equal("scratch work")
+    f:close()
+    os.remove(tmp); os.remove(tmp .. ".recover.1")
+  end)
+end)
+
 os.exit(lust.errors == 0 and 0 or 1)

@@ -101,6 +101,35 @@ function M.on_idle(ed)
   M.fire(ed, "change")
 end
 
+-- ---- crash salvage ------------------------------------------------------------
+-- Last-ditch preserve: a Lua error anywhere -- a motion, a command handler, the
+-- driver itself -- unwinds to run()'s pcall with the session unrecoverable (a
+-- dead coroutine cannot be resumed). Losing the session must not lose the work,
+-- so every modified buffer is dumped: next to its file as PATH.lvi-recover, or
+-- beside the socket for a nameless buffer. Bytes are written directly (not via
+-- buf:write, which would repoint path/modified -- the report should name the
+-- real files). Returns one human-readable line per buffer for stderr, printed
+-- by run() after the terminal is restored.
+function M.preserve(ed)
+  local notes = {}
+  for i, rec in ipairs(ed.buffers or { { buf = ed.buf } }) do
+    local buf = rec.buf
+    if buf and buf.modified then
+      local target = buf.path and (buf.path .. ".lvi-recover")
+                     or ((ed.sock_path or "lvi") .. ".recover." .. i)
+      local ok = pcall(function()
+        local f = assert(io.open(target, "wb"))
+        f:write(buf:text())
+        f:close()
+      end)
+      notes[#notes + 1] = ok
+        and ("lvi: modified buffer preserved in " .. target)
+        or  ("lvi: FAILED to preserve " .. (buf.path or "[No Name]"))
+    end
+  end
+  return notes
+end
+
 -- ---- cursor / scroll invariants ---------------------------------------------
 -- Runs after any mutation or motion (keyboard OR socket). The interpreter also
 -- clamps the cursor itself; this additionally handles the socket path and does
@@ -446,7 +475,12 @@ function M.run(opts)
   end)
 
   cleanup()
-  if not ok then error(err) end
+  if not ok then
+    -- The session is dead; salvage unsaved work before re-raising. Reported on
+    -- stderr, which the now-restored terminal shows beneath the error.
+    for _, note in ipairs(M.preserve(ed)) do io.stderr:write(note .. "\n") end
+    error(err)
+  end
   return ed
 end
 
