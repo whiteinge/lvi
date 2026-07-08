@@ -380,7 +380,7 @@ function M.run(opts)
       sys.setenv("LVI_COMPL_TOKEN", token or "")
       sys.setenv("LVI_COMPL_LINE", left or "")
       sys.setenv("LVI_COMPL_DIR", dir or "")
-      local tmp = os.tmpname()
+      local tmp = path.tmp()                          -- all buffers' text: keep it private
       local f = io.open(tmp, "wb")
       if f then
         f:write(ed.buf:text())                          -- current buffer first

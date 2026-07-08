@@ -55,6 +55,19 @@ function M.socket(wid)
   return M.dir() .. "/" .. wid
 end
 
+-- A private temp-file path. os.tmpname points at world-readable /tmp with a
+-- predictable name -- unacceptable for what the editor writes out through temp
+-- files (whole buffer contents: ex delegation, filters, completion), and the
+-- classic symlink-race target besides. These live in the same 0700 per-uid dir
+-- as the sockets instead. Uniqueness is pid + counter (single-threaded, one
+-- process); callers os.remove() them when done, and the dir is per-user so a
+-- crash leaves at worst private litter.
+local tmp_n = 0
+function M.tmp()
+  tmp_n = tmp_n + 1
+  return ("%s/tmp.%d.%d"):format(M.dir(), sys.getpid(), tmp_n)
+end
+
 -- Discover existing view sockets. Uses a POSIX shell glob with only builtins
 -- (for / [ / printf) so there is no dependency on `ls` (which the user may have
 -- shadowed on PATH) and no divergent struct dirent in our tree. Returns a list

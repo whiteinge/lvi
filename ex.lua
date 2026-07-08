@@ -10,6 +10,7 @@
 
 local bufs = require("bufs")
 local buffer = require("buffer")
+local vpath = require("path")   -- `path` the name is taken by locals below
 
 local M = {}
 
@@ -214,7 +215,7 @@ end
 local function run_capture(ed, cmd)
   if ed.export_context then ed.export_context() end    -- stamp LVI_FILE/LINE/COL/CWORD
   local interactive = ed._silent and ed.with_tty
-  local codef, errf = os.tmpname(), os.tmpname()
+  local codef, errf = vpath.tmp(), vpath.tmp()  -- private dir, not world-readable /tmp
   local redir = interactive and "" or (" 2>" .. errf)
   local run = function()
     local p = io.popen(cmd .. redir .. "; echo $? >" .. codef, "r")
@@ -254,7 +255,7 @@ end
 local function do_filter(ed, a, b, cmd)
   if cmd == "" then return "no command", "err" end
   local from, to = line_range(ed, a, b)
-  local tmp = os.tmpname()
+  local tmp = vpath.tmp()                       -- carries buffer text: keep it private
   local f = io.open(tmp, "wb")
   f:write(table.concat(ed.buf:get(from, to), "\n"), "\n")
   f:close()
@@ -296,7 +297,7 @@ local function do_ex(ed, line)
   pre[#pre + 1] = tostring(clampline(ed, ed.cy))      -- set ex's current line to ours
   pre[#pre + 1] = line                                -- the user's command, addresses and all
   pre[#pre + 1] = "wq!"
-  local tmp, sf = os.tmpname(), os.tmpname()
+  local tmp, sf = vpath.tmp(), vpath.tmp()      -- carries buffer text: keep it private
   local wf = io.open(tmp, "wb"); wf:write(src); wf:close()
   wf = io.open(sf, "wb"); wf:write(table.concat(pre, "\n"), "\n"); wf:close()
   local _, code = run_capture(ed, ("%s -s '%s' < '%s'"):format(exe, tmp, sf))
