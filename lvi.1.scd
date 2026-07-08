@@ -396,10 +396,10 @@ reference.
 
 *LVI_FILE*, *LVI_LINE*, *LVI_COL*, *LVI_TOP*, *LVI_CWORD*
 	The cursor's world -- current file path, 1-based line and byte column,
-	viewport top line (*LVI_TOP*, for *on scroll*), and the word under the cursor
-	-- refreshed into the environment before every
-	shell-out (*:!* commands and *:on* hooks). A command can read them inline
-	with no wrapper, and a POSIX shell slices them further, e.g.
+	viewport top line (*LVI_TOP*, for *on scroll*), and the word under the
+	cursor -- refreshed into the environment before every shell-out (*:!*
+	commands and *:on* hooks). A command can read them inline with no wrapper,
+	and a POSIX shell slices them further, e.g.
 	*:!ctags* _--_ *"${LVI_FILE%/\*}"* for the directory or *"${LVI_FILE##\*/}"*
 	for the basename. *LVI_CWORD* uses the same word definition as *w*/*b*/*e*
 	and is empty when the cursor is not on a word character.
