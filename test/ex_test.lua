@@ -435,6 +435,18 @@ describe("ex.dispatch", function()
     it(":silent runs the sub-command (capture path)", function()
       expect((ex.dispatch(ed_with("x"), "silent !echo hi"))).to.equal("hi\n")
     end)
+    it(":silent clears its flag even when the sub-command throws", function()
+      local ed = ed_with("x")
+      local real = ex.dispatch
+      ex.dispatch = function(e, l)                      -- silent recurses via the
+        if l == "BOOM" then error("boom") end           -- module table, so this
+        return real(e, l)                               -- wrapper intercepts it
+      end
+      local ok = pcall(ex.dispatch, ed, "silent BOOM")
+      ex.dispatch = real
+      expect(ok).to.be(false)                           -- error still propagates
+      expect(ed._silent).to_not.exist()                 -- ...but the flag is clear
+    end)
     it("a failed filter preserves the buffer and reports the exit code", function()
       local ed = ed_with("keep\nthis\ntext")
       local _, s = ex.dispatch(ed, "%!false")           -- false exits 1

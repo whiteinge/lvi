@@ -539,8 +539,12 @@ function M.dispatch(ed, line)
 
   elseif cmd == "silent" or cmd == "sil" then
     ed._silent = true
-    local p, s = M.dispatch(ed, args)                   -- run the sub-command silently
+    -- pcall so a Lua error in the sub-command cannot leak the flag (which would
+    -- silence every later :! for the rest of the session); the error itself
+    -- still propagates to the caller's handler.
+    local ok, p, s = pcall(M.dispatch, ed, args)
     ed._silent = nil
+    if not ok then error(p, 0) end
     return p, s
 
   elseif cmd == "bg" then
