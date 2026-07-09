@@ -127,8 +127,10 @@ source it from your zsh/bash rc. `lvi-saveas PATH`, `lvi-e FILE`, and
 argument gets your shell's own tab completion — the answer to wanting
 `:w ~/Dow<Tab>`. They work from the editor's own `:sh` (queued: the editor's
 loop is frozen while you're in it, so the command lands the moment you exit)
-or from any other terminal (immediate, with the editor's real response). The
-header covers the two modes and the queued-response caveat.
+or from any other terminal (immediate, with the editor's real response).
+Sourcing it also tags the prompt of any shell running under an lvi view —
+`(lvi foo.txt) $` — so a parked, frozen editor is never out of sight. The
+header covers the two modes, the queued-response caveat, and the prompt knob.
 
 ### `lvi-tags` — jump around / outline the current file
 

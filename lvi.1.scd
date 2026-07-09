@@ -277,6 +277,9 @@ _contrib/lvi-shell.sh_ do).
 	the moment you return. The *-d* (detach) matters: like every terminal
 	shell-out, *sh* freezes the event loop while it runs, so a synchronous
 	*lvi -w* would sit waiting on an editor that answers only after you exit.
+	_contrib/lvi-shell.sh_ wraps that pattern in ready-made functions
+	(*lvi-saveas*, and friends) and tags the shell prompt -- *(lvi foo.txt)* --
+	so the parked editor is never forgotten.
 
 *bg* _cmd_
 	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the
