@@ -459,6 +459,9 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
   over the live buffer and splice back only the changed window: the cursor
   stays put, one undo reverts it, already-formatted is a no-op.
 - *lvi-open* -- fuzzy-pick a file and open it in the running view.
+- *lvi-shell.sh* -- functions to source in your shell rc (*lvi-saveas*,
+  *lvi-e*, *lvi-r*): drive the running view from *sh* or any terminal, with
+  your shell's own path completion.
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
 - *lvi-complete* -- insert-mode word completion from the open buffers
   (*on complete lvi-complete*).

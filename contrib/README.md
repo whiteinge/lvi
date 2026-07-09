@@ -119,6 +119,17 @@ re-dirty the buffer on every save. Format, then `:w`.
 A fuzzy-picker (fzf by default) that opens the chosen file in the running view.
 Bind it: `map \f :silent !lvi-open<CR>`.
 
+### `lvi-shell.sh` — drive lvi from your shell (save-as with real completion)
+
+The inverse posture: not a tool lvi runs, but functions **your shell** loads —
+source it from your zsh/bash rc. `lvi-saveas PATH`, `lvi-e FILE`, and
+`lvi-r FILE` send the matching ex command to the running view, so every path
+argument gets your shell's own tab completion — the answer to wanting
+`:w ~/Dow<Tab>`. They work from the editor's own `:sh` (queued: the editor's
+loop is frozen while you're in it, so the command lands the moment you exit)
+or from any other terminal (immediate, with the editor's real response). The
+header covers the two modes and the queued-response caveat.
+
 ### `lvi-tags` — jump around / outline the current file
 
 A `ctags` picker: lists every tag defined in the current file, in file order,
