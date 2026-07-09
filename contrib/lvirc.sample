@@ -132,6 +132,15 @@ map z= :silent !lvi-spell fix<CR>      " pick a suggestion for the word under
 map zg :bg lvi-spell add<CR>           " the cursor / add it to the dictionary
 hi spellbad underline pri=20           " the word marks themselves
 
+" ---- formatting ---------------------------------------------------------------
+" lvi-fmt formats the LIVE buffer through the file's formatter (ruff format /
+" shfmt / gofmt / stylua / deno fmt by extension; LVI_FMT_CMD overrides) and
+" splices back only the changed window -- the cursor stays put, one undo
+" reverts the whole format, and an already-formatted buffer is untouched.
+" Format, then :w (an `on write` format would re-dirty the buffer after every
+" save, so there is deliberately no hook here).
+map \= :bg lvi-fmt<CR>
+
 " ---- position memory (viminfo's `") ------------------------------------------
 " lvi-pos remembers where you were in each file across sessions, in a plain-text
 " store under $XDG_STATE_HOME (LVI_POS_FILE to move it). `save` records the spot;

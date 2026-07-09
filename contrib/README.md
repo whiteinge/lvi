@@ -98,6 +98,22 @@ dictionary. Whole-buffer by design — spell-checking code means toggling it on
 to sweep and off to silence, not teaching it syntax. See the `lvi-spell`
 header for the ispell-protocol details and caveats.
 
+### `lvi-fmt` — format the buffer, minimally
+
+`:%!ruff format -` works today — the ex filter is one splice, one undo — but it
+parks the cursor at line 1, dirties the buffer even when nothing changed, and
+makes you remember each tool's stdin incantation. `lvi-fmt` formats **outside**
+the buffer and only then edits: it runs the extension-matched formatter
+(`ruff format`, `shfmt`, `gofmt`, `stylua`, `deno fmt`; `LVI_FMT_CMD`
+overrides) over the live buffer, diffs, and replaces just the changed window —
+so one `u` reverts the whole format, the cursor stays put (shifted by the
+line-delta of changes above it, `lvi-mirror`'s arithmetic), an
+already-formatted buffer is a true no-op that stays clean, and a formatter
+that chokes on a syntax error touches nothing (the failure lands in the `fmt`
+status segment). Bind `map \= :bg lvi-fmt<CR>` — vim's `=`, writ whole-buffer.
+Deliberately not an `on write` hook: that fires *after* the write, so it would
+re-dirty the buffer on every save. Format, then `:w`.
+
 ### `lvi-open` — open a file
 
 A fuzzy-picker (fzf by default) that opens the chosen file in the running view.

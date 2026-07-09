@@ -1,0 +1,179 @@
+#!/bin/sh
+# lvi-fmt [-w auto|WID] -- run a formatter over the LIVE buffer, splice minimally.
+#
+# `:%!ruff format -` works today -- do_filter is one splice, one undo -- but it
+# parks the cursor at line 1, dirties the buffer even when the output is
+# identical, and makes you remember each tool's stdin incantation. lvi-fmt
+# formats OUTSIDE the buffer and only then edits: it pulls the live buffer over
+# the socket, runs the formatter picked for the file, diffs, and replaces just
+# the changed WINDOW (first..last differing line) with one command. So:
+#   * ONE undo reverts the whole format (the gesture you actually want);
+#   * the cursor stays put, shifted by the line-delta of changes above it;
+#   * an already-formatted buffer is a true no-op -- no splice, stays clean;
+#   * a formatter that fails (syntax error) touches nothing: the buffer is
+#     edited only after a successful run, and the failure lands in the `fmt`
+#     status segment (cleared again by the next successful format).
+# Marks above/below the window survive; marks inside it are at the formatter's
+# mercy -- the same trade every formatter makes.
+#
+# BACKEND: $LVI_FMT_CMD if set -- a shell command reading the buffer on stdin
+# and writing the formatted text on stdout; "$fname" holds the buffer's path
+# (e.g. LVI_FMT_CMD='prettier --stdin-filepath "$fname"'). Else picked from
+# the file's extension: ruff format (py), shfmt (sh), gofmt (go), stylua
+# (lua), deno fmt (js/ts/json/md). Passing the real name via each tool's
+# --stdin-filename-style flag keeps config resolution anchored to the file
+# while the CONTENT is the unsaved buffer.
+#
+# Bind it (non-interactive -> :bg; mnemonic: vim's = operator):
+#     map \= :bg lvi-fmt<CR>
+# Deliberately NOT an `on write` suggestion: that hook fires after the file is
+# already written, so a format there would re-dirty the buffer on every save.
+# Format, then :w.
+#
+# It self-backgrounds a --worker like lvi-highlight (reading the buffer needs
+# lvi's event loop), applies the edit in one synchronous round-trip -- content,
+# cursor, status, then `fire` so change-hook consumers (live highlighting) see
+# the new text (socket edits don't arm them on their own) -- and cleans up.
+# Temp files carry buffer text, so they live beside the socket in lvi's
+# private per-uid dir, not in the shared /tmp.
+#
+# Config: LVI (client, default `lvi`), LVI_FMT_CMD (see BACKEND),
+# LVI_FMT_MAXBYTES (skip buffers larger than this, default 262144),
+# LVI_FMT_DEBUG (file to capture worker stderr).
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_FMT_MAXBYTES:-262144}
+
+die() { echo "lvi-fmt: $*" >&2; exit 1; }
+
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# Detach the buffer-reading half; return at once so lvi's loop resumes and can
+# service the worker's socket traffic.
+if [ -z "$worker" ]; then
+  ( "$0" --worker $wflag >"${LVI_FMT_DEBUG:-/dev/null}" 2>&1 & )
+  exit 0
+fi
+
+# --- worker --------------------------------------------------------------------
+# Socket path (for the private temp dir): env when inside lvi, else discovery.
+if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK
+elif [ "$target" = auto ]; then
+  n=$($LVI -l | grep -c .)
+  [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+  sock=$($LVI -l | cut -f2)
+else
+  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || die "no running view '$target'"
+fi
+
+text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
+nbytes=$(printf '%s' "$text" | wc -c)
+if [ "$nbytes" -gt "$MAXBYTES" ]; then
+  echo "lvi-fmt: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_FMT_MAXBYTES)" >&2
+  exit 0
+fi
+fname=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+case "$fname" in "[No File]"|"[No Name]") fname= ;; esac
+
+# Pick the formatter: $LVI_FMT_CMD wins; else by extension. Each table entry
+# reads stdin, writes stdout, and hands the tool the REAL name for config
+# resolution where it has a flag for that.
+if [ -n "${LVI_FMT_CMD:-}" ]; then
+  backend='LVI_FMT_CMD'; fmt=$LVI_FMT_CMD
+else
+  case "$fname" in
+    *.py)                    backend=ruff;   fmt='ruff format --stdin-filename "$fname" -' ;;
+    *.sh|*.bash)             backend=shfmt;  fmt='shfmt --filename "$fname" -' ;;
+    *.go)                    backend=gofmt;  fmt='gofmt' ;;
+    *.lua)                   backend=stylua; fmt='stylua --stdin-filepath "$fname" -' ;;
+    *.js|*.jsx|*.ts|*.tsx|*.mjs|*.mts|*.json|*.jsonc|*.md)
+                             backend=deno;   fmt='deno fmt --ext "${fname##*.}" -' ;;
+    *) die "no formatter for '${fname:-unnamed buffer}' (set LVI_FMT_CMD)" ;;
+  esac
+fi
+
+send() { $LVI -w "$target" --detach -- "$@"; }   # fire-and-forget (errors only)
+
+oldf=$(mktemp "${sock%/*}/lvi-fmt.old.XXXXXX") || exit 1
+newf=$(mktemp "${sock%/*}/lvi-fmt.new.XXXXXX") || exit 1
+trap 'rm -f "$oldf" "$newf"' EXIT
+printf '%s\n' "$text" > "$oldf"
+
+# Format first, edit after: a failing formatter (usually a syntax error) must
+# leave the buffer untouched. The failure is surfaced as a status segment --
+# the worker has no tty and detached output is discarded.
+if ! printf '%s\n' "$text" | eval "$fmt" > "$newf"; then
+  send "status fmt fmt: $backend failed (\$LVI_FMT_DEBUG for details)"
+  exit 1
+fi
+cmp -s "$oldf" "$newf" && { send "status fmt"; exit 0; }   # already formatted: no-op
+
+d=$(diff "$oldf" "$newf")
+
+# The changed window, from diff's first and last hunk. Hunk lines look like
+# `2a3,4` / `3,5c3` / `4,6d3`: <old-range><op><new-range>. An `a` hunk touches
+# no old line (window starts after it); a `d` hunk adds no new line.
+set -- $(printf '%s\n' "$d" | awk '
+  /^[0-9]/ {
+    match($0, /[acd]/); op = substr($0, RSTART, 1)
+    old = substr($0, 1, RSTART-1); new = substr($0, RSTART+1)
+    oa = old+0; ob = oa
+    if (index(old, ",")) { oa = substr(old,1,index(old,",")-1)+0; ob = substr(old,index(old,",")+1)+0 }
+    na = new+0; nb = na
+    if (index(new, ",")) { na = substr(new,1,index(new,",")-1)+0; nb = substr(new,index(new,",")+1)+0 }
+    if (!n++) { OS = (op=="a") ? oa+1 : oa; NS = (op=="d") ? na+1 : na }
+    OE = (op=="a") ? oa : ob; NE = (op=="d") ? na : nb
+  }
+  END { if (n) print OS, OE, NS, NE }')
+[ $# -eq 4 ] || die "could not parse diff"
+ostart=$1 oend=$2 nstart=$3 nend=$4
+
+# One edit command. The common case is the window filter -- do_filter feeds the
+# old window to the command on stdin, and sed ignores stdin when given a file,
+# so the replacement text streams from the formatted temp file with no quoting
+# of buffer content. Pure insert/delete windows get their exact-fit commands
+# (`0 r` inserts at the top).
+if [ "$ostart" -gt "$oend" ]; then
+  edit="$((ostart - 1)) r !sed -n '${nstart},${nend}p' '$newf'"
+elif [ "$nstart" -gt "$nend" ]; then
+  edit="${ostart},${oend}d"
+else
+  edit="${ostart},${oend}!sed -n '${nstart},${nend}p' '$newf'"
+fi
+
+# Cursor: saved position shifted by the net line-delta of hunks strictly above
+# it (same arithmetic as lvi-mirror); a cursor inside a changed hunk lands on
+# that hunk's first new line.
+line=${LVI_LINE:-}; col=${LVI_COL:-}
+if [ -z "$line" ]; then
+  pos=$($LVI -w "$target" -- pos)
+  line=$(printf '%s' "$pos" | cut -f1); col=$(printf '%s' "$pos" | cut -f2)
+fi
+case "$line" in ''|*[!0-9]*) line=1 ;; esac
+case "$col"  in ''|*[!0-9]*) col=1  ;; esac
+adj=$(printf '%s\n' "$d" | awk -v cl="$line" '
+  /^[0-9]/ {
+    match($0, /[acd]/); op = substr($0, RSTART, 1)
+    old = substr($0, 1, RSTART-1); new = substr($0, RSTART+1)
+    oa = old+0; ob = oa
+    if (index(old, ",")) { oa = substr(old,1,index(old,",")-1)+0; ob = substr(old,index(old,",")+1)+0 }
+    na = new+0; nb = na
+    if (index(new, ",")) { na = substr(new,1,index(new,",")-1)+0; nb = substr(new,index(new,",")+1)+0 }
+    removed = (op == "a") ? 0 : (ob - oa + 1)
+    added   = (op == "d") ? 0 : (nb - na + 1)
+    if (op == "a") { if (oa < cl) delta += added }
+    else if (ob < cl) { delta += (added - removed) }
+    else if (oa <= cl && cl <= ob && !seen) { hit = na; seen = 1 }
+  }
+  END { print seen ? hit : cl + delta }')
+case "$adj" in ''|*[!0-9]*) adj=$line ;; esac
+curcmd="normal 0"; [ "$col" -gt 1 ] && curcmd="normal 0$((col - 1))l"
+
+# One synchronous round-trip, in order: the splice, the cursor, clear any old
+# failure, then fire `change` for the hook consumers. Synchronous because the
+# temp file must outlive the edit that reads it (the EXIT trap reaps it).
+$LVI -w "$target" -- "$edit" "$adj" "$curcmd" "status fmt" fire

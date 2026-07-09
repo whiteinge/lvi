@@ -92,8 +92,8 @@ that's simply a list of those ex commands. A **styled highlight overlay** (`:hl`
 external tools paint syntax, search, and quickfix into the view.
 
 Turn those on and you get syntax highlighting, live-buffer search, quickfix
-lists, linting, toggleable spell check, fuzzy file-open — and even a **two-way
-vimdiff with scrollbind and a `git add -p` staging UI** — all as
+lists, linting, formatting, toggleable spell check, fuzzy file-open — and even
+a **two-way vimdiff with scrollbind and a `git add -p` staging UI** — all as
 [`contrib/`](contrib/) tools, none of it compiled into the core.
 
 👉 **The [manual](lvi.1.scd) is the full command and configuration reference.**
