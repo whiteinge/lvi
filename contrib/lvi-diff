@@ -26,6 +26,17 @@
 #     (a socket :top wouldn't fire the peer's scroll hook, so we set both here).
 #   * HUNK MOVING (diffput/diffget): \p puts the hunk under the cursor onto the
 #     other view, \o obtains the other's hunk here -- a delete+read splice.
+#   * FOLD UNCHANGED (zx) collapses the matched regions between hunks to a summary
+#     row (keeping LVI_DIFF_FOLDCTX context lines each side), leaving only the
+#     changes and their surroundings -- vimdiff's `foldmethod=diff`. It rides
+#     lvi's core fold overlay (:fold): build() derives the unchanged gaps from the
+#     SAME diff the map comes from and pushes them to both views. The gaps are 1:1
+#     matched, so they have identical line counts on both sides; folding them
+#     symmetrically compresses each pane by the same rows, so the (line-based,
+#     map-driven) scrollbind stays aligned -- and because :top snaps off a hidden
+#     line to the fold head, a scroll that lands in a fold aligns on both heads.
+#     Off by default; zx toggles, or launch with LVI_DIFF_FOLD=1. Re-applied on
+#     every re-diff, so it tracks edits.
 #
 # WHY NO DAEMON (the design we landed on). Scrollbind used to be a polling loop
 # that read each view's `:top` ~10x/s; that flickered (lvi repaints on every
@@ -49,7 +60,8 @@
 #                             OUT -- the git mergetool form (see contrib/README.md)
 #   lvi-diff --stop           sweep stale map caches (there's no process to kill --
 #                             a session ends when you close a pane)
-#   (Installed in both views: ]c/[c jump hunks; \p/\o move a hunk across.)
+#   (Installed in both views: ]c/[c jump hunks; \p/\o move a hunk across; zx
+#    folds/unfolds the unchanged regions.)
 #
 # SUGGESTED BINDING (~/.lvirc, or run by hand). Launch it once per diff session.
 # Theme the groups to taste (it sets readable defaults; LVI_DIFF_NOSTYLE=1 skips):
@@ -61,7 +73,9 @@
 # larger than this; default 4194304 = 4 MiB -- over it, both views show a
 # "[lvi-diff off: ...]" status instead of silently doing nothing); LVI_DIFF_NOMAP=1
 # leaves the \p/\o move maps off (lvi-stagediff sets it); LVI_DIFF_NOSTYLE=1 keeps
-# your rc's colors.
+# your rc's colors; LVI_DIFF_FOLD=1 starts with the unchanged regions folded (zx
+# toggles it); LVI_DIFF_FOLDCTX sets the context lines kept around each hunk
+# (default 3).
 #
 # LIMITS (by design): two-way only, no directories, no filler lines. Setting a
 # view's `:top` parks its cursor at the top line, so the follower pane's cursor
@@ -70,6 +84,7 @@
 # the destination and moves that pane's cursor.
 LVI=${LVI:-lvi}
 MAXBYTES=${LVI_DIFF_MAXBYTES:-4194304}
+CTX=${LVI_DIFF_FOLDCTX:-3}
 PIDDIR=${TMPDIR:-/tmp}
 
 # Absolute path to this script, so the maps/hooks we install fire the right binary
@@ -84,11 +99,32 @@ esac
 # translate a top without re-diffing. Written by build(); read by scrollsync/hunk.
 mapfile() { echo "$PIDDIR/lvi-diff.$1-to-$2.map"; }
 
+# Fold-unchanged state. foldfile SELF caches the ":fold" range specs for a view
+# (recomputed by build() from the same diff the map comes from); flagfile A B is
+# a touch-flag marking that fold-unchanged is ON for the pair. Both survive across
+# the stateless refresh, so an `on change` re-diff re-applies folds and a keyboard
+# toggle sticks. Reaped by gc() with the rest (its glob covers .folds/.fold).
+foldfile() { echo "$PIDDIR/lvi-diff.$1.folds"; }
+flagfile() { echo "$PIDDIR/lvi-diff.$1-$2.fold"; }
+
+# Push the cached fold specs to both views when the pair's flag is set (else do
+# nothing -- leave whatever folds are there). Called at the tail of every build so
+# folds track edits; the unchanged gaps have identical line counts on both sides,
+# so folding them symmetrically keeps the (line-based) scrollbind aligned.
+apply_folds() {
+  a=$1; b=$2
+  [ -f "$(flagfile "$a" "$b")" ] || return 0
+  sa=$(cat "$(foldfile "$a")" 2>/dev/null); sb=$(cat "$(foldfile "$b")" 2>/dev/null)
+  "$LVI" -w "$a" -- foldclear ${sa:+"fold$sa"} >/dev/null 2>&1
+  "$LVI" -w "$b" -- foldclear ${sb:+"fold$sb"} >/dev/null 2>&1
+}
+
 # Sweep map caches whose owning views are gone (launch-time GC -- with no daemon,
 # nothing else cleans them; a crashed session's caches get reaped on the next).
 gc() {
   live=$("$LVI" -l 2>/dev/null | cut -f1)
-  for f in "$PIDDIR"/lvi-diff.*-to-*.map "$PIDDIR"/lvi-diff.*.pid; do
+  for f in "$PIDDIR"/lvi-diff.*-to-*.map "$PIDDIR"/lvi-diff.*.pid \
+           "$PIDDIR"/lvi-diff.*.folds "$PIDDIR"/lvi-diff.*-*.fold; do
     [ -e "$f" ] || continue
     dead=""
     for w in $(basename "$f" | grep -o '[0-9][0-9]*'); do
@@ -116,6 +152,8 @@ build() {
   done
   nA=$("$LVI" -w "$a" -- f 2>/dev/null | sed -n 's/^.*" \([0-9][0-9]*\) lines$/\1/p')
   case "$nA" in ''|*[!0-9]*) nA=$(wc -l < "$fa") ;; esac
+  nB=$("$LVI" -w "$b" -- f 2>/dev/null | sed -n 's/^.*" \([0-9][0-9]*\) lines$/\1/p')
+  case "$nB" in ''|*[!0-9]*) nB=$(wc -l < "$fb") ;; esac
   d=$(diff "$fa" "$fb")
   mab=$(mapfile "$a" "$b"); mba=$(mapfile "$b" "$a")
 
@@ -159,7 +197,45 @@ build() {
   bc=$(printf '%s\n' "$hl" | sed -n 3p); ba=$(printf '%s\n' "$hl" | sed -n 4p)
   "$LVI" -w "$a" -- "hl DiffChange$ac" "hl DiffDelete$ad" >/dev/null 2>&1
   "$LVI" -w "$b" -- "hl DiffChange$bc" "hl DiffAdd$ba"    >/dev/null 2>&1
+
+  # Fold specs: the UNCHANGED gaps between hunks, keeping CTX context lines at each
+  # end. Same hunk parse as above; a gap on A is [ia, as-1] and on B is [ib, bs-1]
+  # -- 1:1 matched, so identical line counts, so symmetric folding stays aligned.
+  # Emit " L1,L2" per side; :fold ignores a spec with fewer than 2 lines.
+  folds=$(printf '%s\n' "$d" | awk -v nA="$nA" -v nB="$nB" -v ctx="$CTX" '
+    function span(s, e,   fs, fe) { fs=s+ctx; fe=e-ctx; return (fe>fs) ? sprintf(" %d,%d", fs, fe) : "" }
+    BEGIN { ia=1; ib=1 }
+    /^[0-9]/ {
+      match($0,/[acd]/); op=substr($0,RSTART,1)
+      old=substr($0,1,RSTART-1); new=substr($0,RSTART+1)
+      oa=old+0; ob=oa; if(index(old,",")){oa=substr(old,1,index(old,",")-1)+0; ob=substr(old,index(old,",")+1)+0}
+      na=new+0; nb=na; if(index(new,",")){na=substr(new,1,index(new,",")-1)+0; nb=substr(new,index(new,",")+1)+0}
+      if(op=="a"){as=oa+1;ae=oa;bs=na;be=nb} else if(op=="d"){as=oa;ae=ob;bs=na+1;be=na} else {as=oa;ae=ob;bs=na;be=nb}
+      aspec = aspec span(ia, as-1); bspec = bspec span(ib, bs-1)
+      ia=ae+1; ib=be+1
+    }
+    END { aspec = aspec span(ia, nA); bspec = bspec span(ib, nB); print aspec; print bspec }')
+  printf '%s' "$(printf '%s\n' "$folds" | sed -n 1p)" > "$(foldfile "$a")"
+  printf '%s' "$(printf '%s\n' "$folds" | sed -n 2p)" > "$(foldfile "$b")"
+  apply_folds "$a" "$b"       # re-push if the pair's fold flag is on
   rm -f "$fa" "$fb"
+}
+
+# Toggle fold-unchanged for the pair (bound to a key, so it's stateless): flip the
+# flag file, then either push the cached specs to both views or clear folds on both.
+# The specs come from the last build(), so this needs no re-diff.
+foldtoggle() {
+  a=$1; b=$2
+  { [ -n "$a" ] && [ -n "$b" ]; } || return 1
+  f=$(flagfile "$a" "$b")
+  if [ -f "$f" ]; then
+    rm -f "$f"
+    "$LVI" -w "$a" -- foldclear >/dev/null 2>&1
+    "$LVI" -w "$b" -- foldclear >/dev/null 2>&1
+  else
+    : > "$f"
+    apply_folds "$a" "$b"
+  fi
 }
 
 # on scroll handler: lvi fires this with $LVI_WID = the view that scrolled and
@@ -241,6 +317,7 @@ case "$1" in
   --xfer)       shift; xfer "$@"; exit $? ;;
   --hunk)       shift; hunk "$@"; exit $? ;;
   --scrollsync) shift; scrollsync "$@"; exit $? ;;
+  --foldtoggle) shift; foldtoggle "$@"; exit $? ;;  # zx: fold/unfold unchanged
   --refresh)    shift; build "$1" "$2"; exit 0 ;;   # the `on change` hook
   --stop)       gc; exit 0 ;;
 esac
@@ -303,7 +380,9 @@ fi
 [ -n "$A" ] && [ -n "$B" ] || { echo "lvi-diff: need two view ids" >&2; exit 1; }
 
 gc                                  # reap any dead sessions' caches first
-build "$A" "$B" || exit 0           # first diff + caches + highlights (bails loudly if over cap)
+rm -f "$(flagfile "$A" "$B")"       # start clean; LVI_DIFF_FOLD opts into folding
+[ -n "$LVI_DIFF_FOLD" ] && : > "$(flagfile "$A" "$B")"
+build "$A" "$B" || exit 0           # first diff + caches + highlights + folds (bails if over cap)
 
 if [ -z "$LVI_DIFF_NOSTYLE" ]; then
   "$LVI" -w "$A" -- 'hi DiffChange bg=yellow fg=black' 'hi DiffDelete bg=red fg=black' >/dev/null 2>&1
@@ -319,6 +398,7 @@ for pair in "$A $B" "$B $A"; do
   "$LVI" -w "$self" -- \
     "map ]c :bg LVI=$LVI $SELF --hunk next $peer<CR>" \
     "map [c :bg LVI=$LVI $SELF --hunk prev $peer<CR>" \
+    "map zx :bg LVI=$LVI $SELF --foldtoggle $A $B<CR>" \
     "on change LVI=$LVI $SELF --refresh $A $B" \
     "on scroll LVI=$LVI $SELF --scrollsync $peer" >/dev/null 2>&1
   [ -z "$LVI_DIFF_NOMAP" ] && "$LVI" -w "$self" -- \

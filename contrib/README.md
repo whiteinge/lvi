@@ -233,6 +233,11 @@ design) — though from the fingers it's the same "pinned keys, never focused"
 posture, and `]c` matching vim's diff-mode is no accident. Scrollbind rides the
 `on scroll` hook: when a pane's viewport moves, its top is translated through the
 diff map and pushed to the peer, so they stay aligned even across a lopsided hunk.
+`zx` folds the **unchanged regions** away (vimdiff's `foldmethod=diff`), leaving
+only the hunks and their context — built on lvi's core `:fold` overlay, from the
+same diff the map comes from. Because matched regions have identical line counts
+on both sides, folding them symmetrically keeps the scrollbind aligned; it's off
+by default (`LVI_DIFF_FOLD=1` to start folded, `LVI_DIFF_FOLDCTX` for context).
 Launch it on two live views — `lvi-diff` (auto-picks the sole pair) or
 `lvi-diff WID_A WID_B`. Or hand it **two files** — `lvi-diff old new` — and it
 opens them in a **new tmux window**, wires the same diff, and blocks until you
