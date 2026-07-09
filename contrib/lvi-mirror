@@ -187,7 +187,11 @@ EOF
   case "$adj" in ''|*[!0-9]*) adj=$line ;; esac
 
   # Hunks first, then the cursor restore (lvi clamps an over-range line/col).
-  set -- "$@" "$adj" "|$col"
+  # The column rides `normal` keys -- a bare `|N` ex line is a system-ex no-op
+  # (see lvi-list's jump) -- and `l` steps characters, tracking byte columns
+  # through tabs.
+  curcmd="normal 0"; [ "$col" -gt 1 ] && curcmd="normal 0$((col - 1))l"
+  set -- "$@" "$adj" "$curcmd"
   fi
 
   # Flag sync: whenever WE are clean, make the (now in-sync) peer clean too. The
