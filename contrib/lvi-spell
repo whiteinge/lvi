@@ -1,0 +1,186 @@
+#!/bin/sh
+# lvi-spell [-w auto|WID] [toggle|on|off|scan|fix|add] -- spell-check a running lvi.
+#
+# vim's `:set spell`, rebuilt outside the editor: an ispell-pipe spell checker
+# (aspell/hunspell) reads the LIVE buffer over the control socket, and one scan
+# feeds TWO consumers at once --
+#   * the styled :hl overlay, group `spellbad`, with exact word extents
+#     (L:C1-C2) -- the lvi-highlight posture: misspelled words are marked
+#     mid-line, not with whole-line signs;
+#   * an `lvi-list` named `spell` -- the lvi-search posture: ]s/[s step the
+#     misspellings and the status line counts them.
+# Overlay for the eyes, list for the fingers; same scan, two views of it.
+#
+#   lvi-spell [toggle]    enable/disable (the default subcommand)
+#   lvi-spell scan        re-check now (the hook target; instant no-op when off)
+#   lvi-spell fix         z= -- pick a suggestion for $LVI_CWORD, splice it in
+#   lvi-spell add         zg -- add $LVI_CWORD to the personal dictionary
+#
+# TOGGLE OWNS THE HOOKS, NOT THE RC: `:on` hooks compose by appending and a
+# bare `:on change` clears EVERYONE's, so a toggle cannot uninstall just its
+# own. Instead the first `on` installs `on change lvi-spell scan` (and its
+# bufenter twin, since the overlay doesn't follow a buffer switch -- the same
+# pairing lvi-highlight documents) ONCE per view, and the hooks stay; `scan`
+# gates on the enabled flag and exits instantly while spell is off. Do NOT
+# also add these hooks to your rc -- the toggle owns them. State lives beside
+# the socket, disposable with the view (the lvi-list pattern):
+#   $LVI_SOCK.spell          the enabled flag
+#   $LVI_SOCK.spell.hooked   the once-per-view hook marker
+#
+# Bindings (rc):
+#     map \s :bg lvi-spell<CR>                " toggle
+#     map ]s :bg lvi-list next spell<CR>      " step misspellings (pinned keys;
+#     map [s :bg lvi-list prev spell<CR>      "  or focus the list and use n/N)
+#     map z= :silent !lvi-spell fix<CR>       " suggestion picker (needs the tty)
+#     map zg :bg lvi-spell add<CR>            " add word to personal dictionary
+#     hi spellbad underline pri=20            " un-themed = invisible, so theme it
+# The list's own groups (spell/spell-cur, column-1 signs) are left un-themed
+# here -- the word marks already show the spot -- but `hi spell ...` works if
+# you want signs too.
+#
+# SPAWN DISCIPLINES: `scan` self-backgrounds a --worker (reading the buffer
+# needs lvi's event loop -- same reason as lvi-highlight), so any binding is
+# safe. `fix` never reads the buffer: it runs in the `:silent !` foreground
+# (the picker needs the tty), splices with fire-and-forget `normal` keys,
+# then `:fire`s change on the SAME connection -- ordered after the keys -- so
+# the hooks re-scan the post-edit buffer once lvi resumes (socket edits don't
+# arm hooks on their own). `add` edits nothing, so it re-scans directly.
+#
+# CAVEATS (v1): whole buffer only -- code wants comments/strings filtering this
+# doesn't have; toggle it on to sweep, off to silence. Extents are byte columns
+# via LC_ALL=C; multibyte text can drift (the lvi-hl-ansi class of caveat).
+# $LVI_CWORD is a vi word, so contractions ("don't") check as fragments. The
+# fix splice normalizes with `wb`, whose one blind spot is a single-char word
+# at the very end of the buffer (w cannot leave it, so b overshoots).
+#
+# Config: LVI (client, default `lvi`), LVI_SPELL_CMD (an ispell -a pipe
+# command, default `aspell -a`; `hunspell -a` speaks the same protocol -- add
+# a dictionary here, e.g. `aspell -a --lang=en_US`), LVI_SPELL_MAXBYTES (skip
+# buffers larger than this, default 262144), LVI_SPELL_DEBUG (file to capture
+# worker stderr), LVI_PICKER (fzf/fzy/sk, default fzf). Needs lvi-list on PATH.
+LVI=${LVI:-lvi}
+SPELL=${LVI_SPELL_CMD:-aspell -a}     # unquoted below: command + args
+PICKER=${LVI_PICKER:-fzf}
+MAXBYTES=${LVI_SPELL_MAXBYTES:-262144}
+
+die() { echo "lvi-spell: $*" >&2; exit 1; }
+
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
+sub=${1:-toggle}
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# The socket path anchors our state files; resolve it the way lvi-list does.
+if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK                      # inside lvi: trust the exported socket
+elif [ "$target" = auto ]; then
+  n=$($LVI -l | grep -c .)
+  [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+  sock=$($LVI -l | cut -f2)
+else
+  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || die "no running view '$target'"
+fi
+flag="$sock.spell"
+hooked="$sock.spell.hooked"
+
+send() { $LVI -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
+
+# ---- worker: the actual scan (runs with lvi's loop live) ---------------------
+if [ -n "$worker" ]; then
+  [ -f "$flag" ] || exit 0            # toggled off while we were queued
+  text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
+  nbytes=$(printf '%s' "$text" | wc -c)
+  if [ "$nbytes" -gt "$MAXBYTES" ]; then
+    echo "lvi-spell: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_SPELL_MAXBYTES)" >&2
+    exit 0
+  fi
+  fname=$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
+  case "$fname" in "[No File]"|"[No Name]") fname= ;; esac   # empty = stay-in-place jumps
+
+  # ispell -a pipe protocol: `!` turns on terse mode (no `*` line per correct
+  # word), and each data line is sent behind a `^` escape so a line starting
+  # with a protocol command char can't be misread. Misspellings come back as
+  #   & WORD NSUG OFFSET: sug, sug, ...      (has suggestions)
+  #   # WORD OFFSET                          (none)
+  # one blank line ends each input line's results. OFFSET is 0-based counting
+  # our `^`, which lands exactly on the real line's 1-based byte column -- the
+  # two adjustments cancel (verified against aspell 0.60).
+  found=$({ printf '!\n'; printf '%s\n' "$text" | sed 's/^/^/'; } \
+    | LC_ALL=C $SPELL 2>/dev/null \
+    | LC_ALL=C awk '
+        BEGIN   { ln = 1 }
+        NR == 1 { next }                    # version banner
+        /^$/    { ln++; next }              # blank closes each input line
+        /^[&#]/ { off = ($1 == "&") ? $4 : $3; sub(/:$/, "", off)
+                  print ln, off, $2 }')     # -> "LINE COL WORD" triplets
+
+  # List first (put paints its signs + status), then the word-extent overlay.
+  # --at-cursor: a re-scan (after a fix, or just more typing) keeps your place
+  # in the walk -- and on the first scan it means ]s steps FORWARD from the
+  # cursor, vim's ]s posture, rather than from the top of the file.
+  printf '%s\n' "$found" | awk -v f="$fname" 'NF { print f ":" $1 ":" $2 ": " $3 }' \
+    | lvi-list $wflag put spell --at-cursor
+  specs=$(printf '%s\n' "$found" \
+    | LC_ALL=C awk 'NF { printf " %s:%s-%s", $1, $2, $2 + length($3) - 1 }')
+  send "hl spellbad$specs"                  # empty specs = clear -- one branch
+  exit 0
+fi
+
+# ---- subcommands -------------------------------------------------------------
+spell_scan() {
+  [ -f "$flag" ] || exit 0                  # the gate that makes the hooks no-ops
+  ( "$0" --worker $wflag >"${LVI_SPELL_DEBUG:-/dev/null}" 2>&1 & )
+}
+
+spell_on() {
+  : > "$flag"
+  if [ ! -f "$hooked" ]; then               # once per view; the hooks then stay
+    send 'on change lvi-spell scan' 'on bufenter lvi-spell scan'
+    : > "$hooked"
+  fi
+  spell_scan
+}
+
+spell_off() {
+  rm -f "$flag"                             # first: gates any in-flight scan
+  send 'hl spellbad'
+  lvi-list $wflag drop spell 2>/dev/null    # unpaints signs + clears the counter
+}
+
+spell_fix() {
+  word=${LVI_CWORD:-}
+  [ -n "$word" ] || die "no word under cursor (run from a z= map inside lvi)"
+  line=$(printf '!\n^%s\n' "$word" | $SPELL 2>/dev/null | sed -n '/^[&#]/p' | head -n 1)
+  [ -n "$line" ] || die "\"$word\" is spelled correctly"
+  case "$line" in '#'*) die "no suggestions for \"$word\"" ;; esac
+  choice=$(printf '%s\n' "$line" | sed 's/^[^:]*: //; s/, /\n/g' | $PICKER) || exit 0
+  [ -n "$choice" ] || exit 0
+  esc=$(printf '\033')
+  # lvi has no text objects (no ciw), so splice with plain vi keys: `wb`
+  # normalizes to the word's start (w leaves the word -- clamping inside it at
+  # buffer end -- and b re-enters from beyond, landing on its first char),
+  # then c<len>l changes exactly the word's length -- unlike cw it cannot eat
+  # the trailing space. One `normal` line is one undo group, and `.` repeats.
+  # One connection, two commands, in order: the keys land first, then `fire`
+  # arms the change debounce -- so an enabled scan sees the new text.
+  send "normal wbc${#word}l$choice$esc" fire
+}
+
+spell_add() {
+  word=${LVI_CWORD:-}
+  [ -n "$word" ] || die "no word under cursor (run from a zg map inside lvi)"
+  printf '*%s\n#\n' "$word" | $SPELL >/dev/null 2>&1   # add + save personal dict
+  spell_scan                                # no buffer edit, so re-scan directly
+}
+
+case "$sub" in
+  toggle) if [ -f "$flag" ]; then spell_off; else spell_on; fi ;;
+  on)     spell_on ;;
+  off)    spell_off ;;
+  scan)   spell_scan ;;
+  fix)    spell_fix ;;
+  add)    spell_add ;;
+  *)      die "unknown subcommand '$sub' (toggle|on|off|scan|fix|add)" ;;
+esac
