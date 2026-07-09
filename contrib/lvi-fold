@@ -1,0 +1,95 @@
+#!/bin/sh
+# lvi-fold [-w auto|WID] [MODE] -- fold a running lvi from the outside.
+#
+# The same bet as lvi-highlight and lvi-search: no fold engine inside the editor.
+# lvi owns the *mechanism* (collapsing a range to one row, navigating it -- see
+# `Folding` in lvi.1); this computes the *policy* (where the folds are) from the
+# LIVE buffer over the control socket and pushes it back as `:fold` commands, the
+# same way lvi-highlight pushes `:hl`. Because it reads the buffer via `%p` it
+# folds UNSAVED content, and the line numbers map straight back.
+#
+# MODE selects how ranges are found (default `marker`):
+#   marker  -- vim-style {{{ ... }}} fold markers, nested by a simple stack. The
+#              open/close strings come from $LVI_FOLD_MARKER (default "{{{,}}}"),
+#              matched anywhere on a line (a trailing level digit like {{{1 is
+#              ignored -- nesting comes from the markers themselves).
+#   indent  -- fold each run of lines indented deeper than the line above it
+#              (whitespace-block folding); blank lines don't break a block.
+#
+# It replaces the view's folds each run (foldclear, then one `:fold` carrying
+# every range), so re-running after an edit re-folds cleanly. Folds arrive
+# CLOSED; open what you want with zo/zR, or bind zR to reveal-all.
+#
+# Bind it inside lvi (WID comes from $LVI_WID). It reads the buffer, so it must
+# not run in the foreground of a `:silent !` (that freezes lvi's event loop while
+# the child waits on the socket -> deadlock); use `:bg` (detached, no tty
+# handover) or let it self-background a --worker. In ~/.lvirc:
+#
+#     hi Folded fg=cyan italic          " optional: theme the summary bar
+#     map zi :bg lvi-fold<CR>           " (re)fold by marker
+#     map zI :bg lvi-fold indent<CR>    " (re)fold by indent
+#     on bufenter lvi-fold              " auto-fold a file as you enter it
+#
+# From another terminal, pass a WID: `lvi-fold -w auto` or `lvi-fold -w 1234`.
+#
+# Config (env): LVI (client, default `lvi`), LVI_FOLD_MARKER (open,close pair,
+# default "{{{,}}}"), LVI_FOLD_MINLINES (skip folds smaller than this many lines,
+# default 2), LVI_FOLD_DEBUG (a file to capture the worker's stderr).
+LVI=${LVI:-lvi}
+MARKER=${LVI_FOLD_MARKER:-'{{{,}}}'}
+MINLINES=${LVI_FOLD_MINLINES:-2}
+
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+mode=${1:-marker}
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# Detach the buffer-reading half; return at once so lvi's loop resumes and can
+# service the worker's socket traffic (same discipline as lvi-search).
+if [ -z "$worker" ]; then
+  ( "$0" --worker $wflag "$mode" >"${LVI_FOLD_DEBUG:-/dev/null}" 2>&1 & )
+  exit 0
+fi
+
+# --- worker ------------------------------------------------------------------
+open=${MARKER%,*}
+close=${MARKER#*,}
+
+# Compute " L1,L2 L3,L4 ..." range specs from the live buffer. Each mode prints
+# one "start end" pair per line; the trailer folds them into :fold's arg syntax.
+ranges=$(
+  $LVI -w "$target" -- %p | case "$mode" in
+    indent)
+      awk '
+        function indent(s,  n) { match(s, /^[ \t]*/); return RLENGTH }
+        { line[NR] = $0 }
+        END {
+          n = NR
+          for (i = 1; i <= n; i++) {
+            # blank lines inherit the surrounding indent so they do not split a block
+            ind = (line[i] ~ /^[ \t]*$/) ? -1 : indent(line[i])
+            depth[i] = ind
+          }
+          # a fold starts where indent increases; it runs while indent stays deeper
+          for (i = 1; i < n; i++) {
+            if (depth[i] < 0) continue
+            base = depth[i]; j = i + 1; last = i
+            while (j <= n && (depth[j] < 0 || depth[j] > base)) {
+              if (depth[j] > base) last = j
+              j++
+            }
+            if (last > i) print (i+1), last
+          }
+        }' ;;
+    *)
+      # marker mode: a stack of open-marker line numbers; each close pops one.
+      awk -v o="$open" -v c="$close" '
+        index($0, o) { stack[++sp] = NR; next }
+        index($0, c) { if (sp > 0) { s = stack[sp--]; if (NR > s) print s, NR } }
+      ' ;;
+  esac | awk -v min="$MINLINES" '$2 - $1 + 1 >= min { printf " %d,%d", $1, $2 }'
+)
+
+$LVI -w "$target" -- foldclear
+[ -n "$ranges" ] && $LVI -w "$target" -- "fold$ranges"

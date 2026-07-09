@@ -145,6 +145,27 @@ edits and needs no `ctags -R` first. Bind it: `map \t :wbuf<CR>:silent !lvi-tags
 (`:wbuf` snapshots the buffer so the picker can read it — see the spawn
 disciplines below).
 
+### `lvi-fold` — collapse the buffer by structure
+
+lvi ships the fold *mechanism* — a closed fold collapses its lines to one summary
+row and `j`/`k`/scroll skip over it (`zf`/`zo`/`zc`/`zR`; see the manpage) — but
+no policy: nothing folds on its own. `lvi-fold` is the policy half. It reads the
+**live buffer** over the socket and pushes the ranges back as `:fold`, the same
+read-compute-paint loop `lvi-highlight` runs against `:hl`. Two modes ship:
+`marker` (vim's `{{{ … }}}`, nested by a stack; the pair is `$LVI_FOLD_MARKER`)
+and `indent` (each block indented under its parent). It replaces the view's folds
+each run, so a keybind re-folds after edits:
+
+    hi Folded fg=cyan italic        " optional: theme the summary bar
+    map zi :bg lvi-fold<CR>         " (re)fold by marker
+    map zI :bg lvi-fold indent<CR>  " (re)fold by indent
+    on bufenter lvi-fold            " auto-fold a file as you open it
+
+It reads the buffer, so it self-backgrounds (or bind it with `:bg`) for the same
+reason `lvi-highlight`/`lvi-search` do — see **Self-backgrounding** below. Any
+other fold policy (by syntax, by diff hunk, by `git` conflict markers) is the
+same shape: emit `L1,L2` pairs, hand them to `:fold`.
+
 ### `lvi-complete` — insert-mode word completion
 
 Insert-mode Ctrl-N/Ctrl-P completion drawn from **all open buffers**. lvi's core
