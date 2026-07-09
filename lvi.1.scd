@@ -203,16 +203,17 @@ should pin it with *sysex*.
 
 In any command that names a _file_ (*e*, *w*, *wq*, *x*, *r*), an argument
 containing one of *~ { [ \* ? $ " ' ` \\* is expanded by the shell, as POSIX ex
-specifies: lvi hands it to *sh -c 'echo <text>'* and uses the result, so tilde,
+specifies: lvi hands it to the shell to expand and reprint, so tilde,
 variables, and globs mean exactly what *sh*(1) says. The cursor context is in
 that shell's environment, so *:w $LVI_FILE.bak* and *:w ${LVI_FILE%.md}.html*
 work -- lvi's substitute for ex's *%* and *#* (see *ENVIRONMENT*). The
-expansion must yield exactly one word; *echo* flattens quoting, so a file whose
-name contains whitespace cannot be spelled this way (a limit shared with
-historic vi) -- reach such a file from a shell instead (*sh* below). And it is
-the shell: *:w $(cmd)* executes _cmd_ -- the same power *!* already grants, but
-a script splicing untrusted names into a command line should keep them
-metacharacter-free.
+expansion must yield exactly one name; the reprint is one word per line
+(*printf '%s\\n'* rather than the spec's *echo*, whose XSI backslash handling
+would mangle names), so quoting protects whitespace -- *:w "foo bar.txt"*
+works. And it is the shell: *:w $(cmd)* executes _cmd_ -- the same power *!*
+already grants, but a script splicing picked names into a command line must
+backslash-escape the metacharacters (as _contrib/lvi-open_ and
+_contrib/lvi-shell.sh_ do).
 
 *w*[*!*] [_file_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but

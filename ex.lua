@@ -239,25 +239,28 @@ end
 
 -- POSIX ex file-argument expansion. The spec: a file argument containing any
 -- of ~ { [ * ? $ " ' ` \ "shall be subjected to the process of shell
--- expansions", and its specified mechanism is the shell running `echo <text>`.
--- We do exactly that (through run_capture, which stamps the LVI_* context vars
--- first), so tilde, $VAR -- including $LVI_FILE, this editor's substitute for
--- ex's % -- and globs all mean whatever sh(1) says; no expansion code of our
--- own. The result must be exactly one word: every caller names one file, and
--- echo flattens quoting anyway, so a name containing whitespace cannot survive
--- the trip (historic vi shares this limit -- spell such a file some other way,
--- e.g. :sh). Expansion runs the shell on user text ($(cmd) executes cmd); no
--- new capability -- the same surfaces already have :! -- but scripts splicing
--- untrusted names into a w/e/r line should keep them metacharacter-free.
+-- expansions", via the shell echoing the text back to ex. We do exactly that
+-- (through run_capture, which stamps the LVI_* context vars first), so tilde,
+-- $VAR -- including $LVI_FILE, this editor's substitute for ex's % -- and
+-- globs all mean whatever sh(1) says; no expansion code of our own. One
+-- deliberate departure from the spec's letter: the reprint verb is
+-- `printf '%s\n'`, not echo -- XSI echo interprets backslash sequences
+-- (mangling any name that contains one), and printf's one-word-per-LINE
+-- output makes the one-file rule exact, so a quoted name even keeps its
+-- spaces (:w "foo bar" works). More than one line is rejected: every caller
+-- names exactly one file. Expansion runs the shell on user text ($(cmd)
+-- executes cmd); no new capability -- the same surfaces already have :! --
+-- but a script splicing picked names into a w/e/r line must backslash-escape
+-- the metacharacters (contrib/lvi-open and lvi-shell.sh do).
 -- Empty arg -> nil, no error (callers fall back to the buffer's own path).
 local function expand_file(ed, s)
   if s == "" then return nil end
   if not s:find("[~{%[%*%?%$\"'`\\]") then return s end
-  local out, code, err = run_capture(ed, "echo " .. s)
+  local out, code, err = run_capture(ed, "printf '%s\\n' " .. s)
   if code ~= 0 then return nil, "expansion failed: " .. fail_reason(err, code) end
-  out = out:gsub("%s+$", "")
+  out = out:gsub("\n$", "")
   if out == "" then return nil, "expansion gave no file name: " .. s end
-  if out:find("%s") then return nil, "ambiguous file name (expands to several words): " .. s end
+  if out:find("\n", 1, true) then return nil, "ambiguous file name (expands to several lines): " .. s end
   return out
 end
 
