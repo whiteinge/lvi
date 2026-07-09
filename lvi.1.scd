@@ -271,8 +271,11 @@ metacharacter-free.
 	Run an interactive shell (*$SHELL*, else *sh*; alias *shell*); exit it to
 	return to the editor. Because the view's id is in the environment, this
 	doubles as the path-completion escape hatch: build a path with your shell's
-	own completion and history, then drive the editor from inside --
-	*lvi -w "$LVI_WID" -- "w $PWD/notes.txt"* -- and *exit*.
+	own completion and history, queue a write for the editor you came from --
+	*lvi -w "$LVI_WID" -d -- "w $PWD/notes.txt"* -- and *exit*; it executes
+	the moment you return. The *-d* (detach) matters: like every terminal
+	shell-out, *sh* freezes the event loop while it runs, so a synchronous
+	*lvi -w* would sit waiting on an editor that answers only after you exit.
 
 *bg* _cmd_
 	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the

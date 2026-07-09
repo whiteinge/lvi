@@ -628,8 +628,11 @@ end)
 
 -- POSIX :sh -- an interactive shell; exit it to return to the editor. With
 -- LVI_WID in its environment this doubles as the path-completion escape hatch:
--- build a path with the shell's own completion, then drive this view from
--- inside (`lvi -w "$LVI_WID" -- "w $PWD/name"`) and exit.
+-- build a path with the shell's own completion, queue a write for this view
+-- (`lvi -w "$LVI_WID" -d -- "w $PWD/name"`), and exit -- it runs the moment we
+-- resume. Detached (-d) is the only way in: our loop is frozen while the shell
+-- runs (as under any tty shell-out), so a synchronous client would hang, and
+-- once hook children fill the listen backlog even connect() blocks.
 def("sh shell", function(ed)
   return do_shell(ed, os.getenv("SHELL") or "sh")
 end)
