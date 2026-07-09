@@ -7,7 +7,11 @@
 # cursor, painting the :hl overlay, and setting a :status segment. Multiple named
 # lists coexist; one is "focused" and the bare step commands act on it.
 #
-#   producer | lvi-list put NAME [--focus]   grep-style entries on stdin -> a list
+#   producer | lvi-list put NAME [--focus] [--at-cursor]   entries on stdin -> a list
+#                                              (--at-cursor: seed the step index from
+#                                              the cursor -- for producers that REFRESH
+#                                              a list mid-walk, so `next` continues
+#                                              forward instead of restarting at 1)
 #   lvi-list next|prev|nfile|pfile [NAME]     step (NAME defaults to the focused list)
 #   lvi-list here [NAME]                       jump to the first entry at/after the cursor
 #   lvi-list goto|switch                       fzf over entries / over list names
@@ -89,13 +93,19 @@ curfile() {
   else $LVI -w "$target" -- f 2>/dev/null | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; fi
 }
 
-# Jump the editor to an entry (file:line[:col]:...). Skips :e when already there.
+# Jump the editor to an entry (file:line[:col]:...). Skips :e when already
+# there. The column rides `normal` keys: there is no ex spelling for "goto
+# column" (a bare `|N` line falls through to the system ex as a no-op), and
+# `l` steps characters, which tracks the byte columns producers emit through
+# tabs where the display-column `|` motion would not (multibyte still drifts
+# -- the usual byte-col caveat).
 jump() {
   f=${1%%:*}; r=${1#*:}; ln=${r%%:*}; r=${r#*:}; c=${r%%:*}
   case "$c"  in ''|*[!0-9]*) c=1 ;; esac
   case "$ln" in ''|*[!0-9]*) return 0 ;; esac
-  if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then send "e $f" "$ln" "|$c"
-  else send "$ln" "|$c"; fi
+  col="normal 0"; [ "$c" -gt 1 ] && col="normal 0$((c - 1))l"
+  if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then send "e $f" "$ln" "$col"
+  else send "$ln" "$col"; fi
 }
 
 # Repaint NAME's entries for the CURRENT buffer, mark the current entry, and set
@@ -121,10 +131,32 @@ need_name() { n=$(if [ -n "${1:-}" ]; then printf '%s\n' "$1"; else focus_get; f
 
 case "$sub" in
   put)
-    dofocus=; [ "${2:-}" = "--focus" ] && { dofocus=1; set -- "$1"; }
-    name=${1:?usage: lvi-list put NAME [--focus]}
+    name=; dofocus=; atcur=
+    for a in "$@"; do case "$a" in
+      --focus)     dofocus=1 ;;
+      --at-cursor) atcur=1 ;;
+      *)           name=$a ;;
+    esac; done
+    [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor]"
     mkdir -p "$listdir"; qfilter > "$listdir/$name" || true   # keep only entries (see qfilter)
-    setcur "$name" 0                                          # a following `next` lands on 1
+    if [ -n "$atcur" ]; then
+      # Seed the index from the cursor so a REFRESHING producer (spell after a
+      # fix, lint on write) doesn't send the walk back to entry 1: cur = the
+      # last entry at or before the cursor, so `next` continues with the first
+      # one past it. Assumes the producer emits the current file's entries in
+      # position order (ours all do); on a cross-file list the seed is the
+      # last CURRENT-file entry at or before the cursor.
+      cf=$(curfile)
+      cl=${LVI_LINE:-}; cc=${LVI_COL:-}
+      [ -n "$cl" ] || { set -- $($LVI -w "$target" -- pos); cl=${1:-1}; cc=${2:-1}; }
+      i=$(awk -F: -v f="$cf" -v l="${cl:-1}" -v c="${cc:-1}" '
+            $1!=f {next}
+            ($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)) {n=NR}
+            END{print n+0}' "$listdir/$name")
+      setcur "$name" "$i"
+    else
+      setcur "$name" 0                                        # a following `next` lands on 1
+    fi
     [ -n "$dofocus" ] && focus_set "$name"
     paint "$name" ;;
 
