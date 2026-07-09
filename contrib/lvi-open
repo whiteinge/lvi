@@ -18,4 +18,7 @@ PICKER=${LVI_PICKER:-fzf}
 
 files=$(git ls-files 2>/dev/null || find . -type f -not -path '*/.*' 2>/dev/null)
 sel=$(printf '%s\n' "$files" | "$PICKER") || exit 0
+# lvi shell-expands file arguments (POSIX ex semantics), so a picked name
+# containing a metacharacter ($, *, ~, ...) must be escaped to land verbatim.
+sel=$(printf '%s\n' "$sel" | sed 's/[~{[*?$"'\''`\\]/\\&/g')
 [ -n "$sel" ] && "$LVI" -w "$LVI_WID" --detach -- "e $sel"
