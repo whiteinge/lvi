@@ -789,6 +789,18 @@ end)
 
 def("echo", function(ed, c) return c.args, "ok" end)
 
+-- :msg / :msge TEXT -- write this view's one-line message (status line, left).
+-- Distinct from :echo, which RETURNS text to the caller (the ':' prompt renders
+-- the payload; the socket hands it back in the response frame): :msg targets the
+-- human at THIS view even when a socket tool is the caller -- a preview/notice
+-- channel for external tools (e.g. lvi-list surfacing the entry you stepped
+-- onto). :msge is the error variant, styled by the `Error` group (:hi Error ...);
+-- plain if unthemed -- the text is always legible, the theme only adds emphasis.
+-- Newlines collapse (the status line is one row); the message clears on the next
+-- normal-mode key, like every other message.
+def("msg", function(ed, c) ed.message = (c.args:gsub("\n", " ")); ed.message_hl = nil; return "", "ok" end)
+def("msge", function(ed, c) ed.message = (c.args:gsub("\n", " ")); ed.message_hl = "Error"; return "", "ok" end)
+
 -- Force a full-screen redraw on the next paint (the driver honors
 -- ed.force_clear). Same gesture as Ctrl-L, reachable over the socket so a
 -- tool can repair the screen -- e.g. after a resize while the view is idle.

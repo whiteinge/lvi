@@ -52,6 +52,13 @@ on bufenter lvi-highlight
 " ...and/or a key to force a refresh on demand:
 map \h :silent !lvi-highlight<CR>
 
+" ---- message line -----------------------------------------------------------
+" :msge (the error variant of :msg) styles its text with the `Error` group, so
+" a tool can flag a message as an error and real ex errors (`:w` on a changed
+" file, ...) show the same way. Un-themed it is plain but still legible; this
+" gives it emphasis. lvi-list uses :msg to preview the entry you step onto.
+hi Error fg=red bold
+
 " ---- search & lists (quickfix/location) --------------------------------------
 " lvi has no built-in search; lvi-search greps the live buffer into a `lvi-list`
 " list and lvi-list steps it. Every list works the same way, so one set of step
@@ -65,6 +72,10 @@ map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
 map \/ :bg lvi-list hide<CR>                  " :nohl-style -- hide it; next n/N re-shows
 map \l :silent !lvi-list switch<CR>           " re-aim n/N: pick the focused list
+" Stepping (n/N) previews each entry's text on the message line; \m pops the FULL
+" entry (header + any multi-line body) in a tmux popup. Needs tmux. Pass -w: the
+" popup runs under the tmux server and does NOT inherit lvi's $LVI_WID env.
+map \m :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
 
 " Repaint the current buffer's matches when you switch into it (the glue that
 " makes cross-file lists -- project grep, a compiler -- highlight per file).

@@ -196,7 +196,12 @@ function M.frame(ed)
       line = (pad >= 1) and (left_s .. string.rep(" ", pad) .. right)
                          or  (left_s .. " " .. right)
     end
-    out[#out + 1] = disp.slice(line, ts, 0, cols, nil)
+    -- The message (left half) can carry a theme group (:msge -> "Error"): style
+    -- just its columns, like fold_summary. Un-themed -> plain, so the text stays
+    -- legible either way.
+    local msgsgr = ed.message and ed.message_hl and ed.hlstyles and ed.hlstyles[ed.message_hl]
+    local ivs = (msgsgr and msgsgr ~= "") and { { 0, lw, msgsgr, 0 } } or nil
+    out[#out + 1] = disp.slice(line, ts, 0, cols, ivs)
   end
 
   crow = math.max(1, math.min(crow, rows))

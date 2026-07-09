@@ -41,6 +41,19 @@ describe("render.frame", function()
     expect(ia < iz).to.be.truthy()                 -- abc's "A" before zeb's "Z"
   end)
 
+  it("styles an error message with its themed group (:msge)", function()
+    local ed = ed_with("x", { cols = 40, message = "boom", message_hl = "Error",
+      hlstyles = { Error = "1;31" } })                       -- bold red
+    expect(render.frame(ed):find("\27[1;31mboom\27[0m", 1, true)).to.exist()
+  end)
+
+  it("draws a plain message when its group is un-themed", function()
+    local ed = ed_with("x", { cols = 40, message = "boom", message_hl = "Error" })
+    local f = render.frame(ed)
+    expect(f:find("boom", 1, true)).to.exist()
+    expect(f:find("\27[1;31m", 1, true)).to_not.exist()      -- no style, still legible
+  end)
+
   it("truncates long lines to the width (nowrap)", function()
     local f = render.frame(ed_with("0123456789ABCDEF"))  -- cols = 12
     expect(f:find("012345678", 1, true)).to.exist()

@@ -2,7 +2,9 @@
 # lvi-list -- external quickfix/location lists for lvi.
 #
 # A "list" is a plain file of `file:line[:col]:text` entries (grep -Hn / compiler
-# / linter output -- the vim -q format). lvi itself knows nothing about lists:
+# / linter output -- the vim -q format), each optionally followed by indented
+# body lines (a compiler note, a multi-line diagnostic) that `preview` shows on
+# demand -- n/N step the headers and skip the bodies. lvi knows nothing of lists:
 # this script owns them, and drives lvi purely through the socket -- jumping the
 # cursor, painting the :hl overlay, and setting a :status segment. Multiple named
 # lists coexist; one is "focused" and the bare step commands act on it.
@@ -14,6 +16,9 @@
 #                                              forward instead of restarting at 1)
 #   lvi-list next|prev|nfile|pfile [NAME]     step (NAME defaults to the focused list)
 #   lvi-list here [NAME]                       jump to the first entry at/after the cursor
+#   lvi-list preview [NAME]                    print the current entry + its body to stdout
+#                                              (NAME defaults to the last-stepped list;
+#                                              bind it to a tmux popup -- see PREVIEW below)
 #   lvi-list goto|switch                       fzf over entries / over list names
 #   lvi-list focus [NAME] | ls | paint [NAME]
 #   lvi-list hide [NAME]                       stop showing a list (keep it; n/N re-show)
@@ -21,7 +26,7 @@
 #
 # WHERE LISTS LIVE: beside the view's socket, derived from $LVI_SOCK
 # (`.../lvi-$uid/$wid`) so the path can never drift from the one the editor chose:
-#   $LVI_SOCK.lists/<name>        the entries        (per view)
+#   $LVI_SOCK.lists/<name>        the entries (raw; multi-line bodies kept)  (per view)
 #   $LVI_SOCK.lists/<name>.cur    the current index  (1-based; 0 = before first)
 #   $LVI_SOCK.focus               the focused list name
 # $wid.lists is a directory, so socket discovery (which filters `[ -S ]`) skips it.
@@ -38,6 +43,22 @@
 #     where --detach is simply harmless.
 #   * producers that must READ the buffer (grep %p) self-background instead; see
 #     lvi-search. lvi-list never reads the buffer.
+#
+# PREVIEW (two ways to read an entry): stepping echoes the current entry's TEXT
+# (its file:line[:col]: prefix stripped -- you already know where you are) to lvi's
+# message line via :msg -- ephemeral, persist-until-next-key, so your next motion
+# clears it. The FULL entry (header + body) is `lvi-list preview` on stdout, meant
+# to be bound to a tmux popup for the multi-line diagnostics:
+#   map \m :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
+# With no name, `preview` targets the LAST-STEPPED list, not the focused one: `]e`
+# steps `lint` without stealing n/N's focus, yet one \m should still show the lint
+# entry you just navigated to. (Falls back through focus if nothing's been stepped.)
+# Two gotchas the -E command must dodge (both bit the obvious version): the popup
+# runs under the tmux SERVER, which does NOT inherit lvi's exported $LVI_SOCK /
+# $LVI_WID -- so pass -w explicitly (the outer :silent ! shell, which DOES have
+# them, expands it). And avoid $PAGER: zsh does not word-split it, so a `less
+# -imMWR`-style value is run as one command name and fails -- name the pager plain.
+# (:msge would flag it as an error; :msg is a neutral notice.)
 #
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
 # Run from inside lvi (a map) and $LVI_WID/$LVI_SOCK are already in the env; from
@@ -67,25 +88,38 @@ else
 fi
 listdir="$sock.lists"
 focusfile="$sock.focus"
+lastfile="$sock.last"                         # the list you most recently STEPPED (\m preview target)
 
 # ---- small helpers ----------------------------------------------------------
 send()      { $LVI -w "$target" --detach -- "$@"; }         # fire-and-forget (see header)
 lf()        { printf '%s\n' "$listdir/$1"; }
-count()     { grep -c . "$listdir/$1" 2>/dev/null || echo 0; }
-nth()       { sed -n "${2}p" "$listdir/$1" 2>/dev/null; }   # $1=name $2=index (1-based)
+count()     { n=$(hdrs "$1" | grep -c .); echo "${n:-0}"; }  # number of ENTRIES (headers)
+hnr()       { hdrs "$1" | sed -n "${2}p"; }                  # raw line of entry $2's header
+nth()       { r=$(hnr "$1" "$2"); [ -n "$r" ] && sed -n "${r}p" "$listdir/$1"; }  # $2's header line
+etext()     { sed -E 's/^[^:]*:[0-9]+(:[0-9]+)?:?[[:space:]]*//'; }  # entry line -> its text (drop file:line[:col]:)
+show_cur()  { last_set "$1"; c=$(getcur "$1"); [ "$c" -ge 1 ] && send "msg $(nth "$1" "$c" | etext)"; }  # on step: mark last-stepped + preview text
 getcur()    { c=$(cat "$listdir/$1.cur" 2>/dev/null); case "$c" in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
 setcur()    { printf '%s\n' "$2" > "$listdir/$1.cur"; }
 focus_get() { cat "$focusfile" 2>/dev/null; }
 focus_set() { printf '%s\n' "$1" > "$focusfile"; }
+last_set()  { printf '%s\n' "$1" > "$lastfile"; }                 # a step -> "the list you care about"
+last_get()  { l=$(cat "$lastfile" 2>/dev/null); [ -n "$l" ] && [ -f "$listdir/$l" ] && printf '%s\n' "$l"; }
 names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
 
-# Keep only `file:line[:col]:text` entries (a colon then digits then a colon or
-# EOL). This drops blank lines AND the body/message continuation lines of vim's
-# MULTI-LINE quickfix format -- lvi-list has no notion of them, so without this a
-# `git-quickfix`/compiler file written for vim would litter the list with
-# unjumpable junk that inflates the count and traps n/N. Continuation lines never
-# have digits right after their first colon, so the shape test excludes them.
-qfilter() { grep -E '^[^:]*:[0-9][0-9]*(:|$)'; }
+# Entry boundaries in vim's MULTI-LINE quickfix format: a `file:line[:col]:text`
+# HEADER (digits right after the first colon) starts an entry; the lines after it,
+# up to the next header or EOF, are its body (a compiler note, a lint detail). The
+# shape is self-delimiting -- body lines lack it (they are indented or prose), so
+# only an unindented body line that itself looks like `file:line:` is misread, and
+# producers indent continuations. `hdrs` prints each header's raw line number;
+# count/index step ENTRIES through it, `span` rebuilds one for `preview`. (The
+# body used to be filtered off on ingest; now it rides along, skipped by n/N.)
+hdrs() { awk '/^[^:]*:[0-9]+(:|$)/{print NR}' "$listdir/$1" 2>/dev/null; }
+span() {                                                    # print entry $2: header + body
+  s=$(hnr "$1" "$2"); [ -n "$s" ] || return 0
+  e=$(hnr "$1" "$(($2 + 1))"); [ -n "$e" ] && e=$((e - 1)) || e='$'
+  sed -n "${s},${e}p" "$listdir/$1"
+}
 
 # Current file: from the env when we were spawned by lvi (a map/hook), else ask.
 curfile() {
@@ -116,7 +150,7 @@ jump() {
 paint() {
   name=$1; [ -f "$listdir/$name" ] || return 0
   cf=$(curfile)
-  lines=$(awk -F: -v f="$cf" '$1==f{printf "%s:1-1 ", $2}' "$listdir/$name")
+  lines=$(awk -F: -v f="$cf" '/^[^:]*:[0-9]+(:|$)/ && $1==f{printf "%s:1-1 ", $2}' "$listdir/$name")
   [ -n "$lines" ] && send "hl $name $lines" || send "hl $name"
   cur=$(getcur "$name"); total=$(count "$name")
   ce=$(nth "$name" "$cur")
@@ -138,7 +172,7 @@ case "$sub" in
       *)           name=$a ;;
     esac; done
     [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor]"
-    mkdir -p "$listdir"; qfilter > "$listdir/$name" || true   # keep only entries (see qfilter)
+    mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
     if [ -n "$atcur" ]; then
       # Seed the index from the cursor so a REFRESHING producer (spell after a
       # fix, lint on write) doesn't send the walk back to entry 1: cur = the
@@ -150,9 +184,9 @@ case "$sub" in
       cl=${LVI_LINE:-}; cc=${LVI_COL:-}
       [ -n "$cl" ] || { set -- $($LVI -w "$target" -- pos); cl=${1:-1}; cc=${2:-1}; }
       i=$(awk -F: -v f="$cf" -v l="${cl:-1}" -v c="${cc:-1}" '
-            $1!=f {next}
-            ($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)) {n=NR}
-            END{print n+0}' "$listdir/$name")
+            /^[^:]*:[0-9]+(:|$)/ { n++
+              if ($1==f && (($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)))) hit=n }
+            END{print hit+0}' "$listdir/$name")
       setcur "$name" "$i"
     else
       setcur "$name" 0                                        # a following `next` lands on 1
@@ -165,7 +199,7 @@ case "$sub" in
     [ "$total" -gt 0 ] || die "$name is empty"
     cur=$(getcur "$name"); [ "$sub" = next ] && cur=$((cur+1)) || cur=$((cur-1))
     [ "$cur" -lt 1 ] && cur=1; [ "$cur" -gt "$total" ] && cur=$total
-    setcur "$name" "$cur"; jump "$(nth "$name" "$cur")"; paint "$name" ;;
+    setcur "$name" "$cur"; jump "$(nth "$name" "$cur")"; paint "$name"; show_cur "$name" ;;
 
   nfile|pfile)
     name=$(need_name "${1:-}") || exit 1; total=$(count "$name")
@@ -180,20 +214,32 @@ case "$sub" in
       [ "$ef" != "$curf" ] && { target_i=$i; break; }
     done
     [ -n "$target_i" ] || { send "status $name [$cur/$total] $name (no more files)"; exit 0; }
-    setcur "$name" "$target_i"; jump "$(nth "$name" "$target_i")"; paint "$name" ;;
+    setcur "$name" "$target_i"; jump "$(nth "$name" "$target_i")"; paint "$name"; show_cur "$name" ;;
 
   here)
     name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
     cf=$(curfile); cl=${LVI_LINE:-$($LVI -w "$target" -- pos | cut -f1)}
-    i=$(awk -F: -v f="$cf" -v l="$cl" '$1==f && ($2+0)>=(l+0){print NR; exit}' "$listdir/$name")
+    i=$(awk -F: -v f="$cf" -v l="$cl" '
+          /^[^:]*:[0-9]+(:|$)/ { n++; if ($1==f && ($2+0)>=(l+0)) { print n; exit } }' "$listdir/$name")
     [ -n "$i" ] || i=1
-    setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name" ;;
+    setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; show_cur "$name" ;;
+
+  preview)                                   # the full current entry (header + body) to stdout
+    # Default to the LAST-STEPPED list, not the focused one: `]e` steps lint
+    # without stealing n/N's focus, yet \m should still show the lint entry you
+    # just navigated to. Fall back through focus when nothing's been stepped.
+    name=${1:-$(last_get)}; [ -n "$name" ] || name=$(focus_get)
+    [ -n "$name" ] || die "no list stepped yet (step one, or name it)"
+    [ -f "$listdir/$name" ] || die "$name is empty"
+    cur=$(getcur "$name"); [ "$cur" -ge 1 ] || die "$name: step into the list first"
+    span "$name" "$cur" ;;
 
   goto)
     name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
-    sel=$(cat -n "$listdir/$name" | "$PICKER" --with-nth=2..) || exit 0
-    i=$(printf '%s' "$sel" | awk '{print $1}')
-    [ -n "$i" ] && { setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; } ;;
+    sel=$(awk '/^[^:]*:[0-9]+(:|$)/{printf "%d\t%s\n", ++n, $0}' "$listdir/$name" \
+            | "$PICKER" --with-nth=2.. --delimiter='	') || exit 0
+    i=$(printf '%s' "$sel" | cut -f1)
+    [ -n "$i" ] && { setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; show_cur "$name"; } ;;
 
   switch)
     name=$(names | "$PICKER") || exit 0
@@ -215,7 +261,7 @@ case "$sub" in
   load)
     src=${1:?usage: load PATH [NAME] [--focus]}
     name=${2:-$(basename "$src")}; case "$name" in --focus) name=$(basename "$src");; esac
-    mkdir -p "$listdir"; qfilter < "$src" > "$listdir/$name" || true; setcur "$name" 0
+    mkdir -p "$listdir"; cp "$src" "$listdir/$name" || true; setcur "$name" 0
     case " $* " in *" --focus "*) focus_set "$name" ;; esac
     paint "$name" ;;
 

@@ -37,9 +37,10 @@ Select one with `LVI_HL_BACKEND`; see the `lvi-highlight` header for the rest.
 ### `lvi-search` + `lvi-list` — search and quickfix
 
 A **list** is a plain file of `file:line[:col]:text` entries — the vim `-q`
-format that grep, a compiler, a linter, or `git diff` all speak (vim's
-multi-line variant works too: `lvi-list` keeps the entry lines and ignores the
-diff-body/message continuation lines it has no notion of). lvi knows
+format that grep, a compiler, a linter, or `git diff` all speak. Vim's
+multi-line variant works too: each `file:line:` header may carry indented body
+lines (a compiler note, a full diagnostic), and `n`/`N` step the headers while
+the bodies ride along for `lvi-list preview` to show on demand. lvi knows
 nothing about lists: `lvi-list` owns them and drives the view over the socket,
 jumping the cursor, painting the `:hl` overlay, and setting a `:status` counter.
 Any number of named lists coexist; one is **focused**, and the bare step commands
@@ -54,6 +55,17 @@ an explicit name, so a list can instead get its own dedicated keys —
 unsaved text), builds the `search` list, focuses it, and jumps to the first
 match. Search is just a degenerate quickfix. Bind `/` to prompt and `*` to hunt
 the word under the cursor; `n`/`N` do the rest.
+
+You read an entry two ways. Stepping echoes its text to lvi's **message line**
+via `:msg` — ephemeral, cleared by your next motion, so a lint message rides
+alongside the cursor without a permanent panel. The full entry (header + body)
+is `lvi-list preview` on stdout; bind it to a `tmux display-popup` for the
+multi-line diagnostics. That popup key defaults to the **last-stepped** list, a
+second axis alongside focus: `]e` steps `lint` without stealing `n`/`N`'s focus,
+yet one preview key still shows the lint entry you just navigated to. (`:msg`/
+`:msge` are the generic notice channel — a socket tool writing this view's
+message line, distinct from `:echo`, which returns text to the caller. `:msge`
+styles it as an error via the `Error` group.)
 
 Lists live beside the view's socket (auto-cleaned per view); `lvi-list save`/`load`
 promote one to any durable path — that's "save this quickfix for later" in a

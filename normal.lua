@@ -249,7 +249,7 @@ local function insert_mode(ed)
     clamp(ed)
   end
   ed.mode = "normal"
-  ed.message = nil
+  ed.message = nil; ed.message_hl = nil
   ed.cx = math.max(1, ed.cx - 1) -- vi steps left on leaving insert
   clamp(ed)
 end
@@ -283,7 +283,7 @@ local function replace_mode(ed)
     clamp(ed)
   end
   ed.mode = "normal"
-  ed.message = nil
+  ed.message = nil; ed.message_hl = nil
   ed.cx = math.max(1, ed.cx - 1)
   clamp(ed)
 end
@@ -1323,7 +1323,7 @@ actions = {
         ed.mode = "normal"; ed.cmdline = ""
         local payload, status = ex.dispatch(ed, cmd)
         if status == "err" then
-          ed.message = payload:gsub("\n", " ")
+          ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
         elseif payload and payload:find("\n", 1, true) and ed.suspend then
           ed.suspend(payload)                     -- multi-line output -> the terminal
         elseif payload and payload ~= "" then
@@ -1360,7 +1360,7 @@ local function command(ed)
   ed.at_boundary = true
   local k = first_key(ed)                    -- parks here; prior message stays visible
   ed.at_boundary = false
-  ed.message = nil                           -- clear only once a new command's key arrives
+  ed.message = nil; ed.message_hl = nil      -- clear only once a new command's key arrives
   if k == b('"') then reg = string.char(getkey(ed)); k = getkey(ed) end
   local count1
   count1, k = read_count(ed, k)

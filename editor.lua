@@ -46,6 +46,7 @@ function M.new_ed()
     mode = "normal",          -- "normal" | "insert" | "command" (the ':' prompt)
     cmdline = "",             -- ':' prompt accumulator
     message = nil,            -- one-line message shown in the status line
+    message_hl = nil,         -- highlight group for it ("Error" via :msge); nil = plain
     status = {},              -- named status segments (:status), render-sorted
     force_clear = false,      -- next paint clears the screen first (Ctrl-L, resize)
 

@@ -399,6 +399,15 @@ _contrib/lvi-shell.sh_ do).
 	Show the file name and line count; report the cursor as _line_<TAB>_col_;
 	echo _text_; run _cmd_ suppressing its interactive prompt.
 
+*msg* _text_, *msge* _text_
+	Write _text_ to this view's one-line message (status line, left half).
+	Unlike *echo*, which returns text to the caller (the human at the *:* prompt,
+	or a socket tool in its response frame), *msg* always targets the human at
+	this view -- a preview/notice channel a socket tool drives (e.g. a list
+	surfacing the entry you stepped onto). *msge* is the error variant, styled by
+	the *Error* group (*hi Error ...*); plain if unthemed. Newlines collapse; the
+	message clears on the next normal-mode key.
+
 *sysex* _ex-line_
 	Hand _ex-line_ to the system *ex*(1) verbatim, bypassing lvi's own command
 	table -- the pin for scripts that need ex's semantics for a name lvi also
