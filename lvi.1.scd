@@ -421,6 +421,10 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
   (the vim *-q* format), file-backed and steppable; any number coexist, one is
   _focused_, and the bare step keys act on it.
 - *lvi-gitchanges* -- step the current file's *git diff* hunks with *n*/*N*.
+- *lvi-lint* -- lint the live buffer into a steppable list, on demand or on
+  every *:w* (ruff, shellcheck, *deno lint* ship; one small adapter per tool).
+- *lvi-spell* -- toggleable spell check: misspelled words marked in place and
+  steppable, with a *z=* suggestion picker and *zg* dictionary add.
 - *lvi-open* -- fuzzy-pick a file and open it in the running view.
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
 - *lvi-complete* -- insert-mode word completion from the open buffers

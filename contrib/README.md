@@ -68,6 +68,36 @@ walk your uncommitted changes. `lvi-gitchanges HEAD~3..` steps a commit range,
 `lvi-gitchanges <commit>` a single commit. Unlike `lvi-search` it reads the file
 on **disk**, not the live buffer, so it shows changes as of your last `:w`.
 
+### `lvi-lint` — any linter, as a list
+
+The producer that makes "a compiler is a quickfix" pay rent: run a linter over
+the **live** buffer (unsaved edits included), normalize its complaints, and step
+them like any other list — `on write lvi-lint` re-lints every save, and the
+status counter doubles as the pass/fail glance (`[0/0]` = clean). Where vim
+grew the `errorformat` mini-language for this, lvi-lint grows nothing: a
+**backend adapter** (`lvi-lint-<name>`, picked by file extension or
+`LVI_LINT_BACKEND`) normalizes each tool's output with a few lines of awk, in
+the exact shape of the highlight backends — buffer on stdin, real filename as
+`$1`, entries on stdout. Feeding stdin with the tool's `--stdin-filename` flag
+is what makes it live-buffer while the real path still anchors config
+resolution (ruff finds your `pyproject.toml`). ruff, shellcheck, and `deno
+lint` ship; the next tool is a dozen-line adapter. Severity rides an `E:`/`W:`
+prefix in the entry text. See the `lvi-lint` header for the contract.
+
+### `lvi-spell` — spell checking as a toggle
+
+vim's `:set spell`, rebuilt outside the editor — and the tool that uses *both*
+halves of the machinery at once: one aspell/hunspell pass over the live buffer
+feeds exact word extents to a `spellbad` `:hl` group (overlay for the eyes) and
+a `spell` list for `]s`/`[s` (stepping for the fingers). It's a **toggle**, not
+an rc hook: `lvi-spell` on a key installs its own change/bufenter hooks once
+per view and gates them on a flag file beside the socket, so off means *off*
+with everyone else's hooks intact. `z=` picks a correction through your
+`$LVI_PICKER` and splices it in place; `zg` adds the word to your personal
+dictionary. Whole-buffer by design — spell-checking code means toggling it on
+to sweep and off to silence, not teaching it syntax. See the `lvi-spell`
+header for the ispell-protocol details and caveats.
+
 ### `lvi-open` — open a file
 
 A fuzzy-picker (fzf by default) that opens the chosen file in the running view.
@@ -270,3 +300,7 @@ L:C1-C2 …` (byte columns) on stdout.** Two shapes ship:
   style *is* that SGR. `source-highlight`, `tree-sitter highlight`, etc. are thin
   wrappers around `lvi-hl-ansi` (feed it `--wrap=never --tabs=0` so byte columns
   don't desync).
+
+The same contract shape drives the linter: `lvi-lint-<name>` takes the buffer
+on stdin and the filename as `$1`, and emits list entries instead of `hl`
+lines. One adapter idiom, two harnesses.

@@ -105,7 +105,32 @@ map \g :bg lvi-gitchanges<CR>                  " load this file's changes + focu
 " A group with no style is invisible; lvi-search styles `search` itself, but you
 " can theme any list's group (and its -cur current-entry group), e.g.:
 "   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
-"   hi lint       undercurl     " (once lvi grows the attributes you want)
+
+" ---- linting ------------------------------------------------------------------
+" lvi-lint runs a linter over the LIVE buffer (unsaved edits included) into a
+" `lint` list; the backend is picked by the file's extension (ruff / shellcheck
+" / deno lint ship -- see lvi-lint's header for the tiny adapter contract).
+" Findings step like any list, and the status counter doubles as the pass/fail
+" glance: [0/0] after a run means clean.
+on write lvi-lint                      " re-lint on every save...
+" on change lvi-lint                   " ...or as you type
+map \e :bg lvi-lint --focus<CR>        " lint now and aim n/N at the findings
+map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
+map [e :bg lvi-list prev lint<CR>
+hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
+hi lint-cur bg=124 pri=11
+
+" ---- spell check --------------------------------------------------------------
+" lvi-spell is a toggle (vim's :set spell): while on, the buffer re-checks as
+" you type -- misspelled words get exact-extent `spellbad` marks plus a `spell`
+" list to step. The toggle installs its own change/bufenter hooks once per
+" view, so do NOT add them here; everything below is keys and theme.
+map \s :bg lvi-spell<CR>               " toggle
+map ]s :bg lvi-list next spell<CR>     " step misspellings
+map [s :bg lvi-list prev spell<CR>
+map z= :silent !lvi-spell fix<CR>      " pick a suggestion for the word under
+map zg :bg lvi-spell add<CR>           " the cursor / add it to the dictionary
+hi spellbad underline pri=20           " the word marks themselves
 
 " ---- position memory (viminfo's `") ------------------------------------------
 " lvi-pos remembers where you were in each file across sessions, in a plain-text
