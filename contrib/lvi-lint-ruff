@@ -1,0 +1,17 @@
+#!/bin/sh
+# lvi-lint-ruff -- ruff backend for lvi-lint (python).
+#
+# Contract (see lvi-lint): buffer on stdin, real filename as $1, emit
+# `FILE:LINE:COL: S: msg`. `--stdin-filename` makes ruff lint the LIVE buffer
+# while still resolving pyproject.toml/ruff.toml from the real path -- and it
+# echoes that path back in the output, so FILE needs no rewriting here. ruff
+# exits 1 whenever it finds anything, so the pipeline ignores its status; the
+# summary tail ("Found N errors.") has no `:L:C: ` anchor and drops out.
+ruff check --output-format concise --stdin-filename "$1" - 2>/dev/null |
+  awk '{
+    if (!match($0, /:[0-9]+:[0-9]+: /)) next
+    head = substr($0, 1, RSTART + RLENGTH - 1)
+    msg  = substr($0, RSTART + RLENGTH)        # "F401 [*] `os` imported..."
+    sev  = (msg ~ /^W/) ? "W" : "E"            # ruff W-codes are style nits
+    print head sev ": " msg
+  }'

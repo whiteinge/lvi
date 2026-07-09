@@ -1,0 +1,18 @@
+#!/bin/sh
+# lvi-lint-shellcheck -- shellcheck backend for lvi-lint (sh/bash).
+#
+# Contract (see lvi-lint): buffer on stdin, real filename as $1, emit
+# `FILE:LINE:COL: S: msg`. shellcheck reads stdin as `-` (the shell dialect
+# comes from the buffer's own shebang, so the live buffer is enough) and
+# prints gcc format, `-:L:C: level: msg [SCnnnn]`; rewrite the `-` to the real
+# name and fold the level into the E:/W:/I: prefix. Each sub() replaces only
+# the first match, which is the level slot right after the column.
+shellcheck -f gcc - 2>/dev/null |
+  awk -v f="$1" '{
+    rest = $0
+    if (sub(/^-:/, "", rest) != 1) next
+    if      (sub(/: error: /,   ": E: ", rest)) ;
+    else if (sub(/: warning: /, ": W: ", rest)) ;
+    else if (sub(/: note: /,    ": I: ", rest)) ;
+    print f ":" rest
+  }'

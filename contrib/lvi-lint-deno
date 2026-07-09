@@ -1,0 +1,24 @@
+#!/bin/sh
+# lvi-lint-deno -- `deno lint` backend for lvi-lint (js/ts/jsx/tsx).
+#
+# Contract (see lvi-lint): buffer on stdin, real filename as $1, emit
+# `FILE:LINE:COL: S: msg`. deno reads stdin as `-` but infers nothing from it:
+# `--ext` (derived from $1) picks the grammar, and the fake name it reports
+# (`file:///...$deno$stdin.mts: line L, col C - msg (rule)`) is rewritten to
+# the real one by anchoring on the `: line L, col C - ` shape -- the summary
+# tail ("Found N problems" / "Checked 1 file") has no anchor and drops out.
+# There is no --stdin-filename, so deno.json resolves from the CWD -- under an
+# lvi map/hook that is the directory lvi runs in, so lint from the project
+# root. deno emits no severity, so everything lands as `W:`. Note deno prints
+# diagnostics on STDERR (stdout gets only "Checked 1 file"), so it is stderr
+# that feeds the pipe.
+ext=${1##*.}
+case "$ext" in js|jsx|ts|tsx|mjs|mts) ;; *) ext=ts ;; esac
+deno lint --compact --ext="$ext" - 2>&1 1>/dev/null |
+  awk -v f="$1" '{
+    if (!match($0, /: line [0-9]+, col [0-9]+ - /)) next
+    msg = substr($0, RSTART + RLENGTH)
+    lc  = substr($0, RSTART, RLENGTH)
+    gsub(/[^0-9,]/, "", lc); split(lc, a, ",")     # "L,C" -> a[1], a[2]
+    print f ":" a[1] ":" a[2] ": W: " msg
+  }'

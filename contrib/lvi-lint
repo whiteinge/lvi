@@ -1,0 +1,94 @@
+#!/bin/sh
+# lvi-lint [-w auto|WID] [--focus] -- lint the LIVE buffer into an `lvi-list`.
+#
+# The compiler face of the list machinery: run a linter over the buffer
+# (unsaved edits included), normalize its complaints to `file:line[:col]: text`
+# entries, and hand them to `lvi-list put lint` -- stepping, painting, and the
+# status counter all come from the shared machinery. vim's makeprg/errorformat,
+# re-cut for "UNIX as IDE": there is no errorformat language; a BACKEND ADAPTER
+# normalizes each tool's output with a few lines of awk instead.
+#
+# THE ADAPTER CONTRACT (the lvi-hl-<name> shape): an executable
+# `lvi-lint-<name>` beside this script gets the buffer text on STDIN and the
+# buffer's real filename as $1, and emits `FILE:LINE[:COL]: text` on stdout --
+#   * FILE is $1 VERBATIM (not `-`, not a temp name), so entries match what
+#     lvi calls the buffer and jump/paint work in place (the lvi-search trick);
+#   * severity is folded into the text as an `E: `/`W: ` prefix (one list, one
+#     style; splitting severities into separate lists is a possible follow-up).
+# Feeding the buffer on stdin -- with the tool's --stdin-filename flag -- is
+# what makes this live-buffer: no temp file, while the real path still anchors
+# filetype detection and config resolution (ruff finds your pyproject.toml). A
+# tool with no stdin mode can lint the disk file instead; its adapter header
+# must then say "reflects your last :w" (the lvi-gitchanges caveat).
+#
+# Backend: $LVI_LINT_BACKEND if set, else picked from the file's extension
+# (table below). Ships: ruff (python), shellcheck (sh), deno (js/ts). eslint,
+# luacheck, or `gcc -fsyntax-only` are the same handful of adapter lines when
+# you want them.
+#
+# Bindings (rc):
+#     on write lvi-lint                    " lint on every save
+#     " on change lvi-lint                 " ...or as you type (it reads the live buffer)
+#     map \e :bg lvi-lint --focus<CR>      " lint now and aim n/N at the results
+#     map ]e :bg lvi-list next lint<CR>    " or step it with pinned keys
+#     map [e :bg lvi-list prev lint<CR>
+#     hi lint bg=52 pri=10                 " un-themed = invisible, so theme it
+#     hi lint-cur bg=124 pri=11
+# The status counter doubles as the pass/fail glance: `lint [0/17]` means
+# findings, `lint [0/0]` after a run means clean.
+#
+# It self-backgrounds a --worker like lvi-highlight: reading the buffer needs
+# lvi's event loop. Under `on write`/:bg the loop is live and the detach is
+# merely harmless; under a `:silent !` binding it is what prevents the deadlock.
+#
+# Config: LVI (client, default `lvi`), LVI_LINT_BACKEND (adapter name),
+# LVI_LINT_MAXBYTES (skip buffers larger than this, default 262144),
+# LVI_LINT_DEBUG (file to capture worker stderr). Needs lvi-list on PATH.
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_LINT_MAXBYTES:-262144}
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+die() { echo "lvi-lint: $*" >&2; exit 1; }
+
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
+focus=; [ "$1" = "--focus" ] && { focus=1; shift; }
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# Detach the buffer-reading half; return at once so lvi's loop resumes and can
+# service the worker's socket traffic.
+if [ -z "$worker" ]; then
+  ( "$0" --worker $wflag ${focus:+--focus} >"${LVI_LINT_DEBUG:-/dev/null}" 2>&1 & )
+  exit 0
+fi
+
+# --- worker --------------------------------------------------------------------
+text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
+nbytes=$(printf '%s' "$text" | wc -c)
+if [ "$nbytes" -gt "$MAXBYTES" ]; then
+  echo "lvi-lint: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)" >&2
+  exit 0
+fi
+fname=$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
+case "$fname" in ""|"[No File]"|"[No Name]")
+  die "current buffer has no file (backends key off the name)" ;;
+esac
+
+backend=$LVI_LINT_BACKEND
+if [ -z "$backend" ]; then
+  case "$fname" in
+    *.py)        backend=ruff ;;
+    *.sh|*.bash) backend=shellcheck ;;
+    *.js|*.jsx|*.ts|*.tsx|*.mjs|*.mts) backend=deno ;;
+    *) die "no backend for '$fname' (set LVI_LINT_BACKEND, or extend the table)" ;;
+  esac
+fi
+adapter="$DIR/lvi-lint-$backend"
+[ -x "$adapter" ] || die "no adapter for backend '$backend' ($adapter)"
+
+# Adapter normalizes; put paints, counts, and (with --focus) aims n/N.
+# --at-cursor: an `on write` refresh mid-walk keeps your place instead of
+# resetting the step index. An adapter with nothing to say yields an empty
+# list -- the clean [0/0].
+printf '%s\n' "$text" | "$adapter" "$fname" | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
