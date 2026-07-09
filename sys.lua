@@ -194,7 +194,12 @@ function M.listen(path, backlog)
   local fd = C.socket(AF_UNIX, SOCK_STREAM, 0)
   if fd < 0 then error("socket() failed for " .. path) end
   if C.bind(fd, addr, len) ~= 0 then C.close(fd); error("bind() failed for " .. path) end
-  if C.listen(fd, backlog or 8) ~= 0 then C.close(fd); error("listen() failed for " .. path) end
+  -- Generous backlog: a tty shell-out (:!, :sh, a picker) freezes the poll
+  -- loop, and hook children keep connecting back meanwhile. Once the backlog
+  -- fills, further connect()s BLOCK (hanging even detached clients and
+  -- lvi -l's liveness probes), so cheap headroom here is what keeps a long
+  -- :sh session drivable. Observed live at the old backlog of 8.
+  if C.listen(fd, backlog or 64) ~= 0 then C.close(fd); error("listen() failed for " .. path) end
   return fd
 end
 
