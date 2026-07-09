@@ -237,6 +237,30 @@ local function fail_reason(err, code)
   return err:match("%S[^\n]*") or ("exit " .. code)
 end
 
+-- POSIX ex file-argument expansion. The spec: a file argument containing any
+-- of ~ { [ * ? $ " ' ` \ "shall be subjected to the process of shell
+-- expansions", and its specified mechanism is the shell running `echo <text>`.
+-- We do exactly that (through run_capture, which stamps the LVI_* context vars
+-- first), so tilde, $VAR -- including $LVI_FILE, this editor's substitute for
+-- ex's % -- and globs all mean whatever sh(1) says; no expansion code of our
+-- own. The result must be exactly one word: every caller names one file, and
+-- echo flattens quoting anyway, so a name containing whitespace cannot survive
+-- the trip (historic vi shares this limit -- spell such a file some other way,
+-- e.g. :sh). Expansion runs the shell on user text ($(cmd) executes cmd); no
+-- new capability -- the same surfaces already have :! -- but scripts splicing
+-- untrusted names into a w/e/r line should keep them metacharacter-free.
+-- Empty arg -> nil, no error (callers fall back to the buffer's own path).
+local function expand_file(ed, s)
+  if s == "" then return nil end
+  if not s:find("[~{%[%*%?%$\"'`\\]") then return s end
+  local out, code, err = run_capture(ed, "echo " .. s)
+  if code ~= 0 then return nil, "expansion failed: " .. fail_reason(err, code) end
+  out = out:gsub("%s+$", "")
+  if out == "" then return nil, "expansion gave no file name: " .. s end
+  if out:find("%s") then return nil, "ambiguous file name (expands to several words): " .. s end
+  return out
+end
+
 -- Run a shell command. On a tty (ed.shell present) it runs interactively with
 -- the real terminal; otherwise (socket/headless) its stdout is captured and
 -- returned as the payload. ed._silent suppresses the interactive "Press ENTER".
@@ -418,7 +442,9 @@ def("q quit", function(ed, c)
 end)
 
 def("w write", function(ed, c)
-  local p = (c.args ~= "" and c.args) or ed.buf.path
+  local p, xerr = expand_file(ed, c.args)
+  if xerr then return xerr, "err" end
+  p = p or ed.buf.path
   if not p then return "No file name", "err" end
   if not c.bang and write_conflict(ed, ed.buf, p) then
     return "File changed since last read (add ! to override)", "err"
@@ -458,7 +484,9 @@ def("wq x", function(ed, c)
     ed.running = false
     return "", "ok"
   end
-  local p = (c.args ~= "" and c.args) or ed.buf.path
+  local p, xerr = expand_file(ed, c.args)
+  if xerr then return xerr, "err" end
+  p = p or ed.buf.path
   if not p then return "No file name", "err" end
   if not c.bang and write_conflict(ed, ed.buf, p) then
     return "File changed since last read (add ! to override)", "err"
@@ -505,7 +533,9 @@ def("e edit", function(ed, c)
     if bufs.alt(ed) then return "", "ok" end
     return "No alternate file", "err"
   elseif c.args ~= "" then
-    bufs.open(ed, c.args)
+    local p, xerr = expand_file(ed, c.args)
+    if xerr then return xerr, "err" end
+    bufs.open(ed, p)
     return "", "ok"
   elseif ed.buf.path then
     if ed.buf.modified and not c.bang then
@@ -543,8 +573,10 @@ def("r read", function(ed, c)
     text, code, err = run_capture(ed, c.args:sub(2))
     if code ~= 0 then return "read failed: " .. fail_reason(err, code), "err" end
   else
-    local fh = io.open(c.args, "rb")
-    if not fh then return "can't open " .. c.args, "err" end
+    local p, xerr = expand_file(ed, c.args)
+    if xerr then return xerr, "err" end
+    local fh = io.open(p, "rb")
+    if not fh then return "can't open " .. p, "err" end
     text = fh:read("*a") or ""; fh:close()
   end
   local lines = {}
@@ -592,6 +624,14 @@ def("bg", function(ed, c)
   if c.args == "" then return "no command", "err" end
   if ed.spawn_bg then ed.spawn_bg(c.args) end
   return "", "ok"
+end)
+
+-- POSIX :sh -- an interactive shell; exit it to return to the editor. With
+-- LVI_WID in its environment this doubles as the path-completion escape hatch:
+-- build a path with the shell's own completion, then drive this view from
+-- inside (`lvi -w "$LVI_WID" -- "w $PWD/name"`) and exit.
+def("sh shell", function(ed)
+  return do_shell(ed, os.getenv("SHELL") or "sh")
 end)
 
 def("ls buffers files", function(ed) return bufs.list(ed), "ok" end)

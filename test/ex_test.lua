@@ -5,6 +5,7 @@ local lust   = require("lust")
 local buffer = require("buffer")
 local ex     = require("ex")
 local editor = require("editor")
+local sys    = require("sys")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
 -- All ed state comes from the one constructor (editor.new_ed), so these tests
@@ -137,6 +138,71 @@ describe("ex.dispatch", function()
       local _, s = ex.dispatch(ed, "w " .. other)    -- explicit different target
       expect(s).to.equal("ok")
       os.remove(tmp); os.remove(other)
+    end)
+  end)
+
+  -- File arguments are shell-expanded per POSIX (expand_file in ex.lua): an
+  -- arg containing a metacharacter round-trips through `sh -c 'echo <arg>'`,
+  -- so ~, $VAR, and globs mean whatever sh says. Plain names (every other
+  -- test in this file) never touch the shell.
+  describe("file-argument expansion", function()
+    local function tmpdir()
+      local d = os.tmpname()
+      os.remove(d); os.execute("mkdir -p " .. d)
+      return d
+    end
+
+    it("expands ~ against $HOME in :w", function()
+      local dir, home = tmpdir(), os.getenv("HOME")
+      sys.setenv("HOME", dir)
+      local ed = ed_with("a\n")
+      local _, s = ex.dispatch(ed, "w ~/out.txt")
+      sys.setenv("HOME", home)
+      expect(s).to.equal("ok")
+      local f = io.open(dir .. "/out.txt", "rb")
+      expect(f).to.exist()
+      expect(f:read("*a")).to.equal("a\n"); f:close()
+      os.execute("rm -rf " .. dir)
+    end)
+
+    it("expands $VAR in :r", function()
+      local dir = tmpdir()
+      local f = io.open(dir .. "/in.txt", "wb"); f:write("INSERTED\n"); f:close()
+      sys.setenv("LVI_TEST_DIR", dir)
+      local ed = ed_with("a\nb")
+      local _, s = ex.dispatch(ed, "r $LVI_TEST_DIR/in.txt")
+      expect(s).to.equal("ok")
+      expect(ed.buf:get()).to.equal({ "a", "INSERTED", "b" })
+      os.execute("rm -rf " .. dir)
+    end)
+
+    it("expands a glob that names exactly one file", function()
+      local dir = tmpdir()
+      local f = io.open(dir .. "/only.txt", "wb"); f:write("GLOBBED\n"); f:close()
+      local ed = ed_with("a")
+      local _, s = ex.dispatch(ed, "r " .. dir .. "/on*.txt")
+      expect(s).to.equal("ok")
+      expect(ed.buf:get()).to.equal({ "a", "GLOBBED" })
+      os.execute("rm -rf " .. dir)
+    end)
+
+    it("rejects an expansion to several words", function()
+      local dir = tmpdir()
+      for _, n in ipairs({ "g1.txt", "g2.txt" }) do
+        local f = io.open(dir .. "/" .. n, "wb"); f:write("x"); f:close()
+      end
+      local ed = ed_with("a")
+      local p, s = ex.dispatch(ed, "r " .. dir .. "/g*.txt")
+      expect(s).to.equal("err")
+      expect(p:find("ambiguous", 1, true)).to.exist()
+      os.execute("rm -rf " .. dir)
+    end)
+
+    it("rejects an expansion to nothing", function()
+      local ed = ed_with("a")
+      local p, s = ex.dispatch(ed, "w $LVI_TEST_SURELY_UNSET_")
+      expect(s).to.equal("err")
+      expect(p:find("no file name", 1, true)).to.exist()
     end)
   end)
 

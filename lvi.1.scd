@@ -1,5 +1,10 @@
 lvi(1)
 
+; EDITING TRAP: never let a wrapped continuation line start with `-` -- scdoc
+; parses it as a list entry and the build breaks ("Expected space before start
+; of list entry"). Rewrap so `--` sits mid-line or at a line's end. Check your
+; work with `scdoc < lvi.1.scd > /dev/null`.
+
 # NAME
 
 lvi - a minimal, POSIX-vi-style modal editor with a control socket
@@ -196,6 +201,19 @@ same name (lvi's *d* is not ex's *d*). A future lvi release may claim further
 names; a script that must have the system ex's reading of a line regardless
 should pin it with *sysex*.
 
+In any command that names a _file_ (*e*, *w*, *wq*, *x*, *r*), an argument
+containing one of *~ { [ \* ? $ " ' ` \\* is expanded by the shell, as POSIX ex
+specifies: lvi hands it to *sh -c 'echo <text>'* and uses the result, so tilde,
+variables, and globs mean exactly what *sh*(1) says. The cursor context is in
+that shell's environment, so *:w $LVI_FILE.bak* and *:w ${LVI_FILE%.md}.html*
+work -- lvi's substitute for ex's *%* and *#* (see *ENVIRONMENT*). The
+expansion must yield exactly one word; *echo* flattens quoting, so a file whose
+name contains whitespace cannot be spelled this way (a limit shared with
+historic vi) -- reach such a file from a shell instead (*sh* below). And it is
+the shell: *:w $(cmd)* executes _cmd_ -- the same power *!* already grants, but
+a script splicing untrusted names into a command line should keep them
+metacharacter-free.
+
 *w*[*!*] [_file_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
@@ -248,6 +266,13 @@ should pin it with *sysex*.
 	Run a shell _cmd_ with the terminal (interactive programs work). The
 	cursor's context is in the environment (*LVI_FILE*/*LINE*/*COL*/*CWORD*; see
 	*ENVIRONMENT*), so e.g. *!grep -n "$LVI_CWORD" "$LVI_FILE"*.
+
+*sh*
+	Run an interactive shell (*$SHELL*, else *sh*; alias *shell*); exit it to
+	return to the editor. Because the view's id is in the environment, this
+	doubles as the path-completion escape hatch: build a path with your shell's
+	own completion and history, then drive the editor from inside --
+	*lvi -w "$LVI_WID" -- "w $PWD/notes.txt"* -- and *exit*.
 
 *bg* _cmd_
 	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the
@@ -310,11 +335,11 @@ should pin it with *sysex*.
 
 *fire* [_event_]
 	Raise _event_ (default *change*) by hand. Because socket-driven edits never
-	fire *change* (the anti-loop gate above), a tool that edits over the socket
-	-- a formatter, a diff-hunk applier -- leaves *change* consumers such as
-	live highlighting stale until the next keystroke; sending *fire* after its
-	edits is the explicit opt-in. *change* rides the normal idle debounce;
-	any other event runs its hooks immediately.
+	fire *change* (the anti-loop gate above), a tool that edits over the
+	socket -- a formatter, a diff-hunk applier -- leaves *change* consumers
+	such as live highlighting stale until the next keystroke; sending *fire*
+	after its edits is the explicit opt-in. *change* rides the normal idle
+	debounce; any other event runs its hooks immediately.
 
 *status* _name_ [_text_]
 	Set (or clear, if _text_ is empty) a named segment shown in the status line;
@@ -338,6 +363,7 @@ should pin it with *sysex*.
 COMMAND        TERMINAL   LVI BLOCKED   typical use
 !cmd           yes        yes           run and watch it (:!make, :!git log)
 [range]!cmd    yes        yes           filter lines through cmd (:%!sort)
+sh             yes        yes           a full shell; exit to return
 bg cmd         no         no            detached; drives the view back as it runs
 
 silent !cmd    yes        yes           like !, for a picker -- output dropped
@@ -379,7 +405,8 @@ lvi -w auto -- 'normal ggdG'        # drive it with keystrokes
 
 Over the socket, ex commands are sent *without* the leading colon. A running
 editor exports *LVI_WID* and *LVI_SOCK* into its child environment, so a program
-launched from *:!* can drive the same view back (see *contrib/lvi-open*).
+launched from *:!* -- or you, from a *:sh* shell -- can drive the same view back
+(see *contrib/lvi-open*).
 
 On the wire, a connection carries newline-delimited command lines; responses
 come back length-framed and binary-safe (so *%p* output can never corrupt the
