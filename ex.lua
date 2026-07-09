@@ -691,6 +691,28 @@ def("hl", function(ed, c) return do_hl(ed, c.args) end)          -- transient ra
 def("hi highlight", function(ed, c) return do_histyle(ed, c.args) end) -- theme
 def("nohl nohlsearch", function(ed) ed.highlights = {}; return "", "ok" end)
 
+-- :[range]fold -- create a closed fold over the address range (>= 2 lines).
+-- With no range, args may carry one or more "L1,L2" specs (space-separated), so
+-- an external tool -- a fold-by-indent or fold-by-hunk script over the socket --
+-- can push every fold in one command, the same way :hl pushes ranges. Folds are
+-- a transient view overlay (see fold.lua): they never touch the buffer, so :w
+-- and the delegated-ex path see all lines regardless. Companions: :foldopen /
+-- :foldclose open/close every fold (the tool-facing spelling of zR / zM);
+-- :foldclear removes them all.
+def("fold", function(ed, c)
+  ed.folds = ed.folds or {}
+  local function add(a, b) if b > a then ed.folds[#ed.folds + 1] = { s = a, e = b, open = false } end end
+  if c.a then add(math.min(c.a, c.b), math.max(c.a, c.b)) end
+  for s1, s2 in c.args:gmatch("(%d+)%s*[,:%s]%s*(%d+)") do
+    local a, b = tonumber(s1), tonumber(s2)
+    add(math.min(a, b), math.max(a, b))
+  end
+  return "", "ok"
+end)
+def("foldclear", function(ed) ed.folds = {}; return "", "ok" end)
+def("foldopen",  function(ed) for _, f in ipairs(ed.folds or {}) do f.open = true  end; return "", "ok" end)
+def("foldclose", function(ed) for _, f in ipairs(ed.folds or {}) do f.open = false end; return "", "ok" end)
+
 -- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
 -- but pointed at external tools). EVENT is change|bufenter|bufleave|bufdelete.
 -- Multiple hooks per event compose; `:on EVENT` with no command clears them.

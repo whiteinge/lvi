@@ -18,6 +18,7 @@ local ex     = require("ex")
 local normal = require("normal")
 local disp   = require("disp")
 local bufs   = require("bufs")
+local fold   = require("fold")
 local config = require("config")
 
 local M = {}
@@ -80,6 +81,7 @@ function M.new_ed()
     leftcol = 0,              -- horizontal scroll (nowrap)
     marks = {},               -- mark char -> {line, col}
     highlights = {},          -- :hl group -> ranges (transient overlay)
+    folds = {},               -- { {s,e,open}, ... } view overlay (see fold.lua)
     jumps = { list = {}, idx = 1 },  -- Ctrl-O/Ctrl-I jumplist
 
     -- the buffer list (bufs.init populates)
@@ -296,6 +298,21 @@ function M.make_splice_hook(ed)
     end
     for _, m in pairs(ed.marks) do adj(m) end
     for _, p in ipairs(ed.jumps.list) do adj(p) end
+    -- Folds are line ranges; shift both endpoints through the same rule, then
+    -- drop any fold the edit collapsed to a single line or inverted (a fold
+    -- must span >= 2 lines to hide anything). Undo/redo replay inverse splices,
+    -- so a fold that straddled a deletion re-expands symmetrically -- but one
+    -- fully removed is gone (vi drops folds inside deleted text likewise).
+    if ed.folds then
+      for _, f in ipairs(ed.folds) do
+        local ps, pe = { f.s }, { f.e }
+        adj(ps); adj(pe)
+        f.s, f.e = ps[1], pe[1]
+      end
+      for i = #ed.folds, 1, -1 do
+        if ed.folds[i].e <= ed.folds[i].s then table.remove(ed.folds, i) end
+      end
+    end
   end
 end
 
@@ -333,6 +350,24 @@ end
 -- clamps the cursor itself; this additionally handles the socket path and does
 -- the vertical scroll to keep the cursor on screen. Cursor bounds are
 -- normal.clamp -- the one definition -- so the two paths cannot drift.
+-- Fold-aware helpers mirroring normal.lua's: with no folds they collapse to
+-- plain l+/-1 and nsegs, so the fold-free paths below stay byte-for-byte the
+-- same. Kept local (editor and normal are separate modules); both defer the
+-- fold semantics to fold.lua so "what is visible" has one definition.
+local function ed_hasfolds(ed) return ed.folds and ed.folds[1] ~= nil end
+local function ed_nextv(ed, l, nl)
+  if ed_hasfolds(ed) then return fold.next_vline(ed.folds, l, nl) end
+  return (l < nl) and l + 1 or nil
+end
+local function ed_prevv(ed, l, nl)
+  if ed_hasfolds(ed) then return fold.prev_vline(ed.folds, l, nl) end
+  return (l > 1) and l - 1 or nil
+end
+local function ed_segs(ed, l, W, ts)
+  if ed_hasfolds(ed) and fold.closed_head(ed.folds, l) then return 1 end
+  return disp.nsegs(ed.buf:line(l) or "", W, ts)
+end
+
 local function refresh(ed)
   normal.clamp(ed)
   local nl = ed.buf:nlines()
@@ -342,10 +377,20 @@ local function refresh(ed)
   local W = ed.cols
   local ts = ed.opts.tabstop
 
+  -- The viewport top must itself be a visible line; a fold closed over the old
+  -- top would otherwise leave it pointing into hidden text. Snap it to the
+  -- covering fold's head (clamp already did the same for the cursor).
+  if ed_hasfolds(ed) and fold.hidden(ed.folds, ed.top) then
+    ed.top = fold.innermost_closed(ed.folds, ed.top).s
+  end
+
   if ed.opts.wrap then
     ed.leftcol = 0
     ed.topsub = ed.topsub
-    local csub = select(1, disp.locate(curline, W, ts, ed.cx))
+    -- A closed-fold head is one row: its cursor sub-row is 0, not ed.cx's wrapped
+    -- position in the (hidden-bodied) underlying line.
+    local csub = (ed_hasfolds(ed) and fold.closed_head(ed.folds, ed.cy)) and 0
+        or select(1, disp.locate(curline, W, ts, ed.cx))
     if ed.cy < ed.top or (ed.cy == ed.top and csub < ed.topsub) then
       ed.top, ed.topsub = ed.cy, csub                 -- cursor above top: scroll up
     else
@@ -353,9 +398,9 @@ local function refresh(ed)
       local l, sub, count, visible = ed.top, ed.topsub, 0, false
       while count < textrows do
         if l == ed.cy and sub == csub then visible = true; break end
-        if l > nl then break end
-        local ns = disp.nsegs(ed.buf:line(l) or "", W, ts)
-        if sub + 1 < ns then sub = sub + 1 else l, sub = l + 1, 0 end
+        if l == nil or l > nl then break end
+        local ns = ed_segs(ed, l, W, ts)
+        if sub + 1 < ns then sub = sub + 1 else l, sub = ed_nextv(ed, l, nl), 0 end
         count = count + 1
       end
       if not visible then
@@ -363,20 +408,33 @@ local function refresh(ed)
         local l2, sub2 = ed.cy, csub
         for _ = 1, textrows - 1 do
           if sub2 > 0 then sub2 = sub2 - 1
-          elseif l2 > 1 then l2 = l2 - 1; sub2 = disp.nsegs(ed.buf:line(l2) or "", W, ts) - 1
-          else break end
+          else local p = ed_prevv(ed, l2, nl); if p then l2 = p; sub2 = ed_segs(ed, l2, W, ts) - 1 else break end end
         end
         ed.top, ed.topsub = l2, sub2
       end
     end
-    local ns = disp.nsegs(ed.buf:line(ed.top) or "", W, ts)
+    local ns = ed_segs(ed, ed.top, W, ts)
     if ed.topsub >= ns then ed.topsub = ns - 1 end
     if ed.topsub < 0 then ed.topsub = 0 end
     if ed.top < 1 then ed.top = 1 end
   else
     ed.topsub = 0
     if ed.cy < ed.top then ed.top = ed.cy end
-    if ed.cy > ed.top + textrows - 1 then ed.top = ed.cy - textrows + 1 end
+    if ed_hasfolds(ed) then
+      -- Count visible rows from top down to the cursor; if it isn't reachable
+      -- within the window (or lies above), put it on the last row by walking
+      -- back textrows-1 visible lines. Folds compress rows, so plain
+      -- top+textrows-1 arithmetic would scroll too early or too late.
+      local l, rows = ed.top, 0
+      while l and l < ed.cy do rows = rows + 1; l = ed_nextv(ed, l, nl) end
+      if l ~= ed.cy or rows > textrows - 1 then
+        local t = ed.cy
+        for _ = 1, textrows - 1 do local p = ed_prevv(ed, t, nl); if p then t = p else break end end
+        ed.top = t
+      end
+    else
+      if ed.cy > ed.top + textrows - 1 then ed.top = ed.cy - textrows + 1 end
+    end
     if ed.top < 1 then ed.top = 1 end
     local dc = disp.dispcol(curline, ts, ed.cx)
     ed.leftcol = ed.leftcol or 0

@@ -13,11 +13,11 @@ local M = {}
 
 -- Per-buffer view state (everything else -- text, path, modified, undo -- lives
 -- in the buffer object; the rest of ed is shared across buffers).
-local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "jumps" }
+local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "folds", "jumps" }
 
 local function fresh(buf)
   return { buf = buf, cx = 1, cy = 1, top = 1, topsub = 0, leftcol = 0,
-           marks = {}, highlights = {}, jumps = { list = {}, idx = 1 } }
+           marks = {}, highlights = {}, folds = {}, jumps = { list = {}, idx = 1 } }
 end
 
 local function save(ed)
@@ -98,6 +98,8 @@ function M.reload(ed)
   ed.buf.on_splice = ed.splice_hook         -- new object: re-attach the position hook
   ed.buffers[ed.bufidx].buf = ed.buf
   ed.cx, ed.cy, ed.top, ed.topsub, ed.leftcol = 1, 1, 1, 0, 0
+  ed.folds = {}                             -- transient view state; the reloaded
+                                            -- text may not match the old ranges
   return true
 end
 

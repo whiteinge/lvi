@@ -15,8 +15,23 @@
 
 local term = require("term")
 local disp = require("disp")
+local fold = require("fold")
 
 local M = {}
+
+-- A closed fold's one-row summary: "+-- N lines: <head text>", sliced to the
+-- window. Themed by the `Folded` group (`:hi Folded ...`, like vim): when it
+-- carries a style the row is padded to the window width and covered by one
+-- interval, so it reads as a full-width bar; un-themed it draws as plain text.
+-- It is a synthetic row, not the underlying line, so the buffer's own :hl
+-- overlay does not apply here.
+local function fold_summary(head, buf, ts, W, sgr)
+  local text = ("+--%3d lines: %s"):format(head.e - head.s + 1, buf:line(head.s) or "")
+  if not sgr or sgr == "" then return disp.slice(text, ts, 0, W, nil) end
+  local w = disp.width(text, ts)
+  if w < W then text = text .. string.rep(" ", W - w) end
+  return disp.slice(text, ts, 0, W, { { 0, W, sgr, 0 } })
+end
 
 -- Bucket every highlight range by line, once per frame: O(total ranges), then
 -- O(1) lookup per visible line.
@@ -87,41 +102,67 @@ function M.frame(ed)
   local buf = ed.buf
   local ts = ed.opts.tabstop
   local wrap = ed.opts.wrap
+  local folds = ed.folds or {}
+  local hasfolds = folds[1] ~= nil
+  local foldsgr = ed.hlstyles and ed.hlstyles["Folded"]   -- :hi Folded ... (optional theme)
+  local nl = buf:nlines()
   local hidx = hl_index(ed)
   local out = { term.hide, term.home }
   local crow, ccol
 
   if wrap then
     -- Each buffer line occupies one or more screen rows; paint from
-    -- (ed.top, ed.topsub), noting the cursor's screen row as we pass it.
+    -- (ed.top, ed.topsub), noting the cursor's screen row as we pass it. A
+    -- closed fold is a single summary row at its head, and the walk skips its
+    -- hidden interior via fold.next_vline (the inverse of a wrapped line).
     local ccsub, cccol = disp.locate(buf:line(ed.cy) or "", W, ts, ed.cx)
     local l, skip, sr = ed.top, ed.topsub, 0
-    while sr < textrows and l <= buf:nlines() do
-      local orig = buf:line(l) or ""
-      local ivs = intervals(hidx[l], orig, ts)
-      local nseg = disp.nsegs(orig, W, ts)
-      for si = 1 + skip, nseg do
-        if sr >= textrows then break end
-        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. disp.slice(orig, ts, (si - 1) * W, W, ivs)
-        if l == ed.cy and (si - 1) == ccsub then crow, ccol = sr + 1, cccol + 1 end
-        sr = sr + 1
+    while sr < textrows and l ~= nil and l <= nl do
+      local head = hasfolds and fold.closed_head(folds, l) or nil
+      if head then
+        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. fold_summary(head, buf, ts, W, foldsgr)
+        if l == ed.cy then crow, ccol = sr + 1, 1 end
+        sr, skip = sr + 1, 0
+        l = hasfolds and fold.next_vline(folds, l, nl) or (l + 1)
+      else
+        local orig = buf:line(l) or ""
+        local ivs = intervals(hidx[l], orig, ts)
+        local nseg = disp.nsegs(orig, W, ts)
+        for si = 1 + skip, nseg do
+          if sr >= textrows then break end
+          out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. disp.slice(orig, ts, (si - 1) * W, W, ivs)
+          if l == ed.cy and (si - 1) == ccsub then crow, ccol = sr + 1, cccol + 1 end
+          sr = sr + 1
+        end
+        skip = 0
+        l = hasfolds and fold.next_vline(folds, l, nl) or (l + 1)
       end
-      skip, l = 0, l + 1
     end
     while sr < textrows do out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. "~"; sr = sr + 1 end
     crow, ccol = crow or 1, ccol or 1
   else
-    -- One buffer line per screen row; slice by the horizontal offset leftcol.
+    -- One visible buffer line per screen row; slice by the horizontal offset
+    -- leftcol. With folds present, walk fold.next_vline instead of top+i (which
+    -- would count hidden lines) and draw a summary row for each closed head.
     local left = ed.leftcol or 0
+    local L = ed.top
     for i = 0, textrows - 1 do
       out[#out + 1] = term.move(i + 1, 1) .. term.clr_eol
-      local L = ed.top + i
-      local ln = buf:line(L)
-      if ln == nil then out[#out + 1] = "~"
-      else out[#out + 1] = disp.slice(ln, ts, left, W, intervals(hidx[L], ln, ts)) end
+      if L == nil or L > nl then out[#out + 1] = "~"
+      else
+        local head = hasfolds and fold.closed_head(folds, L) or nil
+        if head then out[#out + 1] = fold_summary(head, buf, ts, W, foldsgr)
+        else
+          local ln = buf:line(L)
+          out[#out + 1] = disp.slice(ln, ts, left, W, intervals(hidx[L], ln, ts))
+        end
+        if L == ed.cy then crow = i + 1 end
+        L = hasfolds and fold.next_vline(folds, L, nl) or (L + 1)
+      end
     end
-    crow = ed.cy - ed.top + 1
-    ccol = disp.dispcol(buf:line(ed.cy) or "", ts, ed.cx) - left + 1
+    crow = crow or 1
+    if hasfolds and fold.closed_head(folds, ed.cy) then ccol = 1   -- cursor on a fold row: col 1
+    else ccol = disp.dispcol(buf:line(ed.cy) or "", ts, ed.cx) - left + 1 end
   end
 
   -- Bottom row: command line while typing ':', otherwise the status line.

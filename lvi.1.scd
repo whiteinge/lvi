@@ -148,6 +148,37 @@ just register text, so a yanked register can be replayed with *@*.
 *zt* *zz* *zb*
 	Like *z*_CR_ / *z.* / *z-*, but leave the cursor in its current column.
 
+## Folding
+
+A fold collapses a range of lines to a single summary row (*+-- N lines: ...*);
+the lines are only hidden, never altered, so *:w* and every ex command still see
+the whole buffer. Folds are per-view and transient (they are not saved). *j*/*k*
+and the scroll commands treat a closed fold as one row, so navigation skips its
+interior; the cursor never rests on a hidden line (a motion or *`*_mark_ that
+lands inside a closed fold snaps to its head). The summary row is themed by the
+*Folded* highlight group when set (*:hi Folded fg=cyan italic*), otherwise it
+draws as plain text.
+
+Nothing folds automatically: lvi ships the fold *mechanism* only. A tool
+computes *where* the folds go and pushes *:fold* over the socket, exactly as
+external search feeds *:hl* -- see *contrib/lvi-fold* (by marker or by indent).
+
+*zf*_motion_
+	Create a closed fold over the lines the _motion_ spans (e.g. *zf3j*, *zfG*,
+	*zf}*). Also available as *:fold* (see *EX COMMANDS*).
+
+*zo* *zc* *za*
+	Open, close, or toggle the innermost fold at the cursor.
+
+*zd*
+	Delete (remove) the fold at the cursor, leaving its lines unfolded.
+
+*zR* *zM* *zE*
+	Open all folds, close all folds, or eliminate every fold in the view.
+
+*zj* *zk*
+	Move to the start of the next fold, or the end of the previous fold.
+
 ## Other
 
 *:*
@@ -323,6 +354,17 @@ _contrib/lvi-shell.sh_ do).
 
 *nohl*
 	Clear all highlight ranges (styles set by *hi* persist).
+
+*fold*
+	With an address range, create a closed fold over it (*:3,6fold*). With no
+	range, _args_ may carry one or more _L1_,_L2_ specs
+	(*:fold 1,2 5,7*) -- the form an external tool uses to push many folds in one
+	command. Folds hide lines only in this view; the buffer is unchanged. See
+	*Folding* in *NORMAL MODE* for the *z* keys.
+
+*foldopen*, *foldclose*, *foldclear*
+	Open every fold, close every fold, or remove all folds (the tool-facing
+	spellings of *zR* / *zM* / *zE*).
 
 *on* _event_ [_cmd_]
 	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears

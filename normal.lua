@@ -15,6 +15,7 @@
 
 local ex = require("ex")
 local disp = require("disp")
+local fold = require("fold")
 
 local M = {}
 
@@ -103,6 +104,13 @@ end
 function M.clamp(ed)
   local nl = ed.buf:nlines()
   ed.cy = math.max(1, math.min(ed.cy, nl))
+  -- The cursor never rests on a line hidden inside a closed fold: snap it to the
+  -- fold's (visible) head. This is the one place that invariant lives, so every
+  -- motion that lands in a fold -- G, marks, gg, a mistyped count -- collapses
+  -- onto the fold line, and render's crow can always be found on a visible row.
+  if ed.folds and ed.folds[1] and fold.hidden(ed.folds, ed.cy) then
+    ed.cy = fold.innermost_closed(ed.folds, ed.cy).s
+  end
   local s = line(ed, ed.cy)
   local maxc = (ed.mode == "insert") and (#s + 1) or disp.last_char(s) -- char-aware cap
   ed.cx = math.max(1, math.min(ed.cx, maxc))
@@ -635,24 +643,52 @@ end
 -- ---- screen geometry (shared by H/M/L and the scroll commands) --------------
 local function textrows(ed) return ed.rows - 1 end
 
+-- Fold-aware buffer-line stepping. When folds are present these skip closed-fold
+-- interiors (a closed fold is one screen row at its head); with no folds they
+-- collapse to plain l+/-1, so the fold-free fast paths are unchanged. These are
+-- the single point where this module bends the buffer-line <-> screen-row
+-- mapping away from affine -- the same bend wrap already made (one line -> many
+-- rows); folding is its inverse (many lines -> one row).
+local function has_folds(ed) return ed.folds and ed.folds[1] ~= nil end
+local function nextv(ed, l)
+  if has_folds(ed) then return fold.next_vline(ed.folds, l, ed.buf:nlines()) end
+  return (l < ed.buf:nlines()) and l + 1 or nil
+end
+local function prevv(ed, l)
+  if has_folds(ed) then return fold.prev_vline(ed.folds, l, ed.buf:nlines()) end
+  return (l > 1) and l - 1 or nil
+end
+-- Screen rows a buffer line occupies: 1 for a closed-fold head (its summary),
+-- else its wrapped segment count.
+local function segs_at(ed, l, W, ts)
+  if has_folds(ed) and fold.closed_head(ed.folds, l) then return 1 end
+  return disp.nsegs(line(ed, l), W, ts)
+end
+
 -- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
--- up), honoring wrap, clamped to the buffer. In nowrap each line is one row.
+-- up), honoring wrap AND folds, clamped to the buffer. In nowrap each visible
+-- line is one row; a closed fold collapses its interior to a single head row.
 local function advance_rows(ed, l, sub, rows)
   local N = ed.buf:nlines()
   if not ed.opts.wrap then
-    return math.max(1, math.min(l + rows, N)), 0
+    if not has_folds(ed) then return math.max(1, math.min(l + rows, N)), 0 end
+    if rows >= 0 then
+      for _ = 1, rows do local nl = nextv(ed, l); if nl then l = nl else break end end
+    else
+      for _ = 1, -rows do local pl = prevv(ed, l); if pl then l = pl else break end end
+    end
+    return l, 0
   end
   local W, ts = ed.cols, ed.opts.tabstop
   if rows > 0 then
     for _ = 1, rows do
-      if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
-      elseif l < N then l, sub = l + 1, 0 else break end
+      if sub + 1 < segs_at(ed, l, W, ts) then sub = sub + 1
+      else local nl = nextv(ed, l); if nl then l, sub = nl, 0 else break end end
     end
   else
     for _ = 1, -rows do
       if sub > 0 then sub = sub - 1
-      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
-      else break end
+      else local pl = prevv(ed, l); if pl then l, sub = pl, segs_at(ed, pl, W, ts) - 1 else break end end
     end
   end
   return l, sub
@@ -741,8 +777,18 @@ local motions = {
     local ts = ed.opts.tabstop
     return ed.cy, disp.byte_at_dispcol(line(ed, ed.cy), ts, (count or 1) - 1)
   end },
-  [b("j")] = { kind = "line", move = function(ed, n) return ed.cy + (n or 1), ed.cx end },
-  [b("k")] = { kind = "line", move = function(ed, n) return ed.cy - (n or 1), ed.cx end },
+  [b("j")] = { kind = "line", move = function(ed, n)
+    if not has_folds(ed) then return ed.cy + (n or 1), ed.cx end
+    local l = ed.cy                          -- step over closed folds (one row each)
+    for _ = 1, (n or 1) do local nl = nextv(ed, l); if nl then l = nl else break end end
+    return l, ed.cx
+  end },
+  [b("k")] = { kind = "line", move = function(ed, n)
+    if not has_folds(ed) then return ed.cy - (n or 1), ed.cx end
+    local l = ed.cy
+    for _ = 1, (n or 1) do local pl = prevv(ed, l); if pl then l = pl else break end end
+    return l, ed.cx
+  end },
   [b("G")] = { kind = "line", jump = true, move = function(ed, n)
     local t = n or ed.buf:nlines()
     t = math.max(1, math.min(t, ed.buf:nlines()))
@@ -865,12 +911,20 @@ end
 -- top row). Assumes the cursor is at or below the top (true whenever we scroll,
 -- since the cursor is on-screen beforehand).
 local function cursor_row_offset(ed)
-  if not ed.opts.wrap then return ed.cy - ed.top end
+  if not ed.opts.wrap then
+    if not has_folds(ed) then return ed.cy - ed.top end
+    local n, l = 0, ed.top                    -- count only visible lines between
+    while l and l < ed.cy do n = n + 1; l = nextv(ed, l) end
+    return n
+  end
   local W, ts = ed.cols, ed.opts.tabstop
-  local csub = select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx))
+  -- A closed-fold head is a single row: its cursor sub-row is 0, not the wrapped
+  -- position of ed.cx in the underlying (hidden-bodied) line.
+  local csub = fold.closed_head and has_folds(ed) and fold.closed_head(ed.folds, ed.cy)
+      and 0 or select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx))
   local l, sub, n = ed.top, ed.topsub, 0
   while l < ed.cy or (l == ed.cy and sub < csub) do
-    if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1 else l, sub = l + 1, 0 end
+    if sub + 1 < segs_at(ed, l, W, ts) then sub = sub + 1 else l, sub = (nextv(ed, l) or (l + 1)), 0 end
     n = n + 1
   end
   return n
@@ -880,7 +934,11 @@ end
 -- the visual column.
 local function place_cursor_at_offset(ed, off)
   if not ed.opts.wrap then
-    ed.cy = ed.top + off                       -- column (ed.cx) preserved
+    if has_folds(ed) then
+      ed.cy = (advance_rows(ed, ed.top, 0, off))  -- step visible rows (skip folds)
+    else
+      ed.cy = ed.top + off                     -- column (ed.cx) preserved
+    end
   else
     local W, ts = ed.cols, ed.opts.tabstop
     local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx)
@@ -909,6 +967,54 @@ local function scroll_reveal(ed, rows)
   local noff = off - rows
   noff = math.max(0, math.min(noff, textrows(ed) - 1))
   place_cursor_at_offset(ed, noff)
+end
+
+-- ---- folds (z-prefix commands) ----------------------------------------------
+-- All operate on ed.folds (see fold.lua); folds never touch the buffer, so none
+-- of these mark ed.changed or checkpoint undo. clamp() enforces "cursor off any
+-- hidden line", so closing a fold over the cursor snaps it onto the fold head.
+local function fold_create(ed, a, c)          -- a closed fold over lines a..c
+  if a > c then a, c = c, a end
+  if c > a then ed.folds[#ed.folds + 1] = { s = a, e = c, open = false }; ed.cy = a end
+  clamp(ed)
+end
+
+-- zf{motion}: fold the lines the motion spans (linewise, like an operator, so
+-- zf3j / zf} / zfG all work and an inner count multiplies the z-count).
+local function fold_create_motion(ed, count)
+  local k = getkey(ed)
+  local c2
+  c2, k = read_count(ed, k)
+  local m = motions[k]
+  if not m then return end
+  fold_create(ed, ed.cy, (m.move(ed, combine(count, c2))))
+end
+
+local function fold_open(ed)                   -- zo: reveal one level at the cursor
+  local f = fold.innermost_closed(ed.folds, ed.cy)
+  if f then f.open = true end
+end
+
+local function fold_close(ed)                  -- zc: close the tightest open fold here
+  local best
+  for _, f in ipairs(ed.folds) do
+    if f.open and ed.cy >= f.s and ed.cy <= f.e and (not best or (f.e - f.s) < (best.e - best.s)) then
+      best = f
+    end
+  end
+  if best then best.open = false; clamp(ed) end
+end
+
+local function fold_toggle(ed)                 -- za: open if closed here, else close
+  local closed = fold.innermost_closed(ed.folds, ed.cy)
+  if closed then closed.open = true else fold_close(ed) end
+end
+
+local function fold_delete(ed)                 -- zd: remove the fold at the cursor
+  local f = fold.innermost(ed.folds, ed.cy)
+  if not f then return end
+  for i, g in ipairs(ed.folds) do if g == f then table.remove(ed.folds, i); break end end
+  clamp(ed)
 end
 
 -- ---- single-key actions -----------------------------------------------------
@@ -1032,6 +1138,27 @@ actions = {
   -- refresh() won't re-scroll and fight us.
   [b("z")] = function(ed, count)
     local k = getkey(ed)
+    -- Fold sub-commands (vim's z-prefix set). These return early; anything else
+    -- falls through to the window-positioning spellings below.
+    if k == b("f") then return fold_create_motion(ed, count)
+    elseif k == b("o") then return fold_open(ed)
+    elseif k == b("c") then return fold_close(ed)
+    elseif k == b("a") then return fold_toggle(ed)
+    elseif k == b("d") then return fold_delete(ed)
+    elseif k == b("R") then for _, f in ipairs(ed.folds) do f.open = true end; return
+    elseif k == b("M") then for _, f in ipairs(ed.folds) do f.open = false end; return clamp(ed)
+    elseif k == b("E") then ed.folds = {}; return
+    elseif k == b("j") then                       -- to the start of the next fold
+      local best
+      for _, f in ipairs(ed.folds) do if f.s > ed.cy and (not best or f.s < best) then best = f.s end end
+      if best then ed.cy, ed.cx = best, 1; clamp(ed) end
+      return
+    elseif k == b("k") then                       -- to the end of the previous fold
+      local best
+      for _, f in ipairs(ed.folds) do if f.e < ed.cy and (not best or f.e > best) then best = f.e end end
+      if best then ed.cy, ed.cx = best, 1; clamp(ed) end
+      return
+    end
     local tr = ed.rows - 1
     local target = count and math.max(1, math.min(count, ed.buf:nlines())) or ed.cy
     -- How many screen rows above `target` the window top should sit: 0 (top),

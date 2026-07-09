@@ -84,7 +84,8 @@ client.
 
 Real modal editing — motions, operators with full composition (`dw`, `cf.`,
 `` y`a ``, `2d3w`), registers, `.` repeat, macros, multi-level undo/redo, marks,
-and the scrolling/positioning commands. An ex layer shared by the `:` prompt and
+**folds** (`zf`/`zo`/`zc`/`zR`, or `:fold` from a tool), and the
+scrolling/positioning commands. An ex layer shared by the `:` prompt and
 the socket, with **anything lvi doesn't implement delegated to the system `ex`**
 (so `:s`, `:g`, `:m`, and the full address grammar just work). A **config file**
 that's simply a list of those ex commands. A **styled highlight overlay** (`:hl`
