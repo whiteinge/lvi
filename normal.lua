@@ -185,10 +185,16 @@ end
 
 local function split_line(ed) -- <CR> in insert mode
   local s = line(ed, ed.cy)
-  ed.buf:set(ed.cy, s:sub(1, ed.cx - 1))
-  ed.buf:insert(ed.cy + 1, { s:sub(ed.cx) })
+  local head, tail = s:sub(1, ed.cx - 1), s:sub(ed.cx)
+  local indent = ""
+  if ed.opts.autoindent then
+    indent = s:match("^[ \t]*")                 -- carry the split line's indent onto the next
+    if head:match("^[ \t]*$") then head = "" end -- ...and drop it from a line that was only indent
+  end
+  ed.buf:set(ed.cy, head)
+  ed.buf:insert(ed.cy + 1, { indent .. tail })
   ed.cy = ed.cy + 1
-  ed.cx = 1
+  ed.cx = #indent + 1
 end
 
 local function backspace(ed)
@@ -233,7 +239,13 @@ local function insert_mode(ed)
   clamp(ed)
   while true do
     local k = getkey(ed)
-    if k == 27 then break                              -- ESC
+    if k == 27 then                                    -- ESC
+      -- vi's autoindent rule: a line left holding only its auto-inserted indent
+      -- (nothing typed) is trimmed back to empty, so no trailing whitespace.
+      if ed.opts.autoindent and line(ed, ed.cy):match("^[ \t]+$") then
+        ed.buf:set(ed.cy, ""); ed.cx = 1
+      end
+      break
     elseif k == 13 or k == 10 then split_line(ed)      -- CR
     elseif k == 127 or k == 8 then backspace(ed)       -- Backspace / Ctrl-H
     elseif k == 23 then kill_word(ed)                  -- Ctrl-W: erase word (POSIX vi)
@@ -1384,8 +1396,16 @@ actions = {
   end,
   [b("A")] = function(ed) ed.cx = #line(ed, ed.cy) + 1; insert_mode(ed) end,
   [b("I")] = function(ed) ed.cx = first_nonblank(line(ed, ed.cy)); insert_mode(ed) end,
-  [b("o")] = function(ed) ed.buf:insert(ed.cy + 1, { "" }); ed.cy = ed.cy + 1; ed.cx = 1; insert_mode(ed) end,
-  [b("O")] = function(ed) ed.buf:insert(ed.cy, { "" }); ed.cx = 1; insert_mode(ed) end,
+  -- o/O open a line below/above; with autoindent it inherits the current line's
+  -- leading whitespace (trimmed by the ESC rule if you type nothing).
+  [b("o")] = function(ed)
+    local indent = ed.opts.autoindent and line(ed, ed.cy):match("^[ \t]*") or ""
+    ed.buf:insert(ed.cy + 1, { indent }); ed.cy = ed.cy + 1; ed.cx = #indent + 1; insert_mode(ed)
+  end,
+  [b("O")] = function(ed)
+    local indent = ed.opts.autoindent and line(ed, ed.cy):match("^[ \t]*") or ""
+    ed.buf:insert(ed.cy, { indent }); ed.cx = #indent + 1; insert_mode(ed)
+  end,
   -- '.' repeats the last change by replaying its recorded keys: prepend them to
   -- the funnel so they run as the next command(s). '.' itself makes no change,
   -- so it never overwrites last_change (no recursion).

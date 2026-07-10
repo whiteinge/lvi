@@ -73,7 +73,7 @@ function M.new_ed()
     hooks = {},               -- :on event -> { cmd, ... }
     textobj_cmds = {},        -- :textobj KEY -> CMD (custom objects; see ex.textobj_range)
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
-    opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false },
+    opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
     hlpri = {},               -- :hi group -> z-order
 

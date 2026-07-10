@@ -374,9 +374,12 @@ _contrib/lvi-shell.sh_ do).
 *set* _option_...
 	Set options: *wrap*/*nowrap* (and *wrap!* to toggle, *wrap?* to query),
 	*tabstop*=_N_ (alias *ts*), *shiftwidth*=_N_ (alias *sw*, the *>>*/*<<*
-	indent step), and *expandtab*/*noexpandtab* (alias *et*/*noet*; whether
-	*>>* indents with spaces or tabs). Numeric options answer *?*; *expandtab*
-	also toggles with *!*. *scratch*/*noscratch* marks the current buffer
+	indent step), *expandtab*/*noexpandtab* (alias *et*/*noet*; whether
+	*>>* indents with spaces or tabs), and *autoindent*/*noautoindent* (alias
+	*ai*/*noai*; a new line from *o*/*O*/*<CR>* copies the current line's leading
+	whitespace, and a line left holding only that auto-indent is trimmed back to
+	empty). Numeric options answer *?*; the booleans also toggle with *!*.
+	*scratch*/*noscratch* marks the current buffer
 	ephemeral: it never counts as modified, so *q*/*bd* never nag, *wa* skips it,
 	and a crash does not preserve it. Unlike the others it is per-buffer (like a
 	command window's buffer); it toggles with *!* and answers *?*.
