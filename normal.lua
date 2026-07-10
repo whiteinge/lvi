@@ -742,7 +742,7 @@ end
 -- else its wrapped segment count.
 local function segs_at(ed, l, W, ts)
   if has_folds(ed) and fold.closed_head(ed.folds, l) then return 1 end
-  return disp.nsegs(line(ed, l), W, ts)
+  return disp.nsegs(line(ed, l), W, ts, ed.opts.linebreak)
 end
 
 -- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
@@ -796,20 +796,20 @@ local function g_motion_move(ed, k2, count)
     return ed.cy + (down and n or -n), ed.cx
   end
   -- Move by screen (display) rows, holding the current visual column.
-  local W, ts = ed.cols, ed.opts.tabstop
+  local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
   local N, l = ed.buf:nlines(), ed.cy
-  local sub, ccol = disp.locate(line(ed, l), W, ts, ed.cx)
+  local sub, ccol = disp.locate(line(ed, l), W, ts, ed.cx, lb)
   for _ = 1, n do
     if down then
-      if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
+      if sub + 1 < disp.nsegs(line(ed, l), W, ts, lb) then sub = sub + 1
       elseif l < N then l, sub = l + 1, 0 else break end
     else
       if sub > 0 then sub = sub - 1
-      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
+      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts, lb) - 1
       else break end
     end
   end
-  return l, disp.byteat(line(ed, l), W, ts, sub, ccol)
+  return l, disp.byteat(line(ed, l), W, ts, sub, ccol, lb)
 end
 
 local motions = {
@@ -1008,7 +1008,7 @@ local function cursor_row_offset(ed)
   -- A closed-fold head is a single row: its cursor sub-row is 0, not the wrapped
   -- position of ed.cx in the underlying (hidden-bodied) line.
   local csub = fold.closed_head and has_folds(ed) and fold.closed_head(ed.folds, ed.cy)
-      and 0 or select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx))
+      and 0 or select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx, ed.opts.linebreak))
   local l, sub, n = ed.top, ed.topsub, 0
   while l < ed.cy or (l == ed.cy and sub < csub) do
     if sub + 1 < segs_at(ed, l, W, ts) then sub = sub + 1 else l, sub = (nextv(ed, l) or (l + 1)), 0 end
@@ -1027,11 +1027,11 @@ local function place_cursor_at_offset(ed, off)
       ed.cy = ed.top + off                     -- column (ed.cx) preserved
     end
   else
-    local W, ts = ed.cols, ed.opts.tabstop
-    local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx)
+    local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
+    local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx, lb)
     local cl, csub = advance_rows(ed, ed.top, ed.topsub, off)
     ed.cy = cl
-    ed.cx = disp.byteat(line(ed, cl), W, ts, csub, ccol)
+    ed.cx = disp.byteat(line(ed, cl), W, ts, csub, ccol, lb)
   end
   clamp(ed)
 end

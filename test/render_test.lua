@@ -71,6 +71,17 @@ describe("render.frame", function()
     expect(f:find("efgh", 1, true)).to.exist()
   end)
 
+  it("wraps at whitespace (not mid-word) under linebreak", function()
+    local over = { opts = { wrap = true, tabstop = 8, linebreak = true }, cols = 8 }
+    local f = render.frame(ed_with("hello world", over))
+    expect(f:find("world", 1, true)).to.exist()          -- kept whole on its own row
+    expect(f:find("hello wo", 1, true)).to_not.exist()   -- no mid-word split
+    -- without linebreak the same width splits the word:
+    local hard = render.frame(ed_with("hello world",
+      { opts = { wrap = true, tabstop = 8 }, cols = 8 }))
+    expect(hard:find("hello wo", 1, true)).to.exist()
+  end)
+
   it("scrolls horizontally by leftcol when nowrap", function()
     local f = render.frame(ed_with("0123456789", { cols = 4, leftcol = 4 }))
     expect(f:find("4567", 1, true)).to.exist()

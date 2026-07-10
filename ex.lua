@@ -74,7 +74,8 @@ local function line_range(ed, a, b)
   return from, to
 end
 
--- :set -- minimal option handling. Booleans: `wrap` / `nowrap` / `wrap?`.
+-- :set -- minimal option handling. Booleans: `wrap` / `nowrap` / `wrap?`
+-- (also `linebreak`/`lbr`: wrap only at whitespace, never mid-word).
 -- Numerics: `tabstop=4` (alias `ts`) / `tabstop?`. Space-separated options are
 -- each applied; queries are collected into the reply.
 --
@@ -110,6 +111,7 @@ local function do_set(ed, args)
     elseif opt:sub(-1) == "?" then
       local n = opt:sub(1, -2)
       if n == "wrap" then out[#out + 1] = ed.opts.wrap and "wrap" or "nowrap"
+      elseif n == "linebreak" or n == "lbr" then out[#out + 1] = ed.opts.linebreak and "linebreak" or "nolinebreak"
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
       elseif n == "fmtprg" or n == "fp" then out[#out + 1] = "fmtprg=" .. ed.opts.fmtprg
@@ -121,6 +123,7 @@ local function do_set(ed, args)
     elseif opt:sub(-1) == "!" then                      -- toggle a boolean (vim `set wrap!`)
       local n = opt:sub(1, -2)
       if n == "wrap" then ed.opts.wrap = not ed.opts.wrap
+      elseif n == "linebreak" or n == "lbr" then ed.opts.linebreak = not ed.opts.linebreak
       elseif n == "expandtab" or n == "et" then ed.opts.expandtab = not ed.opts.expandtab
       elseif n == "autoindent" or n == "ai" then ed.opts.autoindent = not ed.opts.autoindent
       elseif n == "modified" or n == "mod" then
@@ -134,6 +137,8 @@ local function do_set(ed, args)
       else return "not a boolean option: " .. n, "err" end
     elseif opt == "wrap" then ed.opts.wrap = true
     elseif opt == "nowrap" then ed.opts.wrap = false
+    elseif opt == "linebreak" or opt == "lbr" then ed.opts.linebreak = true
+    elseif opt == "nolinebreak" or opt == "nolbr" then ed.opts.linebreak = false
     elseif opt == "expandtab" or opt == "et" then ed.opts.expandtab = true
     elseif opt == "noexpandtab" or opt == "noet" then ed.opts.expandtab = false
     elseif opt == "autoindent" or opt == "ai" then ed.opts.autoindent = true

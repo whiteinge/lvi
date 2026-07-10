@@ -387,6 +387,10 @@ _contrib/lvi-shell.sh_ do).
 
 *set* _option_...
 	Set options: *wrap*/*nowrap* (and *wrap!* to toggle, *wrap?* to query),
+	*linebreak*/*nolinebreak* (alias *lbr*/*nolbr*, with *linebreak!* and
+	*linebreak?*; when on, a wrapped line breaks at the last whitespace that
+	fits instead of mid-word, falling back to a mid-word break only for a
+	single word longer than the screen),
 	*tabstop*=_N_ (alias *ts*), *shiftwidth*=_N_ (alias *sw*, the *>>*/*<<*
 	indent step), *expandtab*/*noexpandtab* (alias *et*/*noet*; when on, *>>*
 	and the insert-mode *<Tab>* key indent with spaces -- one *shiftwidth* --

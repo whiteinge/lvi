@@ -52,6 +52,17 @@ describe("normal-mode interpreter", function()
       feed(ed, "e"); expect(ed.cx).to.equal(7)   -- end of 'bar'
       feed(ed, "b"); expect(ed.cx).to.equal(5)   -- back to start of 'bar'
     end)
+
+    it("gj steps to the next screen row honoring linebreak", function()
+      -- "hello world" at cols=8: hard wrap splits mid-word (row 1 starts at
+      -- 'rld', byte 9); linebreak breaks at the space (row 1 starts at 'world',
+      -- byte 7). gj holds the visual column (0) and drops one screen row.
+      local ed = make("hello world"); ed.cols = 8; ed.opts.wrap = true
+      feed(ed, "gj"); expect(ed.cx).to.equal(9)          -- hard wrap
+      local lbed = make("hello world"); lbed.cols = 8
+      lbed.opts.wrap = true; lbed.opts.linebreak = true
+      feed(lbed, "gj"); expect(lbed.cx).to.equal(7)      -- word kept whole
+    end)
   end)
 
   describe("find motions f t F T ; ,", function()

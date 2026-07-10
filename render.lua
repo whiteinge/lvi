@@ -102,6 +102,7 @@ function M.frame(ed)
   local buf = ed.buf
   local ts = ed.opts.tabstop
   local wrap = ed.opts.wrap
+  local lb = ed.opts.linebreak
   local folds = ed.folds or {}
   local hasfolds = folds[1] ~= nil
   local foldsgr = ed.hlstyles and ed.hlstyles["Folded"]   -- :hi Folded ... (optional theme)
@@ -115,7 +116,7 @@ function M.frame(ed)
     -- (ed.top, ed.topsub), noting the cursor's screen row as we pass it. A
     -- closed fold is a single summary row at its head, and the walk skips its
     -- hidden interior via fold.next_vline (the inverse of a wrapped line).
-    local ccsub, cccol = disp.locate(buf:line(ed.cy) or "", W, ts, ed.cx)
+    local ccsub, cccol = disp.locate(buf:line(ed.cy) or "", W, ts, ed.cx, lb)
     local l, skip, sr = ed.top, ed.topsub, 0
     while sr < textrows and l ~= nil and l <= nl do
       local head = hasfolds and fold.closed_head(folds, l) or nil
@@ -127,13 +128,21 @@ function M.frame(ed)
       else
         local orig = buf:line(l) or ""
         local ivs = intervals(hidx[l], orig, ts)
-        local nseg = disp.nsegs(orig, W, ts)
-        for si = 1 + skip, nseg do
-          if sr >= textrows then break end
-          out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. disp.slice(orig, ts, (si - 1) * W, W, ivs)
-          if l == ed.cy and (si - 1) == ccsub then crow, ccol = sr + 1, cccol + 1 end
-          sr = sr + 1
-        end
+        -- Walk the line's wrapped segments via seg_end (variable width under
+        -- linebreak), skipping the first `skip` (topsub). Each row is sliced to
+        -- its own width `w`, never full W, so a linebreak row can't spill the
+        -- next word onto this line.
+        local a, sc, si, len = 1, 0, 0, #orig
+        repeat
+          local b, w = disp.seg_end(orig, a, W, ts, lb)
+          if si >= skip then
+            if sr >= textrows then break end
+            out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. disp.slice(orig, ts, sc, w, ivs)
+            if l == ed.cy and si == ccsub then crow, ccol = sr + 1, cccol + 1 end
+            sr = sr + 1
+          end
+          a, sc, si = b, sc + w, si + 1
+        until a > len
         skip = 0
         l = hasfolds and fold.next_vline(folds, l, nl) or (l + 1)
       end

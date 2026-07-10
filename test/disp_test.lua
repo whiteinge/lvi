@@ -56,6 +56,35 @@ describe("disp", function()
     expect(disp.byteat("", 3, 8, 0, 0)).to.equal(1)
   end)
 
+  describe("linebreak (wrap only at whitespace)", function()
+    it("breaks at the last space instead of mid-word", function()
+      -- W=8: hard wrap splits "world" mid-word; linebreak keeps it whole.
+      expect(disp.segments("hello world", 8, 8)).to.equal({ "hello wo", "rld" })
+      expect(disp.segments("hello world", 8, 8, true)).to.equal({ "hello ", "world" })
+    end)
+
+    it("keeps trailing spaces on the upper row", function()
+      -- the run of spaces stays with the word it followed; the next row starts
+      -- clean at the following word (Vim's rule).
+      expect(disp.segments("foo bar baz", 7, 8, true)).to.equal({ "foo ", "bar baz" })
+    end)
+
+    it("hard-breaks a word longer than the width (no break point)", function()
+      expect(disp.nsegs("antidisestablish", 5, 8, true)).to.equal(4) -- 16 / 5
+      expect(disp.segments("antidisestab", 5, 8, true))
+        .to.equal({ "antid", "isest", "ab" })
+    end)
+
+    it("locates and inverts consistently under linebreak", function()
+      -- 'w' begins row 1; the space before it stays at the end of row 0.
+      local s, c = disp.locate("hello world", 8, 8, 7, true)
+      expect(s).to.equal(1); expect(c).to.equal(0)
+      local ssp, csp = disp.locate("hello world", 8, 8, 6, true)  -- the space
+      expect(ssp).to.equal(0); expect(csp).to.equal(5)
+      expect(disp.byteat("hello world", 8, 8, 1, 0, true)).to.equal(7) -- inverse -> 'w'
+    end)
+  end)
+
   describe("UTF-8", function()
     it("measures display width (narrow vs wide)", function()
       expect(disp.width(E, 8)).to.equal(1)          -- 'é' 2 bytes, 1 cell

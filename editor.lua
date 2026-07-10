@@ -77,7 +77,7 @@ function M.new_ed()
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
-    opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
+    opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
              fmtprg = os.getenv("LVI_FMT") or "fmt" },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
     hlpri = {},               -- :hi group -> z-order
@@ -373,7 +373,7 @@ local function ed_prevv(ed, l, nl)
 end
 local function ed_segs(ed, l, W, ts)
   if ed_hasfolds(ed) and fold.closed_head(ed.folds, l) then return 1 end
-  return disp.nsegs(ed.buf:line(l) or "", W, ts)
+  return disp.nsegs(ed.buf:line(l) or "", W, ts, ed.opts.linebreak)
 end
 
 local function refresh(ed)
@@ -398,7 +398,7 @@ local function refresh(ed)
     -- A closed-fold head is one row: its cursor sub-row is 0, not ed.cx's wrapped
     -- position in the (hidden-bodied) underlying line.
     local csub = (ed_hasfolds(ed) and fold.closed_head(ed.folds, ed.cy)) and 0
-        or select(1, disp.locate(curline, W, ts, ed.cx))
+        or select(1, disp.locate(curline, W, ts, ed.cx, ed.opts.linebreak))
     if ed.cy < ed.top or (ed.cy == ed.top and csub < ed.topsub) then
       ed.top, ed.topsub = ed.cy, csub                 -- cursor above top: scroll up
     else

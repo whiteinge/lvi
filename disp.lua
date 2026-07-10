@@ -120,45 +120,72 @@ function M.byte_at_dispcol(s, ts, dcol)
 end
 
 -- ---- wrapping ---------------------------------------------------------------
-function M.nsegs(s, W, ts)
+-- The single source of truth for where a wrapped screen row ends. Given a
+-- segment starting at byte `start` (at display col 0), return the byte at which
+-- the NEXT segment begins (one past this row's last byte) and this segment's
+-- display width. nsegs/locate/byteat and the renderer all derive from this, so
+-- they cannot disagree about a break position. No byte is ever skipped: bytes
+-- [start, next) are exactly this row, [next, ..) the next -- which keeps locate
+-- and byteat exact inverses. `lb` enables whitespace `linebreak`: back the break
+-- up to just after the last space/tab that fit (so trailing spaces stay on the
+-- upper row, Vim-style), falling back to a hard mid-word break when the segment
+-- holds no whitespace (an over-long word). Always advances (next > start when
+-- start <= #s) via the `col > 0` guard, so callers can never spin.
+local function seg_end(s, start, W, ts, lb)
+  local n = #s
+  local col, i = 0, start
+  local brk, brkcol                             -- byte just after last whitespace, and its col
+  while i <= n do
+    local b = s:byte(i)
+    local dw, len = charinfo(s, i, col, ts)
+    if col + dw > W and col > 0 then            -- this char won't fit on the row
+      if lb and brk and brk > start then return brk, brkcol end
+      return i, col
+    end
+    col = col + dw; i = i + len
+    if lb and (b == 32 or b == 9) then brk, brkcol = i, col end
+  end
+  return i, col
+end
+M.seg_end = seg_end
+
+function M.nsegs(s, W, ts, lb)
   local n = #s
   if n == 0 then return 1 end
-  local sub, col, i = 0, 0, 1
-  while i <= n do
-    local dw, len = charinfo(s, i, col, ts)
-    if col + dw > W and col > 0 then sub = sub + 1; col = 0; dw = charinfo(s, i, col, ts) end
-    col = col + dw; i = i + len
-  end
-  return sub + 1
+  local i, count = 1, 0
+  while i <= n do i = seg_end(s, i, W, ts, lb); count = count + 1 end
+  return count
 end
 
 -- (sub-row, column), both 0-based, for buffer byte cx under wrap width W.
-function M.locate(s, W, ts, cx)
-  local sub, col, i, n = 0, 0, 1, #s
-  while i < cx and i <= n do
-    local dw, len = charinfo(s, i, col, ts)
-    if col + dw > W and col > 0 then sub = sub + 1; col = 0; dw = charinfo(s, i, col, ts) end
-    col = col + dw; i = i + len
+function M.locate(s, W, ts, cx, lb)
+  local n = #s
+  local sub, a = 0, 1
+  while a <= n do
+    local b = seg_end(s, a, W, ts, lb)
+    if cx < b then break end                    -- cx lives in segment [a, b)
+    if cx == b and b > n then break end         -- cursor past EOL sticks to the last row
+    sub, a = sub + 1, b
   end
-  if cx <= n then
-    local dw = charinfo(s, cx, col, ts)
-    if col + dw > W and col > 0 then sub = sub + 1; col = 0 end
-  elseif col >= W then
-    sub = sub + 1; col = 0
+  local col, j = 0, a                           -- display width of [a, cx)
+  while j < cx and j <= n do
+    local dw, len = charinfo(s, j, col, ts); col = col + dw; j = j + len
   end
+  if cx > n and col >= W then sub, col = sub + 1, 0 end   -- phantom edge-wrap past EOL
   return sub, col
 end
 
 -- Inverse of locate: byte at wrapped position (sub, col). Used by gj/gk.
-function M.byteat(s, W, ts, tsub, tcol)
+function M.byteat(s, W, ts, tsub, tcol, lb)
   local n = #s
   if n == 0 then return 1 end
-  local sub, col, i, last = 0, 0, 1, 1
-  while i <= n do
+  local sub, a = 0, 1
+  while sub < tsub and a <= n do a = seg_end(s, a, W, ts, lb); sub = sub + 1 end
+  local b = seg_end(s, a, W, ts, lb)            -- end of the target segment
+  local col, i, last = 0, a, math.min(a, n)
+  while i < b and i <= n do
     local dw, len = charinfo(s, i, col, ts)
-    if col + dw > W and col > 0 then sub = sub + 1; col = 0; dw = charinfo(s, i, col, ts) end
-    if sub == tsub and col + dw > tcol then return i end
-    if sub > tsub then return last end
+    if col + dw > tcol then return i end
     last = i; col = col + dw; i = i + len
   end
   return last
@@ -177,9 +204,15 @@ function M.expand(s, ts)
   return table.concat(out)
 end
 
-function M.segments(s, W, ts)
-  local rows = {}
-  for si = 0, M.nsegs(s, W, ts) - 1 do rows[si + 1] = M.slice(s, ts, si * W, W, nil) end
+function M.segments(s, W, ts, lb)
+  local rows, n = {}, #s
+  if n == 0 then return { "" } end
+  local a, sc = 1, 0
+  while a <= n do
+    local b, w = seg_end(s, a, W, ts, lb)
+    rows[#rows + 1] = M.slice(s, ts, sc, w, nil)
+    a, sc = b, sc + w
+  end
   return rows
 end
 
