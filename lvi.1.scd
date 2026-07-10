@@ -601,8 +601,10 @@ selection, no built-in feature, just a tool you already have:
 *!ip awk '{print NR". " $0}'*
 	Number each line of the paragraph: *1.*, *2.*, .... *!ip nl -ba* does the
 	same through *nl*(1).
-*!ip awk '{$1 = $1 + 1}1'*
-	Add one to the first column of every line.
+*!ip lvi-incr*, *!ip lvi-incr -b 1*
+	*contrib/lvi-incr* packages this: it bumps each line's first number by its
+	index (vim's *g Ctrl-A*), or with *-b* renumbers to *1*, *2*, *3*. Bound to
+	*<C-a>* on one line it stands in for *Ctrl-A*; see *contrib/README.md*.
 
 ## When the range is computed, drive it over the socket
 
@@ -691,6 +693,8 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
   *git add -p* as a side-by-side diff you stage from with *\\s*.
 - *lvi-textobj-tag* -- an HTML/XML tag text object (*it*/*at*) via *textobj*, so
   *cit*/*dat* work without any HTML parser in the core.
+- *lvi-incr* -- increment, decrement, or renumber through the *!* filter,
+  recovering Ctrl-A / g-Ctrl-A with no built-in (bind *:.!lvi-incr* to *<C-a>*).
 
 This is only a taste. For what each tool does, its configuration, and
 ready-to-copy bindings and themes, see *contrib/README.md* and

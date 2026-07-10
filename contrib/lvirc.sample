@@ -173,3 +173,11 @@ on bufenter lvi-pos restore
 " operator itself, so cit/dat/yit behave like builtins (c even enters insert).
 " lvi-textobj-tag adds Vim's tag object for HTML/XML, with no HTML in the core.
 textobj t lvi-textobj-tag       " dit/cit/dat/yat on the enclosing tag
+
+" ---- increment / decrement (no Ctrl-A in the core; the ! filter is enough) -----
+" lvi-incr rewrites the first number on each piped line (line i gets i*step), so
+" one filter is both point Ctrl-A and visual g-Ctrl-A. These map the old reflex
+" onto the current line; over a range, use it directly: !ip lvi-incr (ramp) or
+" !ip lvi-incr -b 1 (renumber a list).
+map <C-a> :.!lvi-incr<CR>            " increment the number on this line
+map <C-x> :.!lvi-incr -s -1<CR>      " decrement it

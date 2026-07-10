@@ -311,6 +311,26 @@ half-typed markup that is the normal case. It's ~80 lines of `awk`; a
 tree-sitter-backed `if` (function) or `ia` (argument) object would slot in the
 same way (see the filter contract below), trading startup cost for real grammar.
 
+### `lvi-incr` — increment / renumber, since there's no Ctrl-A
+
+lvi has no `Ctrl-A`/`Ctrl-X`, and doesn't need them: the `!` operator already
+pipes a line range through any command, so incrementing is just a filter you pipe
+*to*. `lvi-incr` reads lines and rewrites the first number on each, with one rule
+that covers both the point and the visual cases — line *i* of the input gets
+`i × step` added:
+
+```
+!!lvi-incr           +1 on this line              (point Ctrl-A)
+!ip lvi-incr         a 0/0/0 column → 1/2/3       (visual g Ctrl-A)
+!ip lvi-incr -s -1   the same, downward           (g Ctrl-X)
+!ip lvi-incr -b 1    renumber to 1,2,3,…           (fix a reordered list)
+```
+
+Leading zeros are preserved (`007`→`008`) and numberless lines pass through. Two
+`map <C-a> :.!lvi-incr<CR>` / `map <C-x> :.!lvi-incr -s -1<CR>` bindings put the
+old reflex back on one line. It's the clearest demonstration of the point below —
+a whole editor feature that ships as a filter because the operator already exists.
+
 ## The shared machinery
 
 Everything above is built from seven ideas the core provides — worth

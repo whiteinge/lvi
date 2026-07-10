@@ -1,0 +1,60 @@
+#!/bin/sh
+# lvi-incr [-s STEP] [-b BASE]  --  increment or renumber the first number on
+# each input line. A filter, built for lvi's ! operator.
+#
+# lvi has no Ctrl-A / Ctrl-X. It does not need them: because the ! operator pipes
+# a line range through any command, one small filter recovers both the point
+# increment and vim's visual "g Ctrl-A" (an incrementing ramp down a column) --
+# the ! operator is exactly the seam a built-in Ctrl-A would have had to be.
+#
+#   !!lvi-incr           bump the first number on THIS line by 1     (point Ctrl-A)
+#   !ip lvi-incr         bump line i's number by i, so a 0/0/0 column becomes
+#                        1/2/3                                        (g Ctrl-A)
+#   !ip lvi-incr -s -1   the same, counting down                     (g Ctrl-X)
+#   !ip lvi-incr -b 1    RENUMBER to 1,2,3,... (step from -s) -- e.g. to repair a
+#                        reordered "1. 2. 3." list
+#
+# Bindings (lvirc) that restore the Ctrl-A / Ctrl-X reflex on the current line:
+#   map <C-a> :.!lvi-incr<CR>
+#   map <C-x> :.!lvi-incr -s -1<CR>
+#
+# Modes:
+#   default   ADD i*STEP to each line's first number. A single line (via !!)
+#             gets +STEP -- a point increment; a range gets a cumulative ramp.
+#   -b BASE   SET each line's first number to BASE + (i-1)*STEP -- a renumber.
+#   -s STEP   the step; default 1, negative counts down.
+#
+# The FIRST integer on a line is the target (an optional leading - is kept), and
+# leading zeros are preserved (007 -> 008). A line with no number passes through
+# untouched -- to ADD numbers to unnumbered lines, prepend them instead:
+#   !ip awk '{print NR". " $0}'
+#
+# Operates on bytes (LC_ALL=C). Debug: LVI_INCR_DEBUG=1 traces to stderr.
+
+step=1
+base=
+while getopts s:b: opt; do
+  case $opt in
+    s) step=$OPTARG ;;
+    b) base=$OPTARG ;;
+    *) echo "usage: lvi-incr [-s STEP] [-b BASE]" >&2; exit 2 ;;
+  esac
+done
+
+LC_ALL=C awk -v step="$step" -v base="$base" -v dbg="${LVI_INCR_DEBUG:-}" '
+{
+  if (match($0, /-?[0-9]+/)) {
+    numstr = substr($0, RSTART, RLENGTH)
+    digits = numstr; sub(/^-/, "", digits)                 # digit part, sign aside
+    if (base != "") new = base + (NR - 1) * step           # -b: renumber (set)
+    else            new = (numstr + 0) + NR * step         # default: add i*step
+    neg = (new < 0); mag = neg ? -new : new
+    s = mag ""
+    if (digits ~ /^0/ && length(s) < length(digits))       # keep leading-zero width
+      s = sprintf("%0" length(digits) "d", mag)
+    rep = (neg ? "-" : "") s
+    if (dbg) printf "line %d: %s -> %s\n", NR, numstr, rep > "/dev/stderr"
+    print substr($0, 1, RSTART - 1) rep substr($0, RSTART + RLENGTH)
+  } else print
+}
+'
