@@ -303,6 +303,61 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("custom text objects (:textobj filter)", function()
+    it("applies a charwise range from the filter's stdout", function()
+      local ed = make("hello")
+      ex.dispatch(ed, [[textobj z sh -c 'printf "char 1 1 1 3\n"']])
+      feed(ed, "diz")                               -- filter says cols 1..3
+      expect(ed.buf:line(1)).to.equal("lo")
+    end)
+    it("applies a linewise range", function()
+      local ed = make("a\nb\nc")
+      ex.dispatch(ed, [[textobj z sh -c 'printf "line 1 2\n"']])
+      feed(ed, "diz")
+      expect(ed.buf:get()).to.equal({ "c" })
+      expect(ed.regs['"'].linewise).to.be(true)
+    end)
+    it("c on a custom object enters insert (proves the coroutine path)", function()
+      local ed = make("hello")
+      ex.dispatch(ed, [[textobj z sh -c 'printf "char 1 1 1 3\n"']])
+      feed(ed, "cizXY" .. ESC)                      -- delete cols 1..3, then type
+      expect(ed.buf:line(1)).to.equal("XYlo")
+    end)
+    it("empty filter output is a clean no-op (no change, no insert)", function()
+      local ed = make("hello")
+      ex.dispatch(ed, [[textobj z sh -c ':']])      -- prints nothing
+      feed(ed, "diz")
+      expect(ed.mode).to.equal("normal")
+      feed(ed, "x"); expect(ed.buf:line(1)).to.equal("ello")
+    end)
+    it("a builtin object always wins over a registered key", function()
+      local ed = make("foo bar")
+      ex.dispatch(ed, [[textobj w sh -c 'printf "char 1 1 1 5\n"']])
+      feed(ed, "diw")                               -- builtin word, NOT the filter
+      expect(ed.buf:line(1)).to.equal(" bar")
+    end)
+    it("textobj KEY with no command unregisters it", function()
+      local ed = make("hello")
+      ex.dispatch(ed, [[textobj z sh -c 'printf "char 1 1 1 3\n"']])
+      ex.dispatch(ed, "textobj z")                  -- clear
+      feed(ed, "diz")
+      expect(ed.buf:line(1)).to.equal("hello")      -- z now unhandled: no-op
+    end)
+    -- End-to-end with the shipped contrib/lvi-textobj-tag (assumes repo-root cwd,
+    -- which `make test` and a direct `luajit test/...` both use). Proves the
+    -- script's stdout format matches what ex.textobj_range parses.
+    it("contrib/lvi-textobj-tag drives dit / cit", function()
+      local ed = make("<p>hello</p>")
+      ex.dispatch(ed, "textobj t contrib/lvi-textobj-tag")
+      feed(ed, "4ldit")                             -- cursor inside 'hello'
+      expect(ed.buf:line(1)).to.equal("<p></p>")
+      local ed2 = make("<p>hello</p>")
+      ex.dispatch(ed2, "textobj t contrib/lvi-textobj-tag")
+      feed(ed2, "4lcitHi" .. ESC)                   -- change inner, type "Hi"
+      expect(ed2.buf:line(1)).to.equal("<p>Hi</p>")
+    end)
+  end)
+
   describe("edit + registers + put", function()
     it("x deletes the char under the cursor", function()
       local ed = make("abc")

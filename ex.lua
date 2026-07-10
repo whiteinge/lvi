@@ -386,6 +386,43 @@ local function do_ex(ed, line)
   return "", "ok"
 end
 
+-- Custom text objects (`:textobj KEY CMD`). The normal-mode dispatch calls this
+-- when an operator meets `i`/`a` + a KEY that has no builtin object: we shell out
+-- SYNCHRONOUSLY -- the same discipline as do_ex, and the same latency profile as
+-- a `:s` typed at the prompt -- so the operator (including `c`, which must enter
+-- insert mode) applies through the ordinary coroutine path, exactly like a
+-- builtin object. No socket callback, no async: the tool is a pure filter.
+--
+-- Contract. Invoked as:  CMD <tmpfile> <i|a> <line> <col>
+--   tmpfile   the current buffer's text (unsaved edits included), private temp
+--   i|a       inner vs "a"/around
+--   line col  the cursor, 1-based (line) and 1-based byte column
+-- It prints ONE line to stdout, then exits:
+--   char L1 C1 L2 C2   a charwise range, 1-based, byte columns, inclusive of both ends
+--   line L1 L2         a linewise range (whole lines L1..L2)
+--   (nothing)          no such object at the cursor -- a clean no-op
+-- Anything malformed is treated as "no object". Returns sl,sc,tl,tc,kind or nil.
+function M.textobj_range(ed, cmd, around, key)
+  local tmp = vpath.tmp()
+  local wf = io.open(tmp, "wb"); if not wf then return nil end
+  wf:write(ed.buf:text()); wf:close()
+  -- All args are shell-safe (a path in the private dir, a literal i/a, digits).
+  local full = ("%s '%s' %s %d %d"):format(cmd, tmp, around and "a" or "i", ed.cy, ed.cx)
+  local p = io.popen(full, "r")
+  local out = p and p:read("*a") or ""
+  if p then p:close() end
+  os.remove(tmp)
+  local kind, rest = out:match("^%s*(%a+)%s+(.-)%s*$")
+  if kind == "char" then
+    local l1, c1, l2, c2 = rest:match("^(%d+)%s+(%d+)%s+(%d+)%s+(%d+)$")
+    if l1 then return tonumber(l1), tonumber(c1), tonumber(l2), tonumber(c2), "char" end
+  elseif kind == "line" then
+    local l1, l2 = rest:match("^(%d+)%s+(%d+)$")
+    if l1 then return tonumber(l1), 1, tonumber(l2), 1, "line" end
+  end
+  return nil                                          -- no object / malformed output
+end
+
 -- Parse a key notation string into raw bytes. Names (case-insensitive):
 -- <CR> <Esc> <Space> <Tab> <Bar> <Bslash> <lt> <NL>, and <C-x> for ctrl-keys.
 -- Unknown <...> is left as a literal '<'.
@@ -811,6 +848,19 @@ def("on", function(ed, c)
   if event == "complete" then ed.hooks.complete = { rest }; return "", "ok" end
   ed.hooks[event] = ed.hooks[event] or {}
   table.insert(ed.hooks[event], rest)
+  return "", "ok"
+end)
+
+-- :textobj KEY CMD -- register a custom text object on the single character KEY
+-- (used after i/a in operator-pending: `di<KEY>`, `ca<KEY>`). CMD is the filter
+-- run by ex.textobj_range above. KEY alone unregisters. A builtin object of the
+-- same key (w, (, ", ...) always wins -- :textobj only fills unclaimed keys.
+def("textobj", function(ed, c)
+  local key, cmd = c.args:match("^(%S+)%s*(.-)%s*$")
+  if not key or key == "" then return "usage: textobj KEY [command]", "err" end
+  if #key ~= 1 then return "textobj: KEY must be a single character", "err" end
+  if cmd == "" then ed.textobj_cmds[key:byte(1)] = nil; return "", "ok" end
+  ed.textobj_cmds[key:byte(1)] = cmd
   return "", "ok"
 end)
 

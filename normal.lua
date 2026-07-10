@@ -1575,7 +1575,12 @@ local function command(ed)
     count2, k2 = read_count(ed, k2)
     local total = combine(count1, count2)
     if k2 == b("i") or k2 == b("a") then       -- text object: di( ci" yap ...
-      local obj = textobjs[getkey(ed)]
+      local key = getkey(ed)
+      local obj = textobjs[key]
+      if not obj and ed.textobj_cmds[key] then -- custom object via :textobj (synchronous filter)
+        local cmd = ed.textobj_cmds[key]
+        obj = function(e, a) return ex.textobj_range(e, cmd, a, key) end
+      end
       if obj then apply_textobj(ed, op, obj, k2 == b("a"), reg) end
     elseif k2 == k then -- dd / yy / cc
       op_lines(ed, op, ed.cy, ed.cy + (total or 1) - 1, reg)

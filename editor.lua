@@ -71,6 +71,7 @@ function M.new_ed()
     cmdhist = {},             -- submitted ex-command lines (oldest first); Ctrl-P/N + the command window
     maps = {},                -- :map LHS -> RHS (byte strings)
     hooks = {},               -- :on event -> { cmd, ... }
+    textobj_cmds = {},        -- :textobj KEY -> CMD (custom objects; see ex.textobj_range)
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
     opts = { wrap = true, tabstop = 8, shiftwidth = 8, expandtab = false },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)

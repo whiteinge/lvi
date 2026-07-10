@@ -409,6 +409,19 @@ _contrib/lvi-shell.sh_ do).
 	changes never fire *change*/*scroll* (only keyboard input does), so a hook's
 	own edits or a scroll pushed onto a view can't loop back.
 
+*textobj* _key_ [_cmd_]
+	Register a custom text object on the single character _key_, used after
+	*i*/*a* in operator-pending mode (*di*_key_, *ca*_key_); no _cmd_
+	unregisters it, and a builtin object of the same key always wins. _cmd_ is a
+	filter lvi runs synchronously -- the same blocking discipline as a *s* sent
+	to the system ex -- so the operator (including *c*, which enters insert
+	mode) applies through the ordinary path, exactly like a builtin object. It
+	is invoked *cmd TMPFILE i|a LINE COL* (buffer text in a private temp file,
+	cursor 1-based in bytes) and prints one line: *char L1 C1 L2 C2* for a
+	charwise inclusive byte range, *line L1 L2* for whole lines, or nothing for
+	no object. *contrib/lvi-textobj-tag* implements HTML *it*/*at* this way,
+	teaching lvi no HTML; see *contrib/README.md*.
+
 *fire* [_event_]
 	Raise _event_ (default *change*) by hand. Because socket-driven edits never
 	fire *change* (the anti-loop gate above), a tool that edits over the
@@ -552,6 +565,8 @@ quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 - *lvi-diff* / *lvi-stagediff* -- a two-way vimdiff of two panes (highlight,
   scrollbind, move hunks with *\\p*/*\\o*, jump with *]c*/*[c*) and, atop it,
   *git add -p* as a side-by-side diff you stage from with *\\s*.
+- *lvi-textobj-tag* -- an HTML/XML tag text object (*it*/*at*) via *textobj*, so
+  *cit*/*dat* work without any HTML parser in the core.
 
 This is only a taste. For what each tool does, its configuration, and
 ready-to-copy bindings and themes, see *contrib/README.md* and
