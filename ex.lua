@@ -868,6 +868,36 @@ def("textobj", function(ed, c)
   return "", "ok"
 end)
 
+-- :register NAME [read CMD] [write CMD] -- back the single-char register NAME
+-- with shell commands, so a yank/delete into it pipes its text to `write` and a
+-- put reads `read`'s stdout (see normal.lua's registers block). The clipboard
+-- seam: `register + read wl-paste write wl-copy` (or pbpaste/pbcopy, xclip -o /
+-- xclip). NAME with no clause clears the whole backend. The two directions are
+-- independent -- set them on one line or two, in either order; a later call
+-- merges (write-only then read-only leaves both bound). Each command runs until
+-- the other keyword or end of line, so a `read`/`write` command may hold spaces
+-- and pipes but not the literal other keyword as a bare word (no real clipboard
+-- tool does). Any register name works; `+` is only the conventional clipboard
+-- one. lvi never spawns these itself -- yank/put do, synchronously.
+def("register", function(ed, c)
+  local name, rest = c.args:match("^(%S+)%s*(.-)%s*$")
+  if not name then return "usage: register NAME [read CMD] [write CMD]", "err" end
+  if #name ~= 1 then return "register: NAME must be a single character", "err" end
+  if rest == "" then ed.reg_backends[name] = nil; return "", "ok" end
+  local rd, wr
+  local r1, w1 = rest:match("^read%s+(.-)%s+write%s+(.+)$")
+  local w2, r2 = rest:match("^write%s+(.-)%s+read%s+(.+)$")
+  if r1 then rd, wr = r1, w1
+  elseif w2 then wr, rd = w2, r2
+  else rd = rest:match("^read%s+(.+)$"); wr = rest:match("^write%s+(.+)$") end
+  if not rd and not wr then return "usage: register NAME [read CMD] [write CMD]", "err" end
+  local be = ed.reg_backends[name] or {}
+  if rd then be.read = rd end
+  if wr then be.write = wr end
+  ed.reg_backends[name] = be
+  return "", "ok"
+end)
+
 -- :fire [EVENT] -- raise an event by hand (default: change). The change
 -- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
 -- see :on above), which leaves a tool that edits over the socket -- a

@@ -150,12 +150,45 @@ end
 -- ---- registers --------------------------------------------------------------
 -- A register is { text = string, linewise = bool }. The unnamed register '"'
 -- always mirrors the last delete/yank; a named register also updates it.
+--
+-- A register may be COMMAND-BACKED (`:register`, ed.reg_backends[name]): a
+-- yank/delete into it also pipes its text to the `write` command, and a put
+-- reads fresh from the `read` command instead of ed.regs. This is the clipboard
+-- seam -- `register + read wl-paste write wl-copy` makes "+ the system clipboard
+-- -- but the core learns nothing about clipboards: which command is pure config,
+-- and any register name can be backed. The shell-out is injected (ed.reg_read /
+-- ed.reg_write, absent headless), so this module stays pure/testable.
 local function set_reg(ed, name, text, linewise)
   local r = { text = text, linewise = linewise }
-  if name then ed.regs[name] = r end
+  if name then
+    ed.regs[name] = r
+    local be = ed.reg_backends[name]
+    if be and be.write and ed.reg_write then ed.reg_write(be.write, text) end
+  end
   ed.regs['"'] = r
 end
-local function get_reg(ed, name) return ed.regs[name or '"'] end
+
+-- Turn a backend's raw stdout into a register value. A clipboard is just bytes
+-- with no linewise flag, so we infer: text carrying any newline is treated as
+-- linewise (and gets the trailing '\n' linewise regs always end in) -- which is
+-- the natural paste for copied lines AND the only safe reading, since do_put's
+-- charwise branch would splice an embedded '\n' straight into a buffer line
+-- (breaking the "a line never contains \n" invariant). Single-line text with no
+-- newline is charwise, so `"+p` mid-line still works. Empty -> nil (put no-op).
+local function reg_from_clip(text)
+  if not text or text == "" then return nil end
+  if text:find("\n", 1, true) then
+    if text:sub(-1) ~= "\n" then text = text .. "\n" end
+    return { text = text, linewise = true }
+  end
+  return { text = text, linewise = false }
+end
+
+local function get_reg(ed, name)
+  local be = name and ed.reg_backends[name]
+  if be and be.read and ed.reg_read then return reg_from_clip(ed.reg_read(be.read)) end
+  return ed.regs[name or '"']
+end
 
 -- Insert-mode completion (Ctrl-P/Ctrl-N): replace the non-blank token before the
 -- cursor with a word chosen by the `on complete` command. Core hands the command
@@ -1391,7 +1424,7 @@ actions = {
     local rc = getkey(ed)
     local reg = (rc == b("@")) and ed.last_macro or string.char(rc)
     if not reg then return end
-    local r = ed.regs[reg]
+    local r = get_reg(ed, reg)                     -- backend-aware: @+ runs the clipboard
     if not r or r.text == "" then return end
     ed.last_macro = reg
     local merged = {}

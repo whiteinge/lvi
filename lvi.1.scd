@@ -160,6 +160,10 @@ _operator_*i*_object_, _operator_*a*_object_
 Registers *a*-*z* and the unnamed register (") hold deletes and yanks. A macro is
 just register text, so a yanked register can be replayed with *@*.
 
+A register may instead be backed by shell commands with *register* (below): a
+yank or delete into it pipes the text out and a put reads fresh in. Backing *+*
+with the system clipboard tools is the idiom, so *"+y* copies and *"+p* pastes.
+
 ## Scrolling
 
 *Ctrl-F* *Ctrl-B*
@@ -451,6 +455,20 @@ _contrib/lvi-shell.sh_ do).
 	no object. *contrib/lvi-textobj-tag* implements HTML *it*/*at* this way,
 	teaching lvi no HTML; see *contrib/README.md*.
 
+*register* _name_ [*read* _cmd_] [*write* _cmd_]
+	Back the single-character register _name_ with shell commands: a yank or
+	delete into it also pipes the register text to the *write* command, and a put
+	reads fresh from the *read* command instead of the in-memory copy. This is the
+	system-clipboard seam -- *register + read wl-paste write wl-copy* (or
+	*pbpaste*/*pbcopy*, or *xclip*) makes *"+y*/*"+p* copy and paste, and lvi
+	learns nothing about clipboards: which command is pure config, and any
+	register name may be backed. _name_ with no clause clears the backend; the two
+	directions are independent, set on one line or two in either order (a later
+	call merges them). Each command runs to the other keyword or end of line, so it
+	may hold spaces and pipes. The shell-out is synchronous and tty-free (a
+	clipboard tool returns instantly); a put of text carrying newlines pastes
+	linewise.
+
 *fire* [_event_]
 	Raise _event_ (default *change*) by hand. Because socket-driven edits never
 	fire *change* (the anti-loop gate above), a tool that edits over the
@@ -655,8 +673,9 @@ exists is used:
 - _~/.lvirc_
 
 So *map* and *set* persist by putting them in the rc file; a color theme is a set
-of *hi* lines, and live syntax highlighting is one *on change* line. See
-*contrib/README.md* and *contrib/lvirc.sample*.
+of *hi* lines, live syntax highlighting is one *on change* line, and the system
+clipboard is one *register* line (e.g. *register + read wl-paste write wl-copy*).
+See *contrib/README.md* and *contrib/lvirc.sample*.
 
 # TURNING ON THE IDE
 

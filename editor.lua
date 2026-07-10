@@ -34,6 +34,7 @@ local M = {}
 --   * wid, sock_path, buffer_scratch     -- the view's socket identity
 --   * interp                             -- the normal-mode coroutine
 --   * export_context, spawn_bg, fire_event, stamp, file_changed, splice_hook
+--   * reg_read, reg_write                -- command-backed register I/O (no tty)
 --   * suspend, with_tty, shell, suspend_self, complete_run  -- tty capabilities,
 --     ABSENT headless; ex feature-detects them (`if ed.shell then ...`)
 function M.new_ed()
@@ -68,6 +69,7 @@ function M.new_ed()
 
     -- shared editing state
     regs = {},                -- registers a-z + unnamed '"'
+    reg_backends = {},        -- :register NAME -> { read = cmd, write = cmd } (clipboard etc.)
     cmdhist = {},             -- submitted ex-command lines (oldest first); Ctrl-P/N + the command window
     maps = {},                -- :map LHS -> RHS (byte strings)
     hooks = {},               -- :on event -> { cmd, ... }
@@ -473,6 +475,30 @@ function M.run(opts)
   -- (a hook must not write to the tty or block the poll loop). Used to fire
   -- event hooks; the subshell backgrounds so os.execute returns at once.
   ed.spawn_bg = function(cmd, buf) ed.export_context(buf); os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
+  -- Command-backed registers (`:register`): a yank/delete into the register pipes
+  -- its text to `write`; a put reads `read`'s stdout. Synchronous and tty-free --
+  -- yank/put are discrete actions and a clipboard tool (wl-copy, pbpaste, ...)
+  -- returns in well under a frame, so unlike the interactive shell-outs these run
+  -- inline without handing over the terminal, and work over the socket headless
+  -- too. The cursor context is exported first so a backend may read LVI_* if it
+  -- wants. Errors are swallowed: a missing clipboard tool degrades to a no-op put
+  -- / a discarded yank, never a broken command (the same spirit as the `ex -s`
+  -- delegation). stderr is muted so a warning can't corrupt the alt screen.
+  ed.reg_write = function(cmd, text)
+    ed.export_context()
+    local p = io.popen("(" .. cmd .. ") 2>/dev/null", "w")
+    if not p then return end
+    pcall(function() p:write(text) end)
+    p:close()
+  end
+  ed.reg_read = function(cmd)
+    ed.export_context()
+    local p = io.popen("(" .. cmd .. ") 2>/dev/null", "r")
+    if not p then return "" end
+    local out = p:read("*a") or ""
+    p:close()
+    return out
+  end
   -- Keep marks/jumps honest across edits (see make_splice_hook); bufs attaches
   -- this to each buffer as it becomes current, so it must exist before init.
   ed.splice_hook = M.make_splice_hook(ed)
