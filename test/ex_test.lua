@@ -734,6 +734,33 @@ describe("ex.dispatch", function()
       expect(ed.buf:get()).to.equal({ "aaa", "bbb", "ccc" })
     end)
   end)
+
+  describe(":marks", function()
+    it("reports nothing when no marks are set", function()
+      local ed = ed_with("a\nb\nc")
+      expect(ex.dispatch(ed, "marks")).to.equal("no marks")
+    end)
+    it("lists marks as mark/line/col/text, a-z then extras", function()
+      local ed = ed_with("first\n  indented\nthird")
+      ed.marks = { b = { 2, 3 }, a = { 1, 1 }, ["."] = { 3, 2 } }
+      expect(ex.dispatch(ed, "marks")).to.equal(
+        "a      1    1  first\n" ..
+        "b      2    3  indented\n" ..     -- leading blanks stripped from the text
+        ".      3    2  third")
+    end)
+    it("restricts the list to named marks", function()
+      local ed = ed_with("one\ntwo\nthree")
+      ed.marks = { a = { 1, 1 }, b = { 2, 1 }, ["."] = { 3, 1 } }
+      expect(ex.dispatch(ed, "marks b .")).to.equal(
+        "b      2    1  two\n" ..
+        ".      3    1  three")
+    end)
+    it("survives a mark pointing past the buffer (clamped read)", function()
+      local ed = ed_with("only")
+      ed.marks = { a = { 9, 1 } }                 -- stale line number
+      expect(ex.dispatch(ed, "marks a")).to.equal("a      9    1  only")
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

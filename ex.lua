@@ -957,6 +957,36 @@ local function do_registers(ed, args)
 end
 def("registers reg display", function(ed, c) return do_registers(ed, c.args) end)
 
+-- :marks [chars] (Vim's :marks) -- list this buffer's marks, one line each as
+-- "mark line col text" (text is the marked line, leading blanks stripped; col is
+-- the 1-based byte column, as :pos reports). No argument lists every set mark --
+-- a-z, then the auto `.` (last change) and any others (m may set any char);
+-- naming marks (`:marks a .`) restricts it. Marks are PER-BUFFER in lvi (bufs
+-- swaps them with the rest of the view state), so this is inherently the current
+-- buffer's set -- there are no Vim global/file marks (even `mA` is buffer-local),
+-- so no file column is needed. Multi-line output pages like :%p at the prompt.
+local function do_marks(ed, args)
+  local want = {}
+  for name in args:gmatch("%S") do want[name] = true end
+  local all = not next(want)
+  local rows = {}
+  local function emit(name)
+    if not (all or want[name]) then return end
+    local m = ed.marks[name]
+    if not m then return end
+    local text = (ed.buf:line(clampline(ed, m[1])) or ""):gsub("^%s+", "")
+    rows[#rows + 1] = ("%s  %5d %4d  %s"):format(name, m[1], m[2], text)
+  end
+  for i = string.byte("a"), string.byte("z") do emit(string.char(i)) end
+  local extra = {}                                        -- `.` and any non-a-z marks, sorted
+  for name in pairs(ed.marks) do if not name:match("^%l$") then extra[#extra + 1] = name end end
+  table.sort(extra)
+  for _, name in ipairs(extra) do emit(name) end
+  if #rows == 0 then return "no marks", "ok" end
+  return table.concat(rows, "\n"), "ok"
+end
+def("marks", function(ed, c) return do_marks(ed, c.args) end)
+
 -- :fire [EVENT] -- raise an event by hand (default: change). The change
 -- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
 -- see :on above), which leaves a tool that edits over the socket -- a

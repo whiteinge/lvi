@@ -143,7 +143,7 @@ _operator_*i*_object_, _operator_*a*_object_
 	line below/above.
 
 *m*_m_
-	Set mark _m_ at the cursor.
+	Set mark _m_ at the cursor. Marks are per-buffer; *:marks* lists them.
 
 *u* *Ctrl-R*
 	Undo, redo (multi-level).
@@ -484,6 +484,16 @@ _contrib/lvi-shell.sh_ do).
 	prompt, and is the read side of the register API over the socket. Note the
 	split: *register* (singular) configures one register, *registers* (*reg*)
 	displays them, as in *vi*.
+
+*marks* [_names_]
+	List marks, one line each as _mark_ _line_ _col_ _text_ (_text_ is the
+	marked line with leading blanks stripped; _col_ is the 1-based byte column,
+	as *pos* reports). No argument lists every set mark -- _a_-_z_, then the
+	automatic *.* (last change) and any others (*m* accepts any character); give
+	mark names to restrict it (*marks a .*). Marks are PER-BUFFER (bufs swaps
+	them with the rest of the view state), so this lists the current buffer's
+	set: lvi has no global or file marks, and even *mA* is buffer-local, so there
+	is no file column. Multi-line output pages like *%p* at the prompt.
 
 *fire* [_event_]
 	Raise _event_ (default *change*) by hand. Because socket-driven edits never
