@@ -100,6 +100,18 @@ leading count, e.g. *3dw*.
 	Delete, change, yank over a motion (e.g. *dw*, *c$*, *y`a*). Doubled
 	(*dd* *cc* *yy*) they act on whole lines.
 
+_operator_*i*_object_, _operator_*a*_object_
+	Text objects: in place of a motion an operator may take an _object_ around
+	the cursor, with *i* for the inner object and *a* for the "a"/around form
+	(delimiters, or a trailing blank, included). Objects are *w* *W*
+	(word/WORD), *p* (paragraph, linewise), the bracket pairs *(* *)* *b* and
+	*{* *}* *B* and *[* *]* and *<* *>*, and the quoted strings *"* *'* *`*
+	(single-line). So *diw* deletes a word, *ci(* changes inside the
+	parentheses, *ya"* yanks a string with its quotes, and *dap* deletes a
+	paragraph. Unlike a motion, an object does not depend on where within it the
+	cursor sits. This is a vi extension; with no visual mode an object is
+	meaningful only after an operator.
+
 *>* *<*
 	Shift lines right/left by one *shiftwidth* (see *set*). Always linewise,
 	even over a charwise motion; doubled (*>>* *<<*) they shift the current

@@ -1366,6 +1366,187 @@ actions = {
   end,
 }
 
+-- ---- text objects -----------------------------------------------------------
+-- A TEXT OBJECT is the operator model's missing half: a motion returns ONE
+-- endpoint (the cursor is the other), but an object returns BOTH endpoints of a
+-- range *around* the cursor, so `diw` works wherever in the word you sit. Each
+-- entry is fn(ed, around) -> sl, sc, tl, tc, kind ("char"|"line"), or nil when
+-- there is no such object at the cursor (a clean no-op: the operator is dropped,
+-- crucially WITHOUT entering insert mode for `c`). `around` picks the "a"
+-- variant (aw vs iw, a" vs i"). Operator-pending only -- lvi has no visual mode,
+-- so a bare `iw` is simply unrecognized.
+
+-- Maximal run of ONE character class around column cx (M.cword generalized to
+-- any class). Returns i, j, class; nil on an empty line.
+local function class_run(s, cx, big)
+  if #s == 0 then return nil end
+  cx = math.max(1, math.min(cx, #s))
+  local cls = wclass(s:sub(cx, cx), big)
+  local i, j = cx, cx
+  while i > 1  and wclass(s:sub(i - 1, i - 1), big) == cls do i = i - 1 end
+  while j < #s and wclass(s:sub(j + 1, j + 1), big) == cls do j = j + 1 end
+  return i, j, cls
+end
+
+-- iw = the run under the cursor; aw adds the trailing blank run (else leading),
+-- or on blanks adds the following word. Single-line by design: a word object
+-- never joins lines, and the trailing-else-leading rule mirrors vi's own
+-- fallback when the word ends the line -- so it matches vi in every real case
+-- while never surprising you by merging two lines. Count punted.
+local function obj_word(ed, around, big)
+  local l, s = ed.cy, line(ed, ed.cy)
+  local i, j, cls = class_run(s, ed.cx, big)
+  if not i then return nil end                          -- empty line: no object
+  if around then
+    if cls == "blank" then                              -- aw on blanks: + next word
+      local k = j
+      if k < #s then
+        local ncls = wclass(s:sub(k + 1, k + 1), big)
+        while k < #s and wclass(s:sub(k + 1, k + 1), big) == ncls do k = k + 1 end
+      end
+      j = k
+    else                                                -- aw on a word: trailing else leading blanks
+      local k = j
+      while k < #s and wclass(s:sub(k + 1, k + 1), big) == "blank" do k = k + 1 end
+      if k > j then j = k
+      else while i > 1 and wclass(s:sub(i - 1, i - 1), big) == "blank" do i = i - 1 end end
+    end
+  end
+  return l, i, l, j, "char"
+end
+
+-- Innermost `o`..`c` pair enclosing the cursor -> ol, oc, cl, cc, or nil. Scans
+-- backward for the opener (balancing nested pairs), then forward for its mate. A
+-- bracket the cursor sits ON counts as enclosing (so di( works with the cursor
+-- on either paren) -- hence the guard that skips the char under the cursor when
+-- it is the closer, so we hunt outward for the opener rather than balance it.
+local function enclosing_pair(ed, o, c)
+  local N = ed.buf:nlines()
+  local l, col, depth = ed.cy, ed.cx, 0
+  local ol, oc
+  while l >= 1 do
+    local s = line(ed, l)
+    while col >= 1 do
+      local d = s:sub(col, col)
+      if d == c and not (l == ed.cy and col == ed.cx) then depth = depth + 1
+      elseif d == o then
+        if depth == 0 then ol, oc = l, col; break end
+        depth = depth - 1
+      end
+      col = col - 1
+    end
+    if ol then break end
+    l = l - 1; if l >= 1 then col = #line(ed, l) end
+  end
+  if not ol then return nil end
+  l, col, depth = ol, oc + 1, 0
+  while l <= N do
+    local s = line(ed, l)
+    while col <= #s do
+      local d = s:sub(col, col)
+      if d == o then depth = depth + 1
+      elseif d == c then
+        if depth == 0 then return ol, oc, l, col end
+        depth = depth - 1
+      end
+      col = col + 1
+    end
+    l = l + 1; col = 1
+  end
+  return nil                                            -- unbalanced: no object
+end
+
+-- i( = strictly inside the pair; a( = the brackets included. A bracket pair
+-- alone on its own lines is NOT promoted to linewise (i.e. di( leaves the
+-- brackets touching) -- the same simplification match_bracket already takes
+-- (see its note on skipping POSIX's whole-line-spanning rule).
+local function obj_pair(ed, around, o, c)
+  local ol, oc, cl, cc = enclosing_pair(ed, o, c)
+  if not ol then return nil end
+  if around then return ol, oc, cl, cc, "char" end
+  return ol, oc + 1, cl, cc - 1, "char"                 -- inner: strip the delimiters
+end
+
+-- Quote objects are single-line -- exactly like vi's i"/a", which also fail off
+-- the line. Quotes pair left-to-right; the object is the pair containing the
+-- cursor, else the next pair to its right (so ci" before a string still works).
+-- a" extends over trailing blanks (else leading), like aw. No escape awareness
+-- (a deliberately vi-simple heuristic, not a lexer).
+local function obj_quote(ed, around, q)
+  local l, s = ed.cy, line(ed, ed.cy)
+  local pos = {}
+  for i = 1, #s do if s:sub(i, i) == q then pos[#pos + 1] = i end end
+  local op, cl
+  for k = 1, #pos - 1, 2 do
+    if ed.cx <= pos[k + 1] then op, cl = pos[k], pos[k + 1]; break end
+  end
+  if not op then return nil end
+  if around then
+    local j = cl
+    while j < #s and s:sub(j + 1, j + 1):match("%s") do j = j + 1 end
+    if j > cl then cl = j
+    else while op > 1 and s:sub(op - 1, op - 1):match("%s") do op = op - 1 end end
+    return l, op, l, cl, "char"
+  end
+  return l, op + 1, l, cl - 1, "char"                   -- inner: between the quotes
+end
+
+-- ip = the block of like-emptiness lines around the cursor (all non-blank, or
+-- all blank); ap adds the adjacent run of the opposite kind (trailing else
+-- leading). Linewise.
+local function obj_para(ed, around)
+  local N = ed.buf:nlines()
+  local blank = line(ed, ed.cy) == ""
+  local a, z = ed.cy, ed.cy
+  while a > 1 and (line(ed, a - 1) == "") == blank do a = a - 1 end
+  while z < N and (line(ed, z + 1) == "") == blank do z = z + 1 end
+  if around then
+    local z0 = z
+    while z < N and (line(ed, z + 1) == "") ~= blank do z = z + 1 end
+    if z == z0 then
+      while a > 1 and (line(ed, a - 1) == "") ~= blank do a = a - 1 end
+    end
+  end
+  return a, 1, z, 1, "line"
+end
+
+-- The object registry, keyed by the char after i/a. Aliases follow vi: b/B for
+-- ()/{} blocks, and open/close bracket both select their pair.
+local textobjs = {
+  [b("w")] = function(ed, a) return obj_word(ed, a, false) end,
+  [b("W")] = function(ed, a) return obj_word(ed, a, true) end,
+  [b("p")] = function(ed, a) return obj_para(ed, a) end,
+  [b("(")] = function(ed, a) return obj_pair(ed, a, "(", ")") end,
+  [b(")")] = function(ed, a) return obj_pair(ed, a, "(", ")") end,
+  [b("b")] = function(ed, a) return obj_pair(ed, a, "(", ")") end,
+  [b("{")] = function(ed, a) return obj_pair(ed, a, "{", "}") end,
+  [b("}")] = function(ed, a) return obj_pair(ed, a, "{", "}") end,
+  [b("B")] = function(ed, a) return obj_pair(ed, a, "{", "}") end,
+  [b("[")] = function(ed, a) return obj_pair(ed, a, "[", "]") end,
+  [b("]")] = function(ed, a) return obj_pair(ed, a, "[", "]") end,
+  [b("<")] = function(ed, a) return obj_pair(ed, a, "<", ">") end,
+  [b(">")] = function(ed, a) return obj_pair(ed, a, "<", ">") end,
+  [b('"')] = function(ed, a) return obj_quote(ed, a, '"') end,
+  [b("'")] = function(ed, a) return obj_quote(ed, a, "'") end,
+  [b("`")] = function(ed, a) return obj_quote(ed, a, "`") end,
+}
+
+-- Apply an operator over a text object. nil object -> clean no-op. Shift is
+-- always linewise (like apply_operator). An empty inner range (adjacent
+-- delimiters, e.g. ci( on "()") is the one special case: `c` opens insert
+-- between them; d/y do nothing -- matching vi, and NOT leaking into insert.
+local function apply_textobj(ed, op, obj, around, reg)
+  local sl, sc, tl, tc, kind = obj(ed, around)
+  if not sl then return end
+  if kind == "line" or SHIFT[op] then
+    op_lines(ed, op, sl, tl, reg)
+  elseif tl < sl or (tl == sl and tc < sc) then
+    if op == "c" then ed.cy, ed.cx = sl, sc; clamp(ed); insert_mode(ed) end
+  else
+    op_chars_range(ed, op, sl, sc, tl, tc, true, reg)
+  end
+end
+
 local operators = { [b("d")] = "d", [b("c")] = "c", [b("y")] = "y",
                     [b(">")] = "shift_r", [b("<")] = "shift_l" }
 
@@ -1393,7 +1574,10 @@ local function command(ed)
     local count2
     count2, k2 = read_count(ed, k2)
     local total = combine(count1, count2)
-    if k2 == k then -- dd / yy / cc
+    if k2 == b("i") or k2 == b("a") then       -- text object: di( ci" yap ...
+      local obj = textobjs[getkey(ed)]
+      if obj then apply_textobj(ed, op, obj, k2 == b("a"), reg) end
+    elseif k2 == k then -- dd / yy / cc
       op_lines(ed, op, ed.cy, ed.cy + (total or 1) - 1, reg)
     else
       local m = motions[k2]
