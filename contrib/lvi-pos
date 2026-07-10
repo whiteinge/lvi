@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-pos [-w auto|WID] save | restore
+# lvi-pos [-w auto|WID] save | restore [-n]
 #
 # Remember where you were in each file across sessions -- vi/vim's `` `" `` mark,
 # restored from viminfo -- but as a plain-text store and a couple of `:on` hooks
@@ -11,8 +11,11 @@
 #            settles), `on write`, `on bufleave` (leaving a buffer).
 #   restore  look the current file up in the store and jump there, leaving the
 #            `` `" `` mark at the spot so `` `" `` takes you back after you wander.
-#            Bind to `on ready` (the file(s) opened at startup) and `on bufenter`
-#            (a file opened later with :e).
+#            With -n (--no-jump) the cursor stays at the top instead: only the
+#            `` `" `` mark is set, so you open the file fresh at line 1 but `` `" ``
+#            still carries you to where you left off when you ask for it. Bind to
+#            `on ready` (the file(s) opened at startup) and `on bufenter` (a file
+#            opened later with :e).
 #
 # THE STORE is a tab-delimited text file, newest entry last, one line per file:
 #     /abs/path/to/file<TAB>LINE<TAB>COL
@@ -42,6 +45,8 @@
 #     on bufleave lvi-pos save
 #     on ready    lvi-pos restore
 #     on bufenter lvi-pos restore
+# Add -n to either to keep the mark but stay at line 1 (open at the top):
+#     on ready    lvi-pos restore -n
 #
 # Config: LVI (client, default `lvi`), LVI_POS_FILE (store path, default
 # $XDG_STATE_HOME/lvi/positions), LVI_POS_MAX (entries to keep, default 1000).
@@ -53,6 +58,8 @@ maxn=${LVI_POS_MAX:-1000}
 
 want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
 sub=${1:-}; [ -n "$sub" ] && shift
+# restore -n / --no-jump: set the `" mark but leave the cursor at the top.
+nojump=; case "$1" in -n|--no-jump) nojump=1; shift ;; esac
 target=${want_wid:-${LVI_WID:-auto}}
 send() { $LVI -w "$target" --detach -- "$@"; }
 
@@ -60,7 +67,7 @@ send() { $LVI -w "$target" --detach -- "$@"; }
 # rather than silently no-op'ing on the (later) empty-file guard.
 case "$sub" in
   save|restore) ;;
-  *) echo "usage: lvi-pos [-w auto|WID] save | restore" >&2; exit 2 ;;
+  *) echo "usage: lvi-pos [-w auto|WID] save | restore [-n]" >&2; exit 2 ;;
 esac
 
 # The buffer's file: from the env when spawned by a hook, else ask over the
@@ -98,8 +105,22 @@ restore)
   case "${LVI_LINE:-1}" in 1|"") ;; *) exit 0 ;; esac
   line=$(awk -F'\t' -v f="$file" '$1 == f { print $2 }' "$store" 2>/dev/null)
   case "$line" in ''|*[!0-9]*|0|1) exit 0 ;; esac      # nothing worth jumping to
-  # Jump there and drop the `` `" `` mark at the spot. The socket clamps a stale
-  # line (file shrank) to the last line, same tolerance as viminfo.
-  send "normal ${line}Gm\""
+  col=$(awk -F'\t' -v f="$file" '$1 == f { print $3 }' "$store" 2>/dev/null)
+  case "$col" in ''|*[!0-9]*|0) col=1 ;; esac          # older/short entries -> column 1
+  # Restore the exact spot -- line AND byte column, like Vim's `" mark. :pos sets
+  # the cursor byte-exactly (a plain ${line}G lands on the first non-blank, and no
+  # normal-mode motion reaches a raw byte column); `m"` then drops the mark there.
+  # :pos clamps a stale line/col (the file shrank since we saved) into the buffer,
+  # the same tolerance as viminfo. We set the mark the only way lvi offers -- at
+  # the cursor -- because there is no command to mark an address without moving.
+  #
+  # With -n we still want the mark but not the move, so after dropping it we send
+  # the cursor back to where the fresh read left it (line 1; the line-1 guard
+  # above guarantees that is where we started).
+  if [ -n "$nojump" ]; then
+    send "pos $line $col" "normal m\"" "pos ${LVI_LINE:-1} ${LVI_COL:-1}"
+  else
+    send "pos $line $col" "normal m\""
+  fi
   ;;
 esac

@@ -177,6 +177,8 @@ on change   lvi-pos save        " after an edit settles...
 on write    lvi-pos save        " ...on :w...
 on bufleave lvi-pos save        " ...and when you leave a buffer
 on ready    lvi-pos restore     " restore the file(s) opened at startup
+" (add -n -- `lvi-pos restore -n` -- to set the `" mark but stay at line 1, so
+" you open at the top and jump to your old spot only when you press `")
 " And restore a file opened later with :e. Safe on every switch: it only jumps a
 " buffer sitting at line 1 (a fresh read), so it never clobbers the live cursor
 " of a buffer you're revisiting.

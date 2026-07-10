@@ -508,8 +508,10 @@ _contrib/lvi-shell.sh_ do).
 	segments render in _name_ order. Generic -- an external tool drives it (a
 	list's *[3/57]* counter, a git branch), the way *hl* drives highlights.
 
-*f*, *pos*, *echo* _text_, *silent* _cmd_
-	Show the file name and line count; report the cursor as _line_<TAB>_col_;
+*f*, *pos* [_line_ [_col_]], *echo* _text_, *silent* _cmd_
+	Show the file name and line count; with no argument report the cursor as
+	_line_<TAB>_col_, or with arguments move it there (_col_ is a byte column,
+	clamped into the buffer, and unlike a motion it leaves no jumplist entry);
 	echo _text_; run _cmd_ suppressing its interactive prompt.
 
 *msg* _text_, *msge* _text_

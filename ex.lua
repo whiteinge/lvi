@@ -1004,7 +1004,25 @@ def("fire", function(ed, c)
   return "", "ok"
 end)
 
-def("pos", function(ed) return ed.cy .. "\t" .. ed.cx, "ok" end)
+-- :pos [LINE [COL]] -- query or set the cursor. Bare :pos reports line<TAB>col
+-- (COL is a 1-based BYTE column, matching :marks and Vim's `" mark). With
+-- arguments it MOVES the cursor there: the byte-exact setter contrib/lvi-pos
+-- needs to restore a saved column, and normal-mode motions can't reach one --
+-- `l` steps by character and `|` by display column, so neither lands on a raw
+-- byte offset once a line has tabs or multibyte. Like :top it records no
+-- jumplist entry; LINE/COL are clamped into the buffer (a position that
+-- outlived an edit lands as near as it can, viminfo's tolerance), and refresh's
+-- normal.clamp gives the resting column its final char-aware snap.
+def("pos", function(ed, c)
+  if c.args == "" then return ed.cy .. "\t" .. ed.cx, "ok" end
+  local l, col = c.args:match("^(%d+)%s+(%d+)$")
+  l = l or c.args:match("^(%d+)$")
+  if not l then return "usage: pos [LINE [COL]]", "err" end
+  ed.cy = clampline(ed, tonumber(l))
+  local len = #(ed.buf:line(ed.cy) or "")
+  ed.cx = math.max(1, math.min(col and tonumber(col) or 1, math.max(1, len)))
+  return "", "ok"
+end)
 
 -- Viewport-top query/set -- the socket sibling of :pos, exposing the scroll
 -- position so an external tool can read it and drive it (scrollbind: bind two

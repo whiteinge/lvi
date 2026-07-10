@@ -203,8 +203,10 @@ database; lvi keeps it in a **plain-text store** — one tab-delimited
 edit, or delete by hand. No core support was needed: the whole feature is a
 handful of `:on` hooks pointed at one script. `save` (on `change`/`write`/
 `bufleave`) records the cursor; `restore` (on `ready`/`bufenter`) looks the file
-up, jumps there, and drops the `` `" `` mark so `` `" `` takes you back after you
-wander. `restore` only touches a buffer sitting at line 1 (a fresh read), so
+up, jumps to the exact line and column, and drops the `` `" `` mark so `` `" ``
+takes you back after you wander. Prefer to open fresh at the top? `restore -n` sets the `` `" `` mark but
+leaves the cursor at line 1, so you reach for `` `" `` only when you want it.
+`restore` only touches a buffer sitting at line 1 (a fresh read), so
 binding it to every `bufenter` never clobbers the live cursor of a buffer you're
 revisiting — lvi already keeps that in memory.
 
