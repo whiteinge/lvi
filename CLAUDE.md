@@ -51,7 +51,7 @@ Data flows through a few deliberate choke points. Understanding these four is mo
 
 ## Documentation (who each doc is for)
 
-Four docs, four audiences — keep content in its lane and don't duplicate across them:
+Four docs, four audiences — keep content in its lane and don't duplicate across them. **Prose in all of them follows the repo voice — see `.claude/voice.md`; evaluate any new or changed doc prose against it (and run its final pass) before calling the change done.**
 
 - **`lvi.1.scd` (the manpage)** — source of truth for day-to-day editor use: normal-mode commands, ex commands, config, environment. GitHub renders `.scd` inline, so it doubles as browsable reference. It mentions the `contrib` tools only as a brief "this exists, turn it on" teaser with headliners, then links out. **scdoc trap** (has bitten repeatedly): a wrapped continuation line must never start with `-` — the house style's ` -- ` dashes land there easily and scdoc parses the line as a list entry, breaking the build. Rewrap so the dash sits mid-line or at line end, and validate every edit with `scdoc < lvi.1.scd > /dev/null`.
 - **contrib script header comments** — the verbose per-script operator reference: purpose, invocation/synopsis, every env knob, binding snippets, debug flags. Self-contained when you open the file. Env knobs live *here only*.

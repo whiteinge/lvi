@@ -574,12 +574,13 @@ scratch path in the tool's environment.
 
 # WITHOUT VISUAL MODE
 
-lvi has no visual mode. Visual mode couples selecting to editing -- highlight a
-range, then act on it -- which costs a mode, on-screen state, and a second set
-of keys just to grow and shrink the highlight. vi's model needs none of that: an
-edit already *is* an operator plus a range, stated in one gesture -- *d* with a
-motion or text object. What follows maps the visual operations you know onto that
-model, and onto the ex commands and the *!* filter that handle the multi-line and
+lvi has no visual mode. Visual mode is selecting first then editing --
+highlight a range, then act on it -- a new mode, on-screen state, and a
+second set of keys to grow and shrink the highlight bring real complexity.
+vi's model is simpler yet provides functional alternatives: an edit already
+*is* an operator plus a range, stated in one gesture -- *d* with a motion or
+text object. What follows maps the visual operations you know onto that model,
+and onto the ex commands and the *!* filter that handle the multi-line and
 column edits.
 
 ## In place of a character or line selection
@@ -597,15 +598,15 @@ column edits.
 
 ## Naming the range first
 
-vi names the range *before* the action, so the knack that stands in for visual
-mode is describing a range without dragging a highlight across it. Most directly,
+vi names the range *before* the action, so what stands in for visual mode is
+describing a range without dragging a highlight across it. Most directly,
 a motion or text object already *is* one: *dip* takes the paragraph, *dt)* runs
 to the next *)*, *ci(* the brackets. A search is an address too -- *d/foo* deletes
 up to the next _foo_, and at the *:* prompt an address may be a pattern, so
 *:.,/END/d* deletes from here to the next line matching _END_.
 
-*Marks* are the tool for a range you assemble by moving around, and they are what
-most repays the loss of a drawn selection. Drop one with *m*_a_, then travel
+*Marks* are the tool for a range you assemble by moving around, and they best
+make up for not having a drawn selection. Drop one with *m*_a_, then travel
 freely -- search, scroll, jump to a matching bracket with *%* -- and act from the
 far end: *d`a*, *y`a*, *c`a* reach charwise to the exact spot, *d'a* is linewise,
 and at the *:* prompt *:'a,'b* is the range for any ex command. So *:'a,'b t .*
@@ -628,10 +629,13 @@ reached for, taking a named range in place of a drawn rectangle:
 
 *:[range]normal* _keys_
 	Run any normal-mode _keys_ on each line of the range -- the nearest thing to
-	multiple cursors. *:%normal A;* appends *;* to every line; *:2,5normal @a*
-	replays macro _a_ on lines 2-5. lvi's own keys work here (its macros, text
-	objects, *!*/*gq*); lines run top to bottom, so keep the keys per-line and
-	reach for *:g//d* / *:d* / *:m* when you mean to change the line count.
+	multiple cursors. *:%normal A;* appends *;* to every line. For an edit too
+	fiddly to type inline, record it once on a sample line with *q*_a_ ... *q*,
+	then stamp that macro across a range: *:2,5normal @a* replays macro _a_ on
+	lines 2-5, *:%normal @a* on the whole buffer. lvi's own keys work here (its
+	macros, text objects, *!*/*gq*); lines run top to bottom, so keep the keys
+	per-line and reach for *:g//d* / *:d* / *:m* when you mean to change the line
+	count.
 *:%s/$/;/*, *:%s/^/# /*
 	Append or prepend text on every line; unlike *:normal*, *:s* keeps a trailing
 	space, so it is the way to indent-with-a-space across lines.
