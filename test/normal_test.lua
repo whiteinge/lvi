@@ -546,6 +546,23 @@ describe("normal-mode interpreter", function()
       feed(ed, 'j"ap')                            -- put reg a below line 2
       expect(ed.buf:get()).to.equal({ "keep", "toss", "keep" })
     end)
+    it("p of a multi-line charwise register splits the line (no \\n crash)", function()
+      local ed = make("abc\ndef\n\nxyz")
+      feed(ed, "ld}")                             -- reg = charwise "bc\ndef"
+      expect(ed.regs['"'].linewise).to.be(false)
+      expect(ed.regs['"'].text).to.equal("bc\ndef")
+      feed(ed, "p")                               -- splits: a|bc / def, restores original
+      expect(ed.buf:get()).to.equal({ "abc", "def", "", "xyz" })
+      expect(ed.cy).to.equal(2)
+      expect(ed.cx).to.equal(3)                   -- last char of pasted text
+    end)
+    it("P of a multi-line charwise register inserts before the cursor", function()
+      local ed = make("abc\ndef\n\nxyz")
+      feed(ed, "ld}P")                            -- put charwise "bc\ndef" before 'a'
+      expect(ed.buf:get()).to.equal({ "bc", "defa", "", "xyz" })
+      expect(ed.cy).to.equal(2)
+      expect(ed.cx).to.equal(3)
+    end)
   end)
 
   describe("insert mode", function()

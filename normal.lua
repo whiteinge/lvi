@@ -1117,8 +1117,24 @@ local function do_put(ed, after, reg)
   else
     local s = line(ed, ed.cy)
     local at = ed.cx + ((after and #s > 0) and 1 or 0)
-    ed.buf:set(ed.cy, s:sub(1, at - 1) .. r.text .. s:sub(at))
-    ed.cx = at + #r.text - 1
+    local head, tail = s:sub(1, at - 1), s:sub(at)
+    if not r.text:find("\n", 1, true) then
+      ed.buf:set(ed.cy, head .. r.text .. tail)
+      ed.cx = at + #r.text - 1
+    else
+      -- A multi-line charwise register (e.g. from d}/d/pat/visual across lines)
+      -- splits the current line at the cursor: the register's segments open on
+      -- `head` and close by re-joining `tail`. Putting the '\n' verbatim would
+      -- break the "a line never contains \n" invariant (buffer.lua:no_newline).
+      local segs = {}
+      for seg in (r.text .. "\n"):gmatch("(.-)\n") do segs[#segs + 1] = seg end
+      segs[1] = head .. segs[1]
+      local lastlen = #segs[#segs]                 -- last pasted char, pre-tail
+      segs[#segs] = segs[#segs] .. tail
+      ed.buf:splice(ed.cy, 1, segs)
+      ed.cy = ed.cy + #segs - 1
+      ed.cx = math.max(1, lastlen)                 -- cursor on last char of new text
+    end
   end
   ed.changed = true
   clamp(ed)
