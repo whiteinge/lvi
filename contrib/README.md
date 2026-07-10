@@ -7,12 +7,18 @@ search, syntax highlighting, and quickfix aren't compiled in — they're Unix
 tools composed from the outside. Nothing here is privileged; each is a worked
 example of what *any* program can do to a live view.
 
-Put this directory on your `PATH`. **Each script's header comment is its full
-reference** — invocation, every env knob, and copy-paste bindings. This file is
-the overview: what each tool is *for*, and the shared machinery they lean
-on.
+Put this directory on your `PATH`. Where to go next depends on what you're here
+for:
 
-Copy a theme and the bindings from [`lvirc.sample`](lvirc.sample).
+- **To switch a feature on**, see *TURNING ON THE IDE* in the manpage
+  (`man lvi`): it lists every tool with the one rc line that enables it. Themes
+  and bindings to copy are in [`lvirc.sample`](lvirc.sample).
+- **To learn what a tool does**, read [The tools](#the-tools) below. Each script
+  also prints its own full reference — invocation, env knobs, bindings — with
+  `TOOL -h`.
+- **To write or change one**, read
+  [The shared machinery](#the-shared-machinery): the handful of core ideas every
+  tool is built from.
 
 ## The tools
 
