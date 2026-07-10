@@ -7,30 +7,133 @@ search, syntax highlighting, and quickfix aren't compiled in — they're Unix
 tools composed from the outside. Nothing here is privileged; each is a worked
 example of what *any* program can do to a live view.
 
-Put this directory on your `PATH`. Where to go next depends on what you're here
-for:
+Put this directory on your `PATH`. Then:
 
-- **To switch a feature on**, see *TURNING ON THE IDE* in the manpage
-  (`man lvi`): it lists every tool with the one rc line that enables it. Themes
-  and bindings to copy are in [`lvirc.sample`](lvirc.sample).
-- **To learn what a tool does**, read [The tools](#the-tools) below. Each script
-  also prints its own full reference — invocation, env knobs, bindings — with
-  `TOOL -h`.
-- **To write or change one**, read
-  [The shared machinery](#the-shared-machinery): the handful of core ideas every
-  tool is built from.
+- **To switch a feature on**, see *TURNING ON THE IDE* in the
+  [manpage](../lvi.1.scd): it lists every tool with the rc line or map that
+  enables it, and the themes and bindings to copy are in
+  [`lvirc.sample`](lvirc.sample).
+- **For a tool's full reference**, run `TOOL -h` — its header comment:
+  invocation, every env knob, and bindings.
+
+The rest of this README is implementation detail on the tools below, to guide
+you in writing your own (contributions welcome).
+
+## The shared machinery
+
+Every tool below is built from a handful of ideas the core provides — worth
+understanding once; they're all *you* need to write your own.
+
+**The `:hl` overlay is the substrate.** One styled overlay (`:hl` paints ranges,
+`:hi` themes groups, `pri=N` sets z-order) backs search, quickfix, *and* syntax
+highlighting. They only differ in what feeds it: a highlighter emits token
+groups, a list emits match groups (search sets a positive `pri` so its matches
+draw over syntax). A new visual feature is usually just a new producer of `:hl`.
+
+**Lists are files; list focus is a pointer.** Both live beside the buffer
+socket, the state survives across processes and needs no daemon — any
+producer writes a list, any stepper reads the focused one. `on bufenter
+lvi-list paint` is the glue that repaints the current buffer's matches when
+you arrive in it, which is what makes *cross-file* lists (project grep,
+a compiler) light up per file.
+
+**Three spawn disciplines** — the reason the bindings differ:
+
+- `:silent !CMD` hands over the terminal (drops to and back from the alt screen).
+  Use it only for tools that **prompt** or are otherwise interactive — `/`,
+  `lvi-open`'s picker.
+- `:bg CMD` runs detached with **no** terminal handover — no alt-screen flash. Use
+  it for non-interactive tools fired by a map that may repeat (`map n :bg lvi-list
+  next<CR>`). It's the same spawn `:on` hooks use.
+- **Self-backgrounding.** A tool that must *read* the buffer (`lvi-highlight`,
+  `lvi-search` via `%p`) can't do so synchronously from a `:silent !` child: lvi's
+  loop is frozen waiting on that child, so a foreground read would deadlock. They
+  double-fork a worker and return at once, letting lvi resume and service the
+  worker's socket I/O. `lvi-list` never reads the buffer, so it just fires
+  fire-and-forget jumps with `lvi -w --detach`.
+
+…plus **`:wbuf`, the buffer-feeder** for the one case self-backgrounding can't
+cover: a tool that needs the terminal **and** the live buffer at once — an
+interactive picker built from *unsaved* text (`lvi-tags`). Self-backgrounding
+frees the loop but surrenders the tty the picker needs. So the binding snapshots
+the buffer to `$LVI_BUFFER` with `:wbuf` *before* handing over the tty, and the
+frozen picker reads that file: `map \t :wbuf<CR>:silent !lvi-tags<CR>`. The
+manpage's *Shelling out* table lays the verbs side by side.
+
+**Reactive hooks push; nothing polls.** `on change` (the buffer settled), `on
+write` (a `:w`), and `on scroll` (a keyboard move of the viewport top) are the
+editor's *push* seams — each fires a command with the relevant state in the
+environment (`$LVI_FILE`, `$LVI_TOP`, …). They're keyboard-gated, so a tool's own
+socket-driven edits and scrolls never re-fire them, and cross-view features can't
+ring. The flip side of that gate: if your tool *edits* the buffer over the
+socket, `change` consumers (live highlighting) won't hear about it until the
+user's next keystroke — send `:fire` after your edits to arm them explicitly
+(it rides the same idle debounce a keystroke does). `lvi-diff` is how far the
+hook model reaches: diff highlighting, hunk-aware scrollbind, and staging are
+*all* just these hooks plus one-shots — no polling, no daemon; the session
+lives as hooks and maps inside the two views and ends when a pane closes.
+
+**The dirty flag is a socket primitive.** The buffer's modified state is exposed
+through the ordinary `:set` surface — `set modified?` queries it, `set
+nomodified` clears it (aligning the undo saved-marker with the current state, as
+`:w` does but without the I/O), `set modified` forces it dirty. That is all
+`lvi-mirror` needs to keep the clean/dirty indicator honest across panes: it
+reads its own flag and pushes `set nomodified` to peers whenever it goes clean.
+No new protocol — a piece of view state that happened to have no ex option got
+one, and a cross-pane feature fell out.
+
+**Registers can be shell-backed.** `:register NAME read CMD write CMD` wires a
+register to external commands: a yank or delete pipes the text out through
+*write*, a put reads fresh in through *read*. Backing `+` with the system
+clipboard is the idiom — `register + read wl-paste write wl-copy` (or
+`pbcopy`/`pbpaste`, `xclip`, a `tmux` buffer) — so `"+y` copies and `"+p`
+pastes. This is core config, not a script; [`lvirc.sample`](lvirc.sample) has
+the per-platform lines.
+
+**The highlighter contract**: `lvi-highlight` is a backend-agnostic harness;
+a backend is one adapter, `lvi-hl-<name>`, with a single contract: **buffer
+text on stdin, filename as `$1` (optional forced language as `$2`), emit
+`hl GROUP L:C1-C2 …` (byte columns) on stdout.** Two shapes ship:
+
+- **Positional** (`lvi-hl-pygments`): walk the tool's token stream, emit named
+  groups; style them with `:hi`.
+- **ANSI** (`lvi-hl-bat`): pipe the tool's ANSI-colored output through the shared
+  `lvi-hl-ansi` parser, which turns each distinct SGR into a `synN` group whose
+  style *is* that SGR. `source-highlight`, `tree-sitter highlight`, etc. are thin
+  wrappers around `lvi-hl-ansi` (feed it `--wrap=never --tabs=0` so byte columns
+  don't desync).
+
+The same contract shape drives the linter: `lvi-lint-<name>` takes the buffer
+on stdin and the filename as `$1`, and emits list entries instead of `hl`
+lines. One adapter idiom, two harnesses.
+
+**The text-object filter contract** (for adding an object like `it`). This one is
+the odd member of the family: it is the only tool lvi launches **synchronously and
+itself**, not via a map or a hook. `:textobj KEY CMD` binds a custom object; when
+an operator meets `i`/`a KEY` with no builtin, lvi shells `CMD` out and *blocks*
+for its answer — the same discipline as a `:s` sent to the system `ex`, and for
+the same reason: because the operator applies through the ordinary coroutine path,
+`c` (change) enters insert mode exactly like a builtin `ci(`. An async, socket-
+callback design (the tool phones the edit back in over `lvi -w`) was the first
+sketch and was dropped — a non-blocking channel can't cleanly hand you insert mode
+mid-edit, and blocking on a fast local filter is imperceptible. The contract:
+**invoked `CMD TMPFILE i|a LINE COL`** (buffer text in a private temp file, cursor
+1-based in bytes), **print one line** — `char L1 C1 L2 C2` (charwise, inclusive,
+byte columns), `line L1 L2` (whole lines), or nothing for "no object here" (a clean
+no-op). That's the whole surface; `lvi-textobj-tag` is one implementation of it,
+and a tree-sitter object would be another.
 
 ## The tools
+
+Each is a worked example of the machinery above — read the one nearest what you
+want to build. To *use* them, see the manpage's *TURNING ON THE IDE*.
 
 ### `lvi-highlight` — syntax highlighting
 
 Pulls the live buffer over the socket, runs an external highlighter, and paints
 the tokens through `:hl`. Because it works on the buffer (not the file on disk)
 it highlights **unsaved** content, and a still-open string or block comment
-colors the rest of the file until you close it. Turn it on in your rc:
-
-    on change   lvi-highlight   " re-highlight a beat after you stop typing
-    on bufenter lvi-highlight   " ...and when you switch/open a buffer
+colors the rest of the file until you close it.
 
 Two backends ship (more contributions welcome), and they *theme* differently:
 
@@ -178,7 +281,7 @@ line, scrolling the picker *is* a structural overview of the buffer — "jump
 to a function" or "what's in this file". It re-tags the **live buffer**,
 not from an on-disk`tags` file, so it reflects your unsaved, in-progress
 edits. Bind it: `map \t :wbuf<CR>:silent !lvi-tags<CR>` (`:wbuf` snapshots
-the buffer so the picker can read it — see the spawn disciplines below).
+the buffer so the picker can read it — see the spawn disciplines above).
 
 ### `lvi-fold` — collapse the buffer by structure
 
@@ -190,15 +293,11 @@ the same read-compute-paint loop `lvi-highlight` runs against `:hl`. We
 ship with two fold methods (contributions welcome): `marker` (vim's `{{{
 … }}}`, nested by a stack; the pair is `$LVI_FOLD_MARKER`) and `indent`
 (each block indented under its parent). It replaces the view's folds each
-run, so a keybind re-folds after edits:
-
-    hi Folded fg=cyan italic        " optional: theme the summary bar
-    map zi :bg lvi-fold<CR>         " (re)fold by marker
-    map zI :bg lvi-fold indent<CR>  " (re)fold by indent
-    on bufenter lvi-fold            " auto-fold a file as you open it
+run, so re-running it (by marker or `indent` mode, or `on bufenter` to auto-fold
+on open) re-folds after edits.
 
 It reads the buffer, so it self-backgrounds (or bind it with `:bg`) for the same
-reason `lvi-highlight`/`lvi-search` do — see **Self-backgrounding** below. Any
+reason `lvi-highlight`/`lvi-search` do — see **Self-backgrounding** above. Any
 other fold policy (by syntax, by diff hunk, by `git` conflict markers) is the
 same shape: emit `L1,L2` pairs, hand them to `:fold`.
 
@@ -261,7 +360,7 @@ and `on write lvi-mirror` (propagate the saved/clean state on `:w`). The
 mesh is stable by construction: a peer receives the push over its socket,
 and socket-sourced edits never re-arm the `change` hook, so A→B never
 rings back B→A. It also carries the dirty flag across panes via the
-`set modified?` / `set nomodified` primitive (see below).
+`set modified?` / `set nomodified` primitive (see above).
 
 ### `lvi-diff` — two-way diff of two panes
 
@@ -348,7 +447,7 @@ and self-closing `<foo/>` as opening no scope, ignores `<`/`>` inside quoted
 attributes, and balances nested same-name tags. A strict parser would fail on the
 half-typed markup that is the normal case. It's ~80 lines of `awk`; a
 tree-sitter-backed `if` (function) or `ia` (argument) object would slot in the
-same way (see the filter contract below), trading startup cost for _real_ grammar.
+same way (see the filter contract above), trading startup cost for _real_ grammar.
 
 ### `lvi-incr` — increment / renumber, since there's no Ctrl-A
 
@@ -367,110 +466,6 @@ that covers both the point and the visual cases — line *i* of the input gets
 
 Leading zeros are preserved (`007`→`008`) and numberless lines pass through. Two
 `map <C-a> :.!lvi-incr<CR>` / `map <C-x> :.!lvi-incr -s -1<CR>` bindings put the
-old reflex back on one line. It's the clearest demonstration of the point below —
-a whole editor feature that ships as a filter because the operator already exists.
+old reflex back on one line. It's the clearest demonstration of the point — a
+whole editor feature that ships as a filter because the operator already exists.
 
-## The shared machinery
-
-Everything above is built from a handful of ideas the core provides — worth
-understanding once, because they're all *you* need to write your own. (And
-contributions welcome.)
-
-**The `:hl` overlay is the substrate.** One styled overlay (`:hl` paints ranges,
-`:hi` themes groups, `pri=N` sets z-order) backs search, quickfix, *and* syntax
-highlighting. They only differ in what feeds it: a highlighter emits token
-groups, a list emits match groups (search sets a positive `pri` so its matches
-draw over syntax). A new visual feature is usually just a new producer of `:hl`.
-
-**Lists are files; list focus is a pointer.** Both live beside the buffer
-socket, the state survives across processes and needs no daemon — any
-producer writes a list, any stepper reads the focused one. `on bufenter
-lvi-list paint` is the glue that repaints the current buffer's matches when
-you arrive in it, which is what makes *cross-file* lists (project grep,
-a compiler) light up per file.
-
-**Three spawn disciplines** — the reason the bindings differ:
-
-- `:silent !CMD` hands over the terminal (drops to and back from the alt screen).
-  Use it only for tools that **prompt** or are otherwise interactive — `/`,
-  `lvi-open`'s picker.
-- `:bg CMD` runs detached with **no** terminal handover — no alt-screen flash. Use
-  it for non-interactive tools fired by a map that may repeat (`map n :bg lvi-list
-  next<CR>`). It's the same spawn `:on` hooks use.
-- **Self-backgrounding.** A tool that must *read* the buffer (`lvi-highlight`,
-  `lvi-search` via `%p`) can't do so synchronously from a `:silent !` child: lvi's
-  loop is frozen waiting on that child, so a foreground read would deadlock. They
-  double-fork a worker and return at once, letting lvi resume and service the
-  worker's socket I/O. `lvi-list` never reads the buffer, so it just fires
-  fire-and-forget jumps with `lvi -w --detach`.
-
-…plus **`:wbuf`, the buffer-feeder** for the one case self-backgrounding can't
-cover: a tool that needs the terminal **and** the live buffer at once — an
-interactive picker built from *unsaved* text (`lvi-tags`). Self-backgrounding
-frees the loop but surrenders the tty the picker needs. So the binding snapshots
-the buffer to `$LVI_BUFFER` with `:wbuf` *before* handing over the tty, and the
-frozen picker reads that file: `map \t :wbuf<CR>:silent !lvi-tags<CR>`. The
-manpage's *Shelling out* table lays the verbs side by side.
-
-**Reactive hooks push; nothing polls.** `on change` (the buffer settled), `on
-write` (a `:w`), and `on scroll` (a keyboard move of the viewport top) are the
-editor's *push* seams — each fires a command with the relevant state in the
-environment (`$LVI_FILE`, `$LVI_TOP`, …). They're keyboard-gated, so a tool's own
-socket-driven edits and scrolls never re-fire them, and cross-view features can't
-ring. The flip side of that gate: if your tool *edits* the buffer over the
-socket, `change` consumers (live highlighting) won't hear about it until the
-user's next keystroke — send `:fire` after your edits to arm them explicitly
-(it rides the same idle debounce a keystroke does). `lvi-diff` is how far the
-hook model reaches: diff highlighting, hunk-aware scrollbind, and staging are
-*all* just these hooks plus one-shots — no polling, no daemon; the session
-lives as hooks and maps inside the two views and ends when a pane closes.
-
-**The dirty flag is a socket primitive.** The buffer's modified state is exposed
-through the ordinary `:set` surface — `set modified?` queries it, `set
-nomodified` clears it (aligning the undo saved-marker with the current state, as
-`:w` does but without the I/O), `set modified` forces it dirty. That is all
-`lvi-mirror` needs to keep the clean/dirty indicator honest across panes: it
-reads its own flag and pushes `set nomodified` to peers whenever it goes clean.
-No new protocol — a piece of view state that happened to have no ex option got
-one, and a cross-pane feature fell out.
-
-**Registers can be shell-backed.** `:register NAME read CMD write CMD` wires a
-register to external commands: a yank or delete pipes the text out through
-*write*, a put reads fresh in through *read*. Backing `+` with the system
-clipboard is the idiom — `register + read wl-paste write wl-copy` (or
-`pbcopy`/`pbpaste`, `xclip`, a `tmux` buffer) — so `"+y` copies and `"+p`
-pastes. This is core config, not a script; [`lvirc.sample`](lvirc.sample) has
-the per-platform lines.
-
-**The highlighter contract**: `lvi-highlight` is a backend-agnostic harness;
-a backend is one adapter, `lvi-hl-<name>`, with a single contract: **buffer
-text on stdin, filename as `$1`, emit `hl GROUP L:C1-C2 …` (byte columns)
-on stdout.** Two shapes ship:
-
-- **Positional** (`lvi-hl-pygments`): walk the tool's token stream, emit named
-  groups; style them with `:hi`.
-- **ANSI** (`lvi-hl-bat`): pipe the tool's ANSI-colored output through the shared
-  `lvi-hl-ansi` parser, which turns each distinct SGR into a `synN` group whose
-  style *is* that SGR. `source-highlight`, `tree-sitter highlight`, etc. are thin
-  wrappers around `lvi-hl-ansi` (feed it `--wrap=never --tabs=0` so byte columns
-  don't desync).
-
-The same contract shape drives the linter: `lvi-lint-<name>` takes the buffer
-on stdin and the filename as `$1`, and emits list entries instead of `hl`
-lines. One adapter idiom, two harnesses.
-
-**The text-object filter contract** (for adding an object like `it`). This one is
-the odd member of the family: it is the only tool lvi launches **synchronously and
-itself**, not via a map or a hook. `:textobj KEY CMD` binds a custom object; when
-an operator meets `i`/`a KEY` with no builtin, lvi shells `CMD` out and *blocks*
-for its answer — the same discipline as a `:s` sent to the system `ex`, and for
-the same reason: because the operator applies through the ordinary coroutine path,
-`c` (change) enters insert mode exactly like a builtin `ci(`. An async, socket-
-callback design (the tool phones the edit back in over `lvi -w`) was the first
-sketch and was dropped — a non-blocking channel can't cleanly hand you insert mode
-mid-edit, and blocking on a fast local filter is imperceptible. The contract:
-**invoked `CMD TMPFILE i|a LINE COL`** (buffer text in a private temp file, cursor
-1-based in bytes), **print one line** — `char L1 C1 L2 C2` (charwise, inclusive,
-byte columns), `line L1 L2` (whole lines), or nothing for "no object here" (a clean
-no-op). That's the whole surface; `lvi-textobj-tag` is one implementation of it,
-and a tree-sitter object would be another.

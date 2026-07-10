@@ -765,6 +765,10 @@ the happy-path rc line or map that turns each on:
   Source it from your shell's rc, not lvi's.
 - *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump. Turn
   on with *map \\t :wbuf<CR>:silent !lvi-tags<CR>*.
+- *lvi-fold* -- fold the buffer by structure (*marker* or *indent*); the core
+  ships the fold mechanism (*zf*/*zo*/*zc*/*zR*), this pushes the ranges. Turn on
+  with *map zi :bg lvi-fold<CR>* (marker), *map zI :bg lvi-fold indent<CR>*, or
+  *on bufenter lvi-fold* to auto-fold on open.
 - *lvi-complete* -- insert-mode word completion from the open buffers. Turn on
   with *on complete lvi-complete*.
 - *lvi-pos* -- remember your position in each file across sessions (viminfo's
