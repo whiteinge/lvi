@@ -362,7 +362,13 @@ _contrib/lvi-shell.sh_ do).
 
 *normal* _keys_
 	Feed _keys_ as normal-mode keystrokes -- the escape hatch that gives the
-	socket full editing power (e.g. *normal 2dw*). Over the socket, _keys_
+	socket full editing power (e.g. *normal 2dw*). With an address range
+	(*:%normal A;*, *:2,5normal @a*) the keys run once per line, top to bottom
+	(vi's line-wise order), each line positioned first and any open insert
+	auto-closed at its end. Keys that add or delete lines are the caller's
+	responsibility -- *:normal* is for per-line edits; use *:g*/*:d*/*:m* to
+	change the line count. Trailing spaces are stripped from _keys_, so prefix a
+	line via *:s* (*:%s/^/# /*) rather than *:normal I*. Over the socket, _keys_
 	run immediately only when the interpreter is parked between commands; if
 	they arrive mid-command (an operator awaiting its motion, insert mode, a
 	prompt) they are held and replayed at the next command boundary, so a

@@ -941,7 +941,23 @@ def("redraw", function(ed) ed.force_clear = true; return "", "ok" end)
 -- (cursor-relative edits like 2dw, ci"). The driver drives the coroutine to
 -- consume them; from the ':' prompt the running coroutine consumes them next.
 def("normal norm", function(ed, c)
-  for i = 1, #c.args do ed.inject[#ed.inject + 1] = c.args:byte(i) end
+  local function push(s) for i = 1, #s do ed.inject[#ed.inject + 1] = s:byte(i) end end
+  if c.a then
+    -- :[range]normal -- run the keys once per line in the range, the block-visual
+    -- and multi-cursor workhorse. Built as one flat key stream (the pump drains
+    -- it like any other, so no driver loop is needed): for each line, {n}G
+    -- positions it absolutely and a trailing <Esc> ends any insert the keys
+    -- opened (vim auto-terminates the same way). Top to bottom, vi's line-wise
+    -- order (:g, :s, :w !cmd all flow this way; a per-line macro that reads the
+    -- line above sees it already edited). Keys that add or delete lines are the
+    -- caller's responsibility -- with absolute positioning a shifting buffer can
+    -- skip or repeat lines; :normal is for per-line edits, and :g//d, :d, :m are
+    -- the tools for changing the line count.
+    local from, to = line_range(ed, c.a, c.b)
+    for ln = from, to do push(tostring(ln) .. "G"); push(c.args); ed.inject[#ed.inject + 1] = 27 end
+  else
+    push(c.args)
+  end
   return "", "ok"
 end)
 
