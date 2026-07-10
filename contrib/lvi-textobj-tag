@@ -1,0 +1,112 @@
+#!/bin/sh
+# lvi-textobj-tag TMPFILE i|a LINE COL   -- HTML/XML tag text object (it / at)
+#
+# A `:textobj` filter: given a snapshot of the buffer and the cursor, print the
+# range of the tag enclosing the cursor, so `dit`/`cit`/`yit` (inner) and
+# `dat`/`cat`/`yat` (around) work like Vim's tag object -- WITHOUT teaching lvi
+# any HTML. lvi shells this out synchronously and applies the operator itself
+# (see ex.textobj_range); the tool is a pure filter, blind to the socket.
+#
+# Turn it on in your lvirc:
+#     textobj t lvi-textobj-tag
+# then `cit` changes inside the enclosing element, `dat` deletes the whole thing.
+#
+# Contract (the `:textobj` filter protocol):
+#   argv:  TMPFILE (buffer text)  i|a (inner/around)  LINE  COL   (1-based, bytes)
+#   stdout: "char L1 C1 L2 C2"  a charwise, inclusive, 1-based byte range
+#           "line L1 L2"        whole lines (unused here)
+#           (nothing)           no enclosing tag -- lvi makes it a clean no-op
+#   `it` yields the content strictly between the tags (empty when they are
+#   adjacent, so `cit` opens insert between them); `at` spans both tags.
+#
+# It is a HEURISTIC balancer, not a validator -- deliberately, because the buffer
+# you are editing is usually not well-formed. It tolerates: void elements
+# (<br> <img> ...) and self-closing <foo/> (neither opens a scope), <!-- comments
+# -->, <!doctype>/<?pi?>, and '<'/'>' inside quoted attributes ("x > y"). Nested
+# same-name tags balance; a close pops to its nearest matching open. It assumes
+# LF line endings and operates on bytes (LC_ALL=C). Buffer text is reassembled in
+# one string, so it is O(n) memory / ~O(n^2) worst case -- fine for source files;
+# a huge-file object would want a real streaming parser instead.
+#
+# Debug: LVI_TAG_DEBUG=1 prints the reassembled cursor offset to stderr.
+
+file=$1 mode=$2 line=$3 col=$4
+[ -n "$file" ] && [ -n "$line" ] && [ -n "$col" ] || exit 0
+
+LC_ALL=C awk -v CL="$line" -v CC="$col" -v MODE="$mode" -v DBG="${LVI_TAG_DEBUG:-}" '
+BEGIN {
+  split("area base br col embed hr img input link meta param source track wbr", _v, " ")
+  for (x in _v) VOID[_v[x]] = 1
+  SQ = sprintf("%c", 39)          # a literal apostrophe, minted here so the awk
+                                  # program never needs to embed one (shell quoting)
+}
+{ Ln[NR] = $0 }                                  # collect lines (RS strips the LF)
+function locate(off) {                           # byte offset -> (rL, rC), 1-based
+  rL = 1
+  while (rL < nlines && start[rL + 1] <= off) rL++
+  rC = off - start[rL] + 1
+}
+END {
+  nlines = NR
+  off = 1
+  for (n = 1; n <= nlines; n++) { start[n] = off; buf = buf Ln[n] "\n"; off += length(Ln[n]) + 1 }
+  len = length(buf)
+  if (CL < 1 || CL > nlines) exit
+  cur = start[CL] + CC - 1
+  if (DBG) print "cursor offset " cur "/" len > "/dev/stderr"
+
+  i = 1; sp = 0
+  while (i <= len) {
+    if (substr(buf, i, 1) != "<") { i++; continue }
+    if (substr(buf, i, 4) == "<!--") {                      # comment: skip past -->
+      rel = index(substr(buf, i + 4), "-->")
+      i = (rel > 0) ? i + 4 + rel + 2 : len + 1
+      continue
+    }
+    nx = substr(buf, i + 1, 1)
+    if (nx == "!" || nx == "?") {                           # doctype / PI: skip to >
+      k = i + 1
+      while (k <= len && substr(buf, k, 1) != ">") k++
+      i = k + 1
+      continue
+    }
+    k = i + 1; q = ""                                       # find > (respect quotes)
+    while (k <= len) {
+      cc = substr(buf, k, 1)
+      if (q != "") { if (cc == q) q = "" }
+      else if (cc == "\"" || cc == SQ) q = cc
+      else if (cc == ">") break
+      k++
+    }
+    if (k > len) break                                      # unterminated: give up
+    isclose = (substr(buf, i + 1, 1) == "/")
+    isself  = (substr(buf, k - 1, 1) == "/")
+    p = i + 1 + (isclose ? 1 : 0); name = ""                # read the tag name
+    if (substr(buf, p, 1) ~ /[A-Za-z]/) {
+      while (p <= k) {
+        cc = substr(buf, p, 1)
+        if (cc ~ /[-A-Za-z0-9:]/) { name = name cc; p++ } else break
+      }
+    }
+    lname = tolower(name)
+    if (isclose) {
+      f = 0
+      for (s = sp; s >= 1; s--) if (stkname[s] == lname) { f = s; break }
+      if (f) {
+        ostart = stkstart[f]; ocontent = stkcontent[f]      # < of open, char after its >
+        if (ostart <= cur && k >= cur) {                    # innermost enclosing: emit + stop
+          if (MODE == "a") { a = ostart; z = k } else { a = ocontent; z = i - 1 }
+          locate(a); L1 = rL; C1 = rC
+          locate(z); L2 = rL; C2 = rC
+          printf "char %d %d %d %d\n", L1, C1, L2, C2
+          exit
+        }
+        sp = f - 1                                          # pop through the match
+      }
+    } else if (!isself && !(lname in VOID) && name != "") {
+      sp++; stkname[sp] = lname; stkstart[sp] = i; stkcontent[sp] = k + 1
+    }
+    i = k + 1
+  }
+}
+' "$file"

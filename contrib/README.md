@@ -292,9 +292,28 @@ maps lvi's exit straight through: `:x`/`:wq` (0) stages your resolution, `:cq`
 Git stages `$MERGED`, not LOCAL — it does not reassemble the result from your
 edited LOCAL — so on accept the tool copies your resolved left pane onto it.
 
+### `lvi-textobj-tag` — an HTML tag text object, from outside the core
+
+lvi's builtin text objects (`iw`, `i(`, `i"`, `ip`) stop where a POSIX-vi-simple
+scanner stops: nothing language-aware. `it`/`at` — Vim's *tag* object — would mean
+an HTML parser in the core, which is exactly what the "UNIX as IDE" bet refuses.
+So it lives here instead. Turn it on with one rc line:
+
+        textobj t lvi-textobj-tag
+
+and `cit` changes inside the enclosing element, `dat` deletes the whole thing,
+`yit` yanks its contents. The script is a **tolerant angle-bracket balancer, not a
+validator** — the buffer you're editing is usually not well-formed, so it has to
+be: it skips `<!-- comments -->` and `<!doctype>`, treats void elements (`<br>`)
+and self-closing `<foo/>` as opening no scope, ignores `<`/`>` inside quoted
+attributes, and balances nested same-name tags. A strict parser would fail on the
+half-typed markup that is the normal case. It's ~80 lines of `awk`; a
+tree-sitter-backed `if` (function) or `ia` (argument) object would slot in the
+same way (see the filter contract below), trading startup cost for real grammar.
+
 ## The shared machinery
 
-Everything above is built from six ideas the core provides — worth
+Everything above is built from seven ideas the core provides — worth
 understanding once, because they're all *you* need to write the next tool.
 
 **The `:hl` overlay is the substrate.** One styled overlay (`:hl` paints ranges,
@@ -371,3 +390,19 @@ L:C1-C2 …` (byte columns) on stdout.** Two shapes ship:
 The same contract shape drives the linter: `lvi-lint-<name>` takes the buffer
 on stdin and the filename as `$1`, and emits list entries instead of `hl`
 lines. One adapter idiom, two harnesses.
+
+**The text-object filter contract** (for adding an object like `it`). This one is
+the odd member of the family: it is the only tool lvi launches **synchronously and
+itself**, not via a map or a hook. `:textobj KEY CMD` binds a custom object; when
+an operator meets `i`/`a KEY` with no builtin, lvi shells `CMD` out and *blocks*
+for its answer — the same discipline as a `:s` sent to the system `ex`, and for
+the same reason: because the operator applies through the ordinary coroutine path,
+`c` (change) enters insert mode exactly like a builtin `ci(`. An async, socket-
+callback design (the tool phones the edit back in over `lvi -w`) was the first
+sketch and was dropped — a non-blocking channel can't cleanly hand you insert mode
+mid-edit, and blocking on a fast local filter is imperceptible. The contract:
+**invoked `CMD TMPFILE i|a LINE COL`** (buffer text in a private temp file, cursor
+1-based in bytes), **print one line** — `char L1 C1 L2 C2` (charwise, inclusive,
+byte columns), `line L1 L2` (whole lines), or nothing for "no object here" (a clean
+no-op). That's the whole surface; `lvi-textobj-tag` is one implementation of it,
+and a tree-sitter object would be another.
