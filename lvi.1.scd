@@ -117,6 +117,24 @@ _operator_*i*_object_, _operator_*a*_object_
 	even over a charwise motion; doubled (*>>* *<<*) they shift the current
 	line.
 
+*gu* *gU* *g~*
+	Lowercase, uppercase, toggle case over a motion or text object (*guiw*,
+	*gU$*, *g~ip*); doubled (*guu* *gUU* *g~~*) they act on the current line.
+
+*!*
+	Filter the lines a motion spans through a shell command: *!*_motion_ opens
+	the *:* prompt seeded with the address range and a *!*, so you type the
+	command and press Enter (*!ip sort*, *!G column -t*); *!!* filters the
+	current line. It rides ex's *:*_range_*!*_cmd_ delegation. This is the
+	normal-mode face of "UNIX as IDE": any range, any tool. It composes with
+	text objects, so *!ap awk '{print NR". "$0}'* numbers a list -- the job you
+	might reach for a visual block to do.
+
+*gq*
+	Reflow the lines a motion or text object spans by filtering them through
+	*$LVI_FMT* (default *fmt*(1)); *gqq* reflows the current line. Just *!* with
+	a fixed command -- *gqip* is *!ip fmt*.
+
 *x* *r*_x_ *p* *P*
 	Delete character, replace character with _x_, put after/before.
 

@@ -340,10 +340,20 @@ local function pos_le(l1, c1, l2, c2)
   return l1 < l2 or (l1 == l2 and c1 <= c2)
 end
 
+-- Case transform for the gu/gU/g~ operators. Leaves non-letters (and the \n
+-- joiners in a multi-line range) untouched.
+local function apply_case(s, mode)
+  if mode == "upper" then return (s:upper())
+  elseif mode == "lower" then return (s:lower())
+  else return (s:gsub("%a", function(ch) return ch:match("%l") and ch:upper() or ch:lower() end)) end
+end
+
 -- Charwise operator over a (possibly multi-line) range from (sl,sc) to (tl,tc).
 -- `inclusive` keeps the char at the far end; exclusive drops it (stepping back a
 -- line if that lands before column 1 -- which is what makes `dw` on the last
--- word of a line stop at the newline instead of joining, matching vi).
+-- word of a line stop at the newline instead of joining, matching vi). Besides
+-- d/c/y it also serves the case operators (op = upper/lower/toggle): same range
+-- extraction, but it rewrites the span in place instead of deleting it.
 local function op_chars_range(ed, op, sl, sc, tl, tc, inclusive, reg)
   if not pos_le(sl, sc, tl, tc) then sl, sc, tl, tc = tl, tc, sl, sc end
   local el, ec = tl, tc
@@ -362,6 +372,18 @@ local function op_chars_range(ed, op, sl, sc, tl, tc, inclusive, reg)
     for i = sl + 1, el - 1 do t[#t + 1] = line(ed, i) end
     t[#t + 1] = last:sub(1, ec)
     text = table.concat(t, "\n")
+  end
+  if op == "upper" or op == "lower" or op == "toggle" then
+    local cased, head, tail = apply_case(text, op), first:sub(1, sc - 1), last:sub(ec + 1)
+    if sl == el then
+      ed.buf:set(sl, head .. cased .. tail)
+    else
+      local parts = {}
+      for seg in (cased .. "\n"):gmatch("(.-)\n") do parts[#parts + 1] = seg end
+      parts[1] = head .. parts[1]; parts[#parts] = parts[#parts] .. tail
+      ed.buf:splice(sl, el - sl + 1, parts)
+    end
+    ed.cy, ed.cx = sl, sc; ed.changed = true; clamp(ed); return
   end
   set_reg(ed, reg, text, false)
   if op == "y" then
@@ -701,6 +723,37 @@ local function visible_bottom(ed)
   return (advance_rows(ed, ed.top, ed.topsub, textrows(ed) - 1))
 end
 
+-- The gg/gj/gk body, split out so the standalone `g` command (which must peek
+-- the next key to tell a g-motion from a g-operator like gU) can run it with the
+-- already-read suffix, while the motion table entry (for the dgg operator path)
+-- reads its own suffix. Each path reads the suffix exactly once.
+local function g_motion_move(ed, k2, count)
+  if k2 == b("g") then
+    local t = math.max(1, math.min(count or 1, ed.buf:nlines()))
+    return t, first_nonblank(line(ed, t))
+  end
+  if k2 ~= b("j") and k2 ~= b("k") then return ed.cy, ed.cx end
+  local down, n = (k2 == b("j")), (count or 1)
+  if not ed.opts.wrap then           -- no wrapping: gj == j
+    return ed.cy + (down and n or -n), ed.cx
+  end
+  -- Move by screen (display) rows, holding the current visual column.
+  local W, ts = ed.cols, ed.opts.tabstop
+  local N, l = ed.buf:nlines(), ed.cy
+  local sub, ccol = disp.locate(line(ed, l), W, ts, ed.cx)
+  for _ = 1, n do
+    if down then
+      if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
+      elseif l < N then l, sub = l + 1, 0 else break end
+    else
+      if sub > 0 then sub = sub - 1
+      elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
+      else break end
+    end
+  end
+  return l, disp.byteat(line(ed, l), W, ts, sub, ccol)
+end
+
 local motions = {
   [b("h")] = { kind = "char", move = function(ed, n)
     local s, c = line(ed, ed.cy), ed.cx
@@ -735,33 +788,9 @@ local motions = {
     local k = flip[lf.kind]
     return ed.cy, do_find(ed, k, lf.char, count) or ed.cx, (k == "f" or k == "t")
   end },
-  [b("g")] = { kind = "line", move = function(ed, count) -- gg / gj / gk
-    local k2 = getkey(ed)
-    if k2 == b("g") then
-      local t = math.max(1, math.min(count or 1, ed.buf:nlines()))
-      return t, first_nonblank(line(ed, t))
-    end
-    if k2 ~= b("j") and k2 ~= b("k") then return ed.cy, ed.cx end
-    local down, n = (k2 == b("j")), (count or 1)
-    if not ed.opts.wrap then           -- no wrapping: gj == j
-      return ed.cy + (down and n or -n), ed.cx
-    end
-    -- Move by screen (display) rows, holding the current visual column.
-    local W, ts = ed.cols, ed.opts.tabstop
-    local N, l = ed.buf:nlines(), ed.cy
-    local sub, ccol = disp.locate(line(ed, l), W, ts, ed.cx)
-    for _ = 1, n do
-      if down then
-        if sub + 1 < disp.nsegs(line(ed, l), W, ts) then sub = sub + 1
-        elseif l < N then l, sub = l + 1, 0 else break end
-      else
-        if sub > 0 then sub = sub - 1
-        elseif l > 1 then l = l - 1; sub = disp.nsegs(line(ed, l), W, ts) - 1
-        else break end
-      end
-    end
-    return l, disp.byteat(line(ed, l), W, ts, sub, ccol)
-  end },
+  -- dgg and the like: the operator path reads the suffix here. Standalone `g`
+  -- (which may instead be gU/gq/...) is handled in command().
+  [b("g")] = { kind = "line", move = function(ed, count) return g_motion_move(ed, getkey(ed), count) end },
   [96] = { kind = "char", jump = true, move = function(ed) -- `{mark}: exact position
     local m = ed.marks[string.char(getkey(ed))]
     if not m then return ed.cy, ed.cx end
@@ -1035,6 +1064,59 @@ local function do_put(ed, after, reg)
   end
   ed.changed = true
   clamp(ed)
+end
+
+-- The ':' command prompt as a reusable loop, so the ':' key and the '!' filter
+-- operator (which seeds it with an address range) share one implementation.
+-- `seed` pre-fills the line (cursor conceptually at its end). Returns true if a
+-- command was submitted (Enter), false if cancelled -- the '!' operator uses
+-- that to decide whether the edit counts as a change for '.'.
+local function run_prompt(ed, seed)
+  ed.mode = "command"; ed.cmdline = seed or ""
+  local hidx = #ed.cmdhist + 1
+  local stash = nil
+  while true do
+    local k = getkey(ed)
+    if k == 13 or k == 10 then
+      local cmd = ed.cmdline
+      ed.mode = "normal"; ed.cmdline = ""
+      ex.record_history(ed, cmd)
+      local payload, status = ex.dispatch(ed, cmd)
+      if status == "err" then
+        ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
+      elseif payload and payload:find("\n", 1, true) and ed.suspend then
+        ed.suspend(payload)                     -- multi-line output -> the terminal
+      elseif payload and payload ~= "" then
+        ed.message = payload:gsub("\n", " ")
+      end
+      return true
+    elseif k == 27 or k == 3 then ed.mode = "normal"; ed.cmdline = ""; return false  -- Esc / Ctrl-C cancel
+    elseif k == 127 or k == 8 then
+      if #ed.cmdline == 0 then ed.mode = "normal"; return false end
+      -- Erase the whole trailing char (may be multibyte), like insert mode.
+      ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
+    elseif k == 6 then                                 -- Ctrl-F: open the command window
+      -- Carry any half-typed line in as the seed, then hand off. The window
+      -- gives full-editor editing for anything too fiddly for a one-line prompt.
+      local carry = ed.cmdline
+      ed.mode = "normal"; ed.cmdline = ""
+      ex.dispatch(ed, carry == "" and "cmdwin" or ("cmdwin " .. carry))
+      return false
+    elseif k == 16 then                                -- Ctrl-P: older history
+      if hidx > 1 then
+        if hidx == #ed.cmdhist + 1 then stash = ed.cmdline end
+        hidx = hidx - 1; ed.cmdline = ed.cmdhist[hidx]
+      end
+    elseif k == 14 then                                -- Ctrl-N: newer history
+      if hidx <= #ed.cmdhist then
+        hidx = hidx + 1
+        ed.cmdline = (hidx > #ed.cmdhist) and (stash or "") or ed.cmdhist[hidx]
+      end
+    -- Printable ASCII, tab, and UTF-8 bytes (>= 128) -- the same set insert
+    -- mode accepts, so :e on a non-ASCII filename or a UTF-8 :s pattern is
+    -- typeable at the prompt, not only over the socket.
+    elseif k == 9 or (k >= 32 and k ~= 127) then ed.cmdline = ed.cmdline .. string.char(k) end
+  end
 end
 
 local actions
@@ -1314,56 +1396,7 @@ actions = {
     for i = 1, #ed.inject do merged[#merged + 1] = ed.inject[i] end
     ed.inject = merged
   end,
-  [b(":")] = function(ed)
-    ed.mode = "command"; ed.cmdline = ""
-    -- History browse state, reset each time the prompt opens. hidx points into
-    -- ed.cmdhist; hidx == #hist+1 is the live (unsubmitted) line, stashed so
-    -- Ctrl-N can bring it back after Ctrl-P walked away from it.
-    local hidx = #ed.cmdhist + 1
-    local stash = nil
-    while true do
-      local k = getkey(ed)
-      if k == 13 or k == 10 then
-        local cmd = ed.cmdline
-        ed.mode = "normal"; ed.cmdline = ""
-        ex.record_history(ed, cmd)
-        local payload, status = ex.dispatch(ed, cmd)
-        if status == "err" then
-          ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
-        elseif payload and payload:find("\n", 1, true) and ed.suspend then
-          ed.suspend(payload)                     -- multi-line output -> the terminal
-        elseif payload and payload ~= "" then
-          ed.message = payload:gsub("\n", " ")
-        end
-        return
-      elseif k == 27 or k == 3 then ed.mode = "normal"; ed.cmdline = ""; return  -- Esc / Ctrl-C cancel
-      elseif k == 127 or k == 8 then
-        if #ed.cmdline == 0 then ed.mode = "normal"; return end
-        -- Erase the whole trailing char (may be multibyte), like insert mode.
-        ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
-      elseif k == 6 then                                 -- Ctrl-F: open the command window
-        -- Carry any half-typed line in as the seed, then hand off. The window
-        -- gives full-editor editing for anything too fiddly for a one-line prompt.
-        local seed = ed.cmdline
-        ed.mode = "normal"; ed.cmdline = ""
-        ex.dispatch(ed, seed == "" and "cmdwin" or ("cmdwin " .. seed))
-        return
-      elseif k == 16 then                                -- Ctrl-P: older history
-        if hidx > 1 then
-          if hidx == #ed.cmdhist + 1 then stash = ed.cmdline end
-          hidx = hidx - 1; ed.cmdline = ed.cmdhist[hidx]
-        end
-      elseif k == 14 then                                -- Ctrl-N: newer history
-        if hidx <= #ed.cmdhist then
-          hidx = hidx + 1
-          ed.cmdline = (hidx > #ed.cmdhist) and (stash or "") or ed.cmdhist[hidx]
-        end
-      -- Printable ASCII, tab, and UTF-8 bytes (>= 128) -- the same set insert
-      -- mode accepts, so :e on a non-ASCII filename or a UTF-8 :s pattern is
-      -- typeable at the prompt, not only over the socket.
-      elseif k == 9 or (k >= 32 and k ~= 127) then ed.cmdline = ed.cmdline .. string.char(k) end
-    end
-  end,
+  [b(":")] = function(ed) run_prompt(ed, "") end,
 }
 
 -- ---- text objects -----------------------------------------------------------
@@ -1547,6 +1580,69 @@ local function apply_textobj(ed, op, obj, around, reg)
   end
 end
 
+-- ---- g-operators and the ! filter -------------------------------------------
+-- These take a following motion / text object like d/c/y do, but resolve it to
+-- a range with read_gtarget rather than the operators table, because their
+-- action isn't a splice: gu/gU/g~ rewrite the span, gq and ! route the lines
+-- through an external command (the UNIX-as-IDE filter -- ! prompts for the
+-- command, gq uses $LVI_FMT or fmt(1)). All share :{a},{c}!cmd, which lvi
+-- delegates to the system ex.
+
+local GCASE = { [b("u")] = "lower", [b("U")] = "upper", [b("~")] = "toggle" }
+
+-- Read the motion / text object / doubled key following a g-operator or ! and
+-- return sl,sc,tl,tc,kind ("char"/"line"),inclusive. `opkey` is the operator's
+-- own key: a doubled press (guu, gqq, !!) means the current line(s) + count.
+local function read_gtarget(ed, opkey, total)
+  local k = getkey(ed)
+  local c2; c2, k = read_count(ed, k)
+  total = combine(total, c2)
+  if k == opkey then
+    return ed.cy, 1, math.min(ed.cy + (total or 1) - 1, ed.buf:nlines()), 1, "line", true
+  end
+  if k == b("i") or k == b("a") then
+    local key = getkey(ed)
+    local obj = textobjs[key]
+    if not obj and ed.textobj_cmds[key] then
+      local cmd = ed.textobj_cmds[key]
+      obj = function(e, a) return ex.textobj_range(e, cmd, a, key) end
+    end
+    if not obj then return nil end
+    local sl, sc, tl, tc, kind = obj(ed, k == b("a"))
+    if not sl then return nil end
+    return sl, sc, tl, tc, kind or "char", true
+  end
+  local m = motions[k]
+  if not m then return nil end
+  local tl, tc, inc = m.move(ed, total)
+  if inc == nil then inc = m.inclusive end
+  if m.kind == "line" then return ed.cy, 1, tl, 1, "line", true end
+  return ed.cy, ed.cx, tl, tc, "char", inc and true or false
+end
+
+local function apply_gcase(ed, opkey, total)
+  local mode = GCASE[opkey]
+  local sl, sc, tl, tc, kind, inc = read_gtarget(ed, opkey, total)
+  if not sl then return end
+  if kind == "line" then op_chars_range(ed, mode, sl, 1, tl, math.max(1, #line(ed, tl)), true, nil)
+  else op_chars_range(ed, mode, sl, sc, tl, tc, inc, nil) end
+end
+
+-- Filter the target's line span through an external command. `interactive`
+-- (the ! operator) seeds the : prompt with the range so you type the command;
+-- otherwise (gq) run $LVI_FMT or fmt directly. changed=true so `.` repeats it.
+local function apply_lines_filter(ed, opkey, total, interactive)
+  local sl, _, tl = read_gtarget(ed, opkey, total)
+  if not sl then return end
+  local a, c = math.min(sl, tl), math.max(sl, tl)
+  if interactive then
+    if run_prompt(ed, ("%d,%d!"):format(a, c)) then ed.changed = true end
+  else
+    local _, st = ex.dispatch(ed, ("%d,%d!%s"):format(a, c, os.getenv("LVI_FMT") or "fmt"))
+    if st ~= "err" then ed.changed = true end
+  end
+end
+
 local operators = { [b("d")] = "d", [b("c")] = "c", [b("y")] = "y",
                     [b(">")] = "shift_r", [b("<")] = "shift_l" }
 
@@ -1588,6 +1684,13 @@ local function command(ed)
       local m = motions[k2]
       if m then apply_operator(ed, op, m, total, reg) end
     end
+  elseif k == b("!") then                      -- filter lines through a command (prompts)
+    apply_lines_filter(ed, b("!"), count1, true)
+  elseif k == b("g") then                       -- g-namespace: gg/gj/gk motions, gu/gU/g~/gq operators
+    local k2 = getkey(ed)
+    if GCASE[k2] then apply_gcase(ed, k2, count1)
+    elseif k2 == b("q") then apply_lines_filter(ed, b("q"), count1, false)
+    else do_motion(ed, { kind = "line", move = function(e, c) return g_motion_move(e, k2, c) end }, count1) end
   elseif motions[k] then
     do_motion(ed, motions[k], count1)
   elseif actions[k] then
