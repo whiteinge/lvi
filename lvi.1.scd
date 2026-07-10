@@ -346,7 +346,10 @@ _contrib/lvi-shell.sh_ do).
 	*tabstop*=_N_ (alias *ts*), *shiftwidth*=_N_ (alias *sw*, the *>>*/*<<*
 	indent step), and *expandtab*/*noexpandtab* (alias *et*/*noet*; whether
 	*>>* indents with spaces or tabs). Numeric options answer *?*; *expandtab*
-	also toggles with *!*.
+	also toggles with *!*. *scratch*/*noscratch* marks the current buffer
+	ephemeral: it never counts as modified, so *q*/*bd* never nag, *wa* skips it,
+	and a crash does not preserve it. Unlike the others it is per-buffer (like a
+	command window's buffer); it toggles with *!* and answers *?*.
 
 *map* _lhs_ _rhs_, *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*

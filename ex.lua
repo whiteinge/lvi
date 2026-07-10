@@ -108,6 +108,7 @@ local function do_set(ed, args)
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
       elseif n == "expandtab" or n == "et" then out[#out + 1] = ed.opts.expandtab and "expandtab" or "noexpandtab"
       elseif n == "modified" or n == "mod" then out[#out + 1] = ed.buf.modified and "modified" or "nomodified"
+      elseif n == "scratch" then out[#out + 1] = ed.buf.scratch and "scratch" or "noscratch"
       else return "unknown option: " .. n, "err" end
     elseif opt:sub(-1) == "!" then                      -- toggle a boolean (vim `set wrap!`)
       local n = opt:sub(1, -2)
@@ -116,6 +117,11 @@ local function do_set(ed, args)
       elseif n == "modified" or n == "mod" then
         if ed.buf.modified then ed.buf._undo.saved = ed.buf._undo.now; ed.buf.modified = false
         else ed.buf._undo.saved = -1; ed.buf.modified = true end
+      elseif n == "scratch" then
+        -- Recompute modified now: flipping scratch changes it, but
+        -- update_modified only fires on the next edit otherwise.
+        ed.buf.scratch = not ed.buf.scratch
+        ed.buf.modified = (not ed.buf.scratch) and (ed.buf._undo.now ~= ed.buf._undo.saved)
       else return "not a boolean option: " .. n, "err" end
     elseif opt == "wrap" then ed.opts.wrap = true
     elseif opt == "nowrap" then ed.opts.wrap = false
@@ -123,6 +129,9 @@ local function do_set(ed, args)
     elseif opt == "noexpandtab" or opt == "noet" then ed.opts.expandtab = false
     elseif opt == "modified" or opt == "mod" then ed.buf._undo.saved = -1; ed.buf.modified = true
     elseif opt == "nomodified" or opt == "nomod" then ed.buf._undo.saved = ed.buf._undo.now; ed.buf.modified = false
+    elseif opt == "scratch" then ed.buf.scratch = true; ed.buf.modified = false
+    elseif opt == "noscratch" then
+      ed.buf.scratch = false; ed.buf.modified = ed.buf._undo.now ~= ed.buf._undo.saved
     else return "unknown option: " .. opt, "err" end
   end
   return table.concat(out, "\n"), "ok"

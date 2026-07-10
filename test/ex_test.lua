@@ -395,6 +395,24 @@ describe("ex.dispatch", function()
       ex.dispatch(ed, "set mod")                      -- and force it dirty
       expect((ex.dispatch(ed, "set modified?"))).to.equal("modified")
     end)
+    it("marks a buffer scratch, querying and toggling it", function()
+      local ed = ed_with("abc")
+      expect((ex.dispatch(ed, "set scratch?"))).to.equal("noscratch")
+      ex.dispatch(ed, "set scratch")
+      expect(ed.buf.scratch).to.be(true)
+      expect((ex.dispatch(ed, "set scratch?"))).to.equal("scratch")
+      ex.dispatch(ed, "set scratch!")                 -- toggle back off
+      expect((ex.dispatch(ed, "set scratch?"))).to.equal("noscratch")
+    end)
+    it("scratch clears modified immediately, and noscratch restores it", function()
+      local ed = ed_with("abc")
+      ed.buf:set(1, "X")                              -- dirty the buffer
+      expect(ed.buf.modified).to.be(true)
+      ex.dispatch(ed, "set scratch")                  -- must clear modified now, not next edit
+      expect(ed.buf.modified).to.be(false)
+      ex.dispatch(ed, "set noscratch")                -- underlying edit is still unsaved
+      expect(ed.buf.modified).to.be(true)
+    end)
   end)
 
   describe("highlights and position", function()
