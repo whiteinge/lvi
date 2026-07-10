@@ -68,6 +68,7 @@ function M.new_ed()
 
     -- shared editing state
     regs = {},                -- registers a-z + unnamed '"'
+    cmdhist = {},             -- submitted ex-command lines (oldest first); Ctrl-P/N + the command window
     maps = {},                -- :map LHS -> RHS (byte strings)
     hooks = {},               -- :on event -> { cmd, ... }
     change_pending = false,   -- a keyboard edit awaits its debounced change hook

@@ -182,7 +182,11 @@ external search feeds *:hl* -- see *contrib/lvi-fold* (by marker or by indent).
 ## Other
 
 *:*
-	Begin an ex command (see *EX COMMANDS*).
+	Begin an ex command (see *EX COMMANDS*). At the prompt, *Ctrl-P* and *Ctrl-N*
+	step back and forward through command history, and *Ctrl-F* opens the command
+	window (*:cmdwin*), carrying any half-typed line in. The prompt itself stays
+	deliberately minimal (type and Backspace); reach for the command window when a
+	command grows long enough to want real editing.
 
 *Ctrl-^*
 	Switch to the alternate buffer -- the one edited before the current (same as
@@ -284,6 +288,14 @@ _contrib/lvi-shell.sh_ do).
 *bn*, *bp*, *b* {_N_|_name_|*#*}, *ls*, *bd*[*!*]
 	Next/previous buffer, switch to buffer _N_, by name, or the alternate (*#*),
 	list buffers, delete the current buffer.
+
+*cmdwin*
+	Open the command window: a scratch buffer holding recent command history, one
+	command per line, with the cursor on a blank last line. Edit any line with the
+	full editor (motions, operators, undo, your own *:s*), then run the line under
+	the cursor with a bare *:w*; *:bd* cancels without running anything. Only that
+	bare *:w* is special (the buffer is otherwise ordinary), so *:w* _file_ still
+	writes the list to disk. Also reachable with *Ctrl-F* at the *:* prompt.
 
 *d*, *p*
 	Delete, print the addressed lines.

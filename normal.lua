@@ -1316,11 +1316,17 @@ actions = {
   end,
   [b(":")] = function(ed)
     ed.mode = "command"; ed.cmdline = ""
+    -- History browse state, reset each time the prompt opens. hidx points into
+    -- ed.cmdhist; hidx == #hist+1 is the live (unsubmitted) line, stashed so
+    -- Ctrl-N can bring it back after Ctrl-P walked away from it.
+    local hidx = #ed.cmdhist + 1
+    local stash = nil
     while true do
       local k = getkey(ed)
       if k == 13 or k == 10 then
         local cmd = ed.cmdline
         ed.mode = "normal"; ed.cmdline = ""
+        ex.record_history(ed, cmd)
         local payload, status = ex.dispatch(ed, cmd)
         if status == "err" then
           ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
@@ -1335,6 +1341,23 @@ actions = {
         if #ed.cmdline == 0 then ed.mode = "normal"; return end
         -- Erase the whole trailing char (may be multibyte), like insert mode.
         ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
+      elseif k == 6 then                                 -- Ctrl-F: open the command window
+        -- Carry any half-typed line in as the seed, then hand off. The window
+        -- gives full-editor editing for anything too fiddly for a one-line prompt.
+        local seed = ed.cmdline
+        ed.mode = "normal"; ed.cmdline = ""
+        ex.dispatch(ed, seed == "" and "cmdwin" or ("cmdwin " .. seed))
+        return
+      elseif k == 16 then                                -- Ctrl-P: older history
+        if hidx > 1 then
+          if hidx == #ed.cmdhist + 1 then stash = ed.cmdline end
+          hidx = hidx - 1; ed.cmdline = ed.cmdhist[hidx]
+        end
+      elseif k == 14 then                                -- Ctrl-N: newer history
+        if hidx <= #ed.cmdhist then
+          hidx = hidx + 1
+          ed.cmdline = (hidx > #ed.cmdhist) and (stash or "") or ed.cmdhist[hidx]
+        end
       -- Printable ASCII, tab, and UTF-8 bytes (>= 128) -- the same set insert
       -- mode accepts, so :e on a non-ASCII filename or a UTF-8 :s pattern is
       -- typeable at the prompt, not only over the socket.

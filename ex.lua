@@ -23,6 +23,20 @@ local EVENTS = { change = true, write = true, ready = true,
                  bufenter = true, bufleave = true, bufdelete = true,
                  complete = true, scroll = true }
 
+-- Command-line history. The ':' prompt (Ctrl-P/N) and the :cmdwin buffer both
+-- append here via record_history and read ed.cmdhist directly. A rolling recent
+-- set, not an audit log: capped and consecutive-deduped, session-only, never
+-- written to disk. Appended to only when a command actually runs (like Vim) --
+-- editing lines in the command window that you never execute leaves it alone.
+local CMDHIST_MAX = 100
+function M.record_history(ed, cmd)
+  if cmd == "" then return end
+  local h = ed.cmdhist
+  if h[#h] == cmd then return end          -- collapse an immediate repeat
+  h[#h + 1] = cmd
+  if #h > CMDHIST_MAX then table.remove(h, 1) end
+end
+
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
 -- as shorthand for 1,$.
@@ -436,6 +450,35 @@ local function def(names, fn)
   for name in names:gmatch("%S+") do CMDS[name] = fn end
 end
 
+-- The command window (:cmdwin). A scratch buffer holding recent history, one
+-- command per line, cursor on a trailing blank line: you edit commands with the
+-- full editor (motions, operators, undo, your own :s) instead of a cramped
+-- one-line prompt, then run the line under the cursor. There is deliberately NO
+-- buffer-local keymap -- the buffer is ordinary and Enter keeps its meaning;
+-- only bare :w on it is intercepted (to run) and :bd cancels. Reordering or
+-- editing lines you never run has no effect: history is a scratch view, only
+-- appended to when a command actually runs, never rewritten from the buffer.
+local function cmdwin_populate(win, hist)
+  win:delete(1, win:nlines())              -- -> a single empty line: the trailing blank
+  if #hist > 0 then win:insert(1, hist) end -- history above it, blank stays last
+end
+
+-- Run the line under the cursor against the buffer :cmdwin was opened from,
+-- then tear the window down. Returns that command's own payload/status, so it
+-- surfaces exactly as if it had been typed at the ':' prompt.
+local function cmdwin_exec(ed)
+  local win = ed.buf
+  local origin = win.cmdwin_origin
+  local cmd = win:line(ed.cy):gsub("^%s+", ""):gsub("%s+$", "")
+  local oi = origin and bufs.index_of(ed, origin)
+  if oi then bufs.switch(ed, oi) end        -- back to where the window was opened
+  local ci = bufs.index_of(ed, win)
+  if ci then bufs.close(ed, true, ci) end   -- drop the scratch window (force: it's scratch anyway)
+  if cmd == "" then return "", "ok" end     -- blank line: leave, run nothing
+  M.record_history(ed, cmd)
+  return M.dispatch(ed, cmd)                -- origin is current now, so it runs there
+end
+
 def("q quit", function(ed, c)
   if ed.buf.modified and not c.bang then
     return "No write since last change (add ! to override)", "err"
@@ -445,6 +488,9 @@ def("q quit", function(ed, c)
 end)
 
 def("w write", function(ed, c)
+  -- In the command window, bare :w runs the current line instead of writing.
+  -- :w <file> still saves normally -- a handy "dump my recent commands to disk".
+  if ed.buf.cmdwin_origin and c.args == "" then return cmdwin_exec(ed) end
   local p, xerr = expand_file(ed, c.args)
   if xerr then return xerr, "err" end
   p = p or ed.buf.path
@@ -641,6 +687,26 @@ def("sh shell", function(ed)
 end)
 
 def("ls buffers files", function(ed) return bufs.list(ed), "ok" end)
+
+-- :cmdwin [seed] -- open the command window (see the helpers above). An optional
+-- seed becomes the trailing/current line, so Ctrl-F at the ':' prompt can carry
+-- a half-typed command in. Reuses a resident window rather than stacking them.
+def("cmdwin", function(ed, c)
+  if ed.buf.cmdwin_origin then return "", "ok" end       -- already in the window
+  local origin = ed.buf
+  local win
+  for _, rec in ipairs(ed.buffers or {}) do
+    if rec.buf.cmdwin_origin then win = rec.buf; break end
+  end
+  if win then bufs.switch(ed, bufs.index_of(ed, win))
+  else win = bufs.scratch(ed, "[Command Line]") end
+  win.cmdwin_origin = origin
+  cmdwin_populate(win, ed.cmdhist)
+  if c.args ~= "" then win:set(win:nlines(), c.args) end  -- seed the trailing line
+  ed.cy = win:nlines(); ed.cx = 1; ed.top = 1; ed.leftcol = 0
+  ed.message = "command window -- :w runs the current line, :bd cancels"
+  return "", "ok"
+end)
 
 def("bd bdelete", function(ed, c)
   local ok, err = bufs.close(ed, c.bang, tonumber(c.args))

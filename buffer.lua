@@ -46,6 +46,10 @@ end
 function M.new(text)
   text = text or ""
   local self = setmetatable({ modified = false, path = nil, rev = 0,
+    -- scratch: an ephemeral buffer (a command window, a picker) that never
+    -- counts as modified, so :bd/:q/:qa never nag and a crash won't preserve
+    -- it. name: a display label shown in place of a path ("[Command Line]").
+    scratch = false, name = nil,
     _undo = { done = {}, undone = {}, group = nil, sink = nil,
               seq = 0, now = 0, saved = 0 } }, Buffer)
   if text == "" then
@@ -142,7 +146,8 @@ local function record(self, inv)
 end
 
 local function update_modified(self)
-  self.modified = self._undo.now ~= self._undo.saved
+  -- A scratch buffer is never dirty: its whole point is to be discardable.
+  self.modified = (not self.scratch) and (self._undo.now ~= self._undo.saved)
 end
 
 -- The single fundamental mutator: at line `start`, remove `ndel` lines and

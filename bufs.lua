@@ -90,6 +90,27 @@ function M.open(ed, path)
   load(ed, #ed.buffers)
 end
 
+-- Open a fresh scratch buffer (no path, never dirty) named `name`, switch to
+-- it, and return it. Used for ephemeral, editor-backed UIs like the command
+-- window: the buffer IS a real editable buffer, so all of vi drives it.
+function M.scratch(ed, name)
+  save(ed)
+  local buf = buffer.new("")
+  buf.scratch = true
+  buf.name = name
+  ed.buffers[#ed.buffers + 1] = fresh(buf)
+  load(ed, #ed.buffers)
+  return buf
+end
+
+-- Index of the slot holding buffer object `buf`, or nil. Lets a caller that
+-- captured a buffer (not an index) switch/close it after the list has shifted.
+function M.index_of(ed, buf)
+  for i, rec in ipairs(ed.buffers) do
+    if rec.buf == buf then return i end
+  end
+end
+
 -- :e (no arg) -- reload the current buffer from disk, resetting the view.
 function M.reload(ed)
   if not ed.buf.path then return false end
@@ -147,7 +168,7 @@ function M.list(ed)
   local out = {}
   for i, rec in ipairs(ed.buffers) do
     local flags = ((i == ed.bufidx) and "%" or " ") .. (rec.buf.modified and "+" or " ")
-    out[#out + 1] = ("%d\t%s\t%s"):format(i, flags, rec.buf.path or "[No Name]")
+    out[#out + 1] = ("%d\t%s\t%s"):format(i, flags, rec.buf.path or rec.buf.name or "[No Name]")
   end
   return table.concat(out, "\n")
 end

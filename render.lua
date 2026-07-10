@@ -82,7 +82,7 @@ end
 -- Left (name/message) and right (position) halves of the status line.
 local function status_halves(ed)
   local buf = ed.buf
-  local left = ed.message or (buf.path or "[No Name]") .. (buf.modified and " [+]" or "")
+  local left = ed.message or (buf.path or buf.name or "[No Name]") .. (buf.modified and " [+]" or "")
   if not ed.message and ed.buffers and #ed.buffers > 1 then
     left = left .. "  [" .. ed.bufidx .. "/" .. #ed.buffers .. "]"
   end
