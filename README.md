@@ -47,6 +47,9 @@ Deliberate non-goals — the guardrail that keeps the core from drifting:
 - **No native search or syntax engine.** Both are external tools feeding the
   highlight overlay; lvi ships no lexers, grammars, or search engine. (See
   [`contrib/`](contrib/) for the ready-made bolt-ons that provide them.)
+- **No visual mode.** The operator + motion + text-object model, the `!` filter,
+  and the line-oriented ex commands cover its uses without a selection to hold;
+  the manual's *Without visual mode* section is the translation table.
 - **UNIX only.** POSIX environment and standard CLI tools assumed; Windows
   outside WSL is out of scope.
 

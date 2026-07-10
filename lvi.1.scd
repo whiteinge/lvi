@@ -517,6 +517,101 @@ blocked tool read the file:
 *wbuf* writes the live buffer (unsaved edits and all) to *$LVI_BUFFER*, a
 scratch path in the tool's environment.
 
+# WITHOUT VISUAL MODE
+
+lvi has no visual mode. Visual mode couples selecting to editing -- highlight a
+range, then act on it -- which costs a mode, on-screen state, and a second set
+of keys just to grow and shrink the highlight. vi's model needs none of that: an
+edit already *is* an operator plus a range, stated in one gesture -- *d* with a
+motion or text object. What follows maps the visual operations you know onto that
+model, and onto the ex commands and the *!* filter that handle the multi-line and
+column edits.
+
+## In place of a character or line selection
+
+*viwc*, *vt)d*
+	*ciw*, *dt)*. Operator plus motion or text object; the word or span is found
+	wherever the cursor sits (see the text-object list under NORMAL MODE).
+*Vjj>*, *Vipd*
+	*>ip* and *dip*, or a line count -- *3>>*, *3dd*. Doubled operators and
+	linewise motions already act on whole lines.
+*vipU*, *vipgq*
+	*gUip*, *gqip*. The *gu*/*gU*/*g~* and *gq* operators take the same objects.
+*vip!sort*
+	*!ip sort*. The *!* filter pipes the object's lines through any command.
+
+## Naming the range first
+
+vi names the range *before* the action, so the knack that stands in for visual
+mode is describing a range without dragging a highlight across it. Most directly,
+a motion or text object already *is* one: *dip* takes the paragraph, *dt)* runs
+to the next *)*, *ci(* the brackets. A search is an address too -- *d/foo* deletes
+up to the next _foo_, and at the *:* prompt an address may be a pattern, so
+*:.,/END/d* deletes from here to the next line matching _END_.
+
+*Marks* are the tool for a range you assemble by moving around, and they are what
+most repays the loss of a drawn selection. Drop one with *m*_a_, then travel
+freely -- search, scroll, jump to a matching bracket with *%* -- and act from the
+far end: *d`a*, *y`a*, *c`a* reach charwise to the exact spot, *d'a* is linewise,
+and at the *:* prompt *:'a,'b* is the range for any ex command. So *:'a,'b t .*
+copies those lines, *:'a,'b m 0* moves them to the top, *:'a,'b !sort* filters
+them, *:'a,'b >* indents them. A mark rides along with edits made between the two
+ends, so the range you named stays the range you meant.
+
+Relative and absolute addresses cover nearby ranges with no mark at all: *:.,+5d*
+is this line and five more, *:.,$d* runs to the end of the file, *:1,.d* deletes
+from the top down to here. *Ctrl-G* (or *:.=*) reports the current line number
+when you need one to build such a range. And *.* plus macros stretch one edit
+over many places: make the change once with a text object and tap *.* on each
+next target, or record *q*_a_ ... *q* and replay it with a count -- *5@a* runs it
+down five lines.
+
+## In place of a block selection or "multiple cursors"
+
+The line-oriented commands do what a block selection or multiple cursors are
+reached for, taking a named range in place of a drawn rectangle:
+
+*:[range]normal* _keys_
+	Run any normal-mode _keys_ on each line of the range -- the nearest thing to
+	multiple cursors. *:%normal A;* appends *;* to every line; *:2,5normal @a*
+	replays macro _a_ on lines 2-5. lvi's own keys work here (its macros, text
+	objects, *!*/*gq*); lines run top to bottom, so keep the keys per-line and
+	reach for *:g//d* / *:d* / *:m* when you mean to change the line count.
+*:%s/$/;/*, *:%s/^/# /*
+	Append or prepend text on every line; unlike *:normal*, *:s* keeps a trailing
+	space, so it is the way to indent-with-a-space across lines.
+*:g/re/d*, *:v/re/d*
+	Delete the lines matching, or (with *v*) not matching, a pattern.
+*:g/re/normal* _keys_
+	Run _keys_ on each _matching_ (so possibly non-contiguous) line. This one
+	delegates to the system *ex* ($*LVI_EX*), so only its normal mode is
+	available; lvi-specific keys do not apply. For those, use *:[range]normal*
+	over a contiguous range, or narrow with *:g//s*.
+*:'a,'b t .*, *:'a,'b m 0*
+	Copy or move a line range -- a visual yank-and-put without the selection.
+*:%!column -t*, *:1,5!sort*
+	Pipe a line range through a tool to align or sort (the *!* operator, from the
+	*:* prompt).
+
+## Numbering and arithmetic (the visual "g Ctrl-A")
+
+Number or renumber a list, or do column arithmetic, with a filter -- no
+selection, no built-in feature, just a tool you already have:
+
+*!ip awk '{print NR". " $0}'*
+	Number each line of the paragraph: *1.*, *2.*, .... *!ip nl -ba* does the
+	same through *nl*(1).
+*!ip awk '{$1 = $1 + 1}1'*
+	Add one to the first column of every line.
+
+## When the range is computed, drive it over the socket
+
+For a selection no motion describes -- every function's opening line, columns
+lifted from a report -- an external tool computes the spans and applies the
+edits over the control socket (*lvi -w*), the way *:hl* overlays, lists, and
+*:textobj* filters already do. The socket is lvi's answer to the irregular
+selection.
+
 # THE CONTROL SOCKET
 
 Each view listens on a Unix-domain socket; the path itself is the selector, so
