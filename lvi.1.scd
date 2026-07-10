@@ -736,45 +736,55 @@ See *contrib/README.md* and *contrib/lvirc.sample*.
 Much of what feels built into other editors is, in *lvi*, a small external
 program that drives the view over the socket -- so it lives *outside* the core
 and you switch it on from the rc file. No language engine, search engine, or
-quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
+quickfix machinery lives in *lvi* itself. The tools that ship in _contrib_, with
+the happy-path rc line or map that turns each on:
 
 - *lvi-highlight* -- syntax highlighting via an external highlighter (Pygments or
-  bat); turn it on with *on change lvi-highlight*. Toggle it at runtime with
-  *lvi-highlight off*/*on*, or force the language with *lvi-highlight lang*
-  _name_ when detection guesses wrong.
-- *lvi-search* -- grep the live (unsaved) buffer and step matches with *n*/*N*.
-- *lvi-list* -- quickfix/location lists from any grep/compiler/linter output
-  (the vim *-q* format), file-backed and steppable; any number coexist, one is
-  _focused_, and the bare step keys act on it.
-- *lvi-gitchanges* -- step the current file's *git diff* hunks with *n*/*N*.
-- *lvi-lint* -- lint the live buffer into a steppable list, on demand or on
-  every *:w* (ruff, shellcheck, *deno lint* ship; one small adapter per tool).
+  bat). Turn on with *on change lvi-highlight* (pair with *on bufenter
+  lvi-highlight*); toggle at runtime with *lvi-highlight off*/*on*, or force the
+  language with *lvi-highlight lang* _name_ when detection guesses wrong.
+- *lvi-search* + *lvi-list* -- grep the live (unsaved) buffer into a steppable
+  list; any number of lists coexist, one is _focused_, and the bare step keys
+  act on it. Turn on with *map / :silent !lvi-search<CR>*, *map n :bg lvi-list
+  next<CR>*, *map N :bg lvi-list prev<CR>*, and *on bufenter lvi-list paint*.
+- *lvi-gitchanges* -- step the current file's *git diff* hunks. Turn on with
+  *map \\g :bg lvi-gitchanges<CR>*.
+- *lvi-lint* -- lint the live buffer into a steppable list (ruff, shellcheck,
+  *deno lint* ship; one small adapter per tool). Turn on with *on write
+  lvi-lint* and *map \\e :bg lvi-lint --focus<CR>*.
 - *lvi-spell* -- toggleable spell check: misspelled words marked in place and
-  steppable, with a *z=* suggestion picker and *zg* dictionary add.
-- *lvi-fmt* -- run the file's formatter (ruff format, gofmt, *deno fmt*, ...)
-  over the live buffer and splice back only the changed window: the cursor
-  stays put, one undo reverts it, already-formatted is a no-op.
-- *lvi-open* -- fuzzy-pick a file and open it in the running view.
-- *lvi-shell.sh* -- functions to source in your shell rc (*lvi-saveas*,
-  *lvi-e*, *lvi-r*): drive the running view from *sh* or any terminal, with
-  your shell's own path completion.
-- *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump.
-- *lvi-complete* -- insert-mode word completion from the open buffers
-  (*on complete lvi-complete*).
+  steppable, with a *z=* suggestion picker and *zg* dictionary add. Turn on with
+  *map \\s :bg lvi-spell<CR>* (and *]s*/*[s* to step).
+- *lvi-fmt* -- run the file's formatter over the live buffer and splice back only
+  the changed window (cursor stays put, one undo reverts, already-formatted is a
+  no-op). Turn on with *map \\= :bg lvi-fmt<CR>*.
+- *lvi-open* -- fuzzy-pick a file and open it in the running view. Turn on with
+  *map \\f :silent !lvi-open<CR>*.
+- *lvi-shell.sh* -- functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the
+  running view from *sh* or any terminal with your shell's own path completion.
+  Source it from your shell's rc, not lvi's.
+- *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump. Turn
+  on with *map \\t :wbuf<CR>:silent !lvi-tags<CR>*.
+- *lvi-complete* -- insert-mode word completion from the open buffers. Turn on
+  with *on complete lvi-complete*.
 - *lvi-pos* -- remember your position in each file across sessions (viminfo's
-  *`"*), as a plain-text store driven by *on* hooks.
+  *`"*). Turn on with *on change lvi-pos save* (also *write*/*bufleave*) and
+  *on ready lvi-pos restore* (also *bufenter*).
 - *lvi-diff* / *lvi-stagediff* -- a two-way vimdiff of two panes (highlight,
   scrollbind, move hunks with *\\p*/*\\o*, jump with *]c*/*[c*) and, atop it,
-  *git add -p* as a side-by-side diff you stage from with *\\s*.
+  *git add -p* as a side-by-side diff you stage from with *\\s*. Launch
+  *lvi-diff* (two live panes) or *lvi-diff* _old_ _new_ (two files);
+  *lvi-stagediff* _file_ to stage.
 - *lvi-textobj-tag* -- an HTML/XML tag text object (*it*/*at*) via *textobj*, so
-  *cit*/*dat* work without any HTML parser in the core.
+  *cit*/*dat* work without any HTML parser in the core. Turn on with *textobj t
+  lvi-textobj-tag*.
 - *lvi-incr* -- increment, decrement, or renumber through the *!* filter,
-  recovering Ctrl-A / g-Ctrl-A with no built-in (bind *:.!lvi-incr* to *<C-a>*).
+  recovering Ctrl-A / g-Ctrl-A with no built-in. Turn on with
+  *map <C-a> :.!lvi-incr<CR>* and *map <C-x> :.!lvi-incr -s -1<CR>*.
 
-This is only a taste. For what each tool does, its configuration, and
-ready-to-copy bindings and themes, see *contrib/README.md* and
-*contrib/lvirc.sample* -- and the header comment of each script for its full
-reference.
+The lines above are the happy path. *contrib/lvirc.sample* has the full annotated
+set -- every binding, theme, and variant -- and each tool's *-h* (or
+*contrib/README.md*) explains what it does and how it works.
 
 # ENVIRONMENT
 
