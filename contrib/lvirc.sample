@@ -106,6 +106,10 @@ register + read wl-paste write wl-copy              " Wayland (wl-clipboard)
 "   register + read tmux save-buffer - write tmux load-buffer -   " tmux buffer
 " Any register name works; `+` just follows Vim's convention. `register +` alone
 " clears it.
+"
+" :registers (alias :reg -- Vim's :reg) lists every register and its contents;
+" a command-backed register also shows its read/write spec. Map it for a glance:
+map \r :registers<CR>
 
 " ---- tags -------------------------------------------------------------------
 " lvi-tags lists this file's ctags tags in file order through your picker and

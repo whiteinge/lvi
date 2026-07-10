@@ -164,6 +164,9 @@ A register may instead be backed by shell commands with *register* (below): a
 yank or delete into it pipes the text out and a put reads fresh in. Backing *+*
 with the system clipboard tools is the idiom, so *"+y* copies and *"+p* pastes.
 
+*registers* (*reg*) lists every register and its contents (map it for a quick
+glance, e.g. *map \\r :registers<CR>*).
+
 ## Scrolling
 
 *Ctrl-F* *Ctrl-B*
@@ -468,6 +471,19 @@ _contrib/lvi-shell.sh_ do).
 	may hold spaces and pipes. The shell-out is synchronous and tty-free (a
 	clipboard tool returns instantly); a put of text carrying newlines pastes
 	linewise.
+
+*registers* [_names_], *reg*, *display*
+	List registers and their contents, one line each as _type_ *"*_name_
+	_value_: _type_ is *l* (linewise) or *c* (charwise), and a command-backed
+	register (above) appends its *{read .., write ..}* spec so you can confirm
+	the clipboard is wired. Control bytes show in caret notation (*^J* a newline,
+	*^[* an escape), so a linewise register or a recorded macro stays on one
+	line. With no argument every non-empty (or backed) register is listed --
+	unnamed first, then _a_-_z_; give register names to restrict it (*reg a "*,
+	each character one name). Multi-line output pages like *%p* at the *:*
+	prompt, and is the read side of the register API over the socket. Note the
+	split: *register* (singular) configures one register, *registers* (*reg*)
+	displays them, as in *vi*.
 
 *fire* [_event_]
 	Raise _event_ (default *change*) by hand. Because socket-driven edits never

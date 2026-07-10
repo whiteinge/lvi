@@ -898,6 +898,65 @@ def("register", function(ed, c)
   return "", "ok"
 end)
 
+-- Render a register's raw text for a one-line listing: every control byte
+-- becomes caret notation (^J for a newline, ^I tab, ^[ ESC, ^? DEL), so a
+-- linewise register and a macro full of control keys each stay ON one line and
+-- can't smear the status line / pager with raw escapes. This is display-only;
+-- the stored text is untouched.
+local function reg_caret(s)
+  return (s:gsub("[%z\1-\31\127]", function(ch)
+    local n = ch:byte()
+    return (n == 127) and "^?" or ("^" .. string.char(n + 64))
+  end))
+end
+
+-- :registers [names] (aliases reg, display; Vim's :reg) -- list registers and
+-- their contents as one line each: "type  \"name  value". type is `l` linewise
+-- / `c` charwise (blank for a backend-only register); a command-backed register
+-- (:register) appends its {read/write} spec so you can confirm the clipboard is
+-- wired. With no argument every non-empty (or backed) register is shown, unnamed
+-- first, then a-z, then any others; naming registers (`:reg a "` -- each char is
+-- one name) restricts the list. Multi-line output pages like :%p at the prompt;
+-- over the socket it is the read side of the register API (:register is write).
+-- Note the singular/plural split: :register CONFIGURES one register, :registers
+-- (:reg) DISPLAYS them.
+local function do_registers(ed, args)
+  local want = {}
+  for name in args:gmatch("%S") do want[name] = true end   -- each non-blank char is a register name
+  local all = not next(want)
+  local out = {}
+  local function emit(name)
+    if not (all or want[name]) then return end
+    local r, be = ed.regs[name], ed.reg_backends[name]
+    if not r and not be then return end
+    local typ = r and (r.linewise and "l" or "c") or " "
+    local val = r and reg_caret(r.text) or ""
+    if be then
+      local spec = {}
+      if be.read  then spec[#spec + 1] = "read "  .. be.read  end
+      if be.write then spec[#spec + 1] = "write " .. be.write end
+      spec = "{" .. table.concat(spec, ", ") .. "}"
+      val = (val ~= "") and (val .. "  " .. spec) or spec
+    end
+    out[#out + 1] = ('%s  "%s  %s'):format(typ, name, val)
+  end
+  emit('"')
+  for i = string.byte("a"), string.byte("z") do emit(string.char(i)) end
+  local extra = {}                                          -- any non-a-z, non-'"' names (digits/symbols, backends)
+  local seen = {}
+  for name in pairs(ed.regs) do
+    if name ~= '"' and not name:match("^%l$") then extra[#extra + 1] = name; seen[name] = true end
+  end
+  for name in pairs(ed.reg_backends) do
+    if name ~= '"' and not name:match("^%l$") and not seen[name] then extra[#extra + 1] = name end
+  end
+  table.sort(extra)
+  for _, name in ipairs(extra) do emit(name) end
+  if #out == 0 then return "no registers", "ok" end
+  return table.concat(out, "\n"), "ok"
+end
+def("registers reg display", function(ed, c) return do_registers(ed, c.args) end)
+
 -- :fire [EVENT] -- raise an event by hand (default: change). The change
 -- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
 -- see :on above), which leaves a tool that edits over the socket -- a
