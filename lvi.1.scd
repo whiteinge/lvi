@@ -132,8 +132,9 @@ _operator_*i*_object_, _operator_*a*_object_
 
 *gq*
 	Reflow the lines a motion or text object spans by filtering them through
-	*$LVI_FMT* (default *fmt*(1)); *gqq* reflows the current line. Just *!* with
-	a fixed command -- *gqip* is *!ip fmt*.
+	the *fmtprg* option (default *fmt*(1), seeded from *$LVI_FMT*; see *set*).
+	*gqq* reflows the current line. Just *!* with a fixed command, so *gqip*
+	is *!ip fmt*.
 
 *x* *r*_x_ *p* *P*
 	Delete character, replace character with _x_, put after/before.
@@ -393,7 +394,11 @@ _contrib/lvi-shell.sh_ do).
 	renders), and *autoindent*/*noautoindent* (alias
 	*ai*/*noai*; a new line from *o*/*O*/*<CR>* copies the current line's leading
 	whitespace, and a line left holding only that auto-indent is trimmed back to
-	empty). Numeric options answer *?*; the booleans also toggle with *!*.
+	empty). *fmtprg*=_command_ (alias *fp*) is the filter *gq* reflows through
+	(default *fmt*(1), seeded from *$LVI_FMT* at startup but live-settable here,
+	so *set fmtprg=fmt -w 72* rewraps at 72); being space-bearing it takes the
+	rest of the line, so give it its own *set*. Numeric and string options
+	answer *?*; the booleans also toggle with *!*.
 	*scratch*/*noscratch* marks the current buffer
 	ephemeral: it never counts as modified, so *q*/*bd* never nag, *wa* skips it,
 	and a crash does not preserve it. Unlike the others it is per-buffer (like a

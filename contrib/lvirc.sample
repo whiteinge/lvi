@@ -166,6 +166,15 @@ hi spellbad underline pri=20           " the word marks themselves
 " Format, then :w (an `on write` format would re-dirty the buffer after every
 " save, so there is deliberately no hook here).
 map \= :bg lvi-fmt<CR>
+"
+" That is CODE formatting. For PROSE, gq reflows a motion/text object through the
+" `fmtprg` option (default fmt(1)); gqip reflows a paragraph, gqq the line. fmtprg
+" seeds from $LVI_FMT but is live, so re-set it per file type -- 72 for an email,
+" 80 for Markdown -- from a key or a hook. It takes the rest of the line, so keep
+" it on its own :set:
+"   set fmtprg=fmt -w 72                " a startup default width
+"   map \fe :set fmtprg=fmt -w 72<CR>   " switch to email width on demand
+"   map \fm :set fmtprg=fmt -w 80<CR>   " ...or Markdown width
 
 " ---- position memory (viminfo's `") ------------------------------------------
 " lvi-pos remembers where you were in each file across sessions, in a plain-text

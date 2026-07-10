@@ -359,6 +359,15 @@ describe("ex.dispatch", function()
       ex.dispatch(ed, "set sw=2")
       expect((ex.dispatch(ed, "set shiftwidth?"))).to.equal("shiftwidth=2")
     end)
+    it("sets fmtprg to a space-bearing rest-of-line value (and fp alias/query)", function()
+      local ed = ed_with("x")
+      expect((ex.dispatch(ed, "set fmtprg?"))).to.equal("fmtprg=fmt")   -- default seed
+      ex.dispatch(ed, "set fmtprg=fmt -w 72")                           -- value keeps its spaces
+      expect(ed.opts.fmtprg).to.equal("fmt -w 72")
+      expect((ex.dispatch(ed, "set fp?"))).to.equal("fmtprg=fmt -w 72")
+      ex.dispatch(ed, "set fp=par 40")                                  -- the fp alias also sets
+      expect(ed.opts.fmtprg).to.equal("par 40")
+    end)
     it("rejects a zero, negative, or non-numeric tabstop/shiftwidth", function()
       local ed = ed_with("x")
       for _, bad in ipairs({ "set ts=0", "set ts=-4", "set ts=abc", "set sw=0" }) do

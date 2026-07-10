@@ -87,6 +87,12 @@ end
 -- marker at a never-reached id (-1) so the buffer reads dirty until a real save.
 local function do_set(ed, args)
   local out = {}
+  -- A string option takes the REST of the line verbatim: its value bears spaces
+  -- (`fmtprg=fmt -w 72`) and so can't live in the %S+-tokenized list below --
+  -- give it its own :set line. (rc comments are stripped upstream in config.lua,
+  -- so a trailing `" note` never reaches here.)
+  local sname, sval = args:match("^(%a+)=(.*)$")
+  if sname == "fmtprg" or sname == "fp" then ed.opts.fmtprg = sval; return nil, "ok" end
   for opt in args:gmatch("%S+") do
     local name, val = opt:match("^(%a+)=(.+)$")
     if name then
@@ -106,6 +112,7 @@ local function do_set(ed, args)
       if n == "wrap" then out[#out + 1] = ed.opts.wrap and "wrap" or "nowrap"
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
+      elseif n == "fmtprg" or n == "fp" then out[#out + 1] = "fmtprg=" .. ed.opts.fmtprg
       elseif n == "expandtab" or n == "et" then out[#out + 1] = ed.opts.expandtab and "expandtab" or "noexpandtab"
       elseif n == "autoindent" or n == "ai" then out[#out + 1] = ed.opts.autoindent and "autoindent" or "noautoindent"
       elseif n == "modified" or n == "mod" then out[#out + 1] = ed.buf.modified and "modified" or "nomodified"

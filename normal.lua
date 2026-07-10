@@ -1712,7 +1712,7 @@ end
 
 -- Filter the target's line span through an external command. `interactive`
 -- (the ! operator) seeds the : prompt with the range so you type the command;
--- otherwise (gq) run $LVI_FMT or fmt directly. changed=true so `.` repeats it.
+-- otherwise (gq) run the `fmtprg` option directly. changed=true so `.` repeats it.
 local function apply_lines_filter(ed, opkey, total, interactive)
   local sl, _, tl = read_gtarget(ed, opkey, total)
   if not sl then return end
@@ -1720,7 +1720,7 @@ local function apply_lines_filter(ed, opkey, total, interactive)
   if interactive then
     if run_prompt(ed, ("%d,%d!"):format(a, c)) then ed.changed = true end
   else
-    local _, st = ex.dispatch(ed, ("%d,%d!%s"):format(a, c, os.getenv("LVI_FMT") or "fmt"))
+    local _, st = ex.dispatch(ed, ("%d,%d!%s"):format(a, c, ed.opts.fmtprg))
     if st ~= "err" then ed.changed = true end
   end
 end
