@@ -262,7 +262,9 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 # EX COMMANDS
 
 Typed at the *:* prompt and sent over the socket alike -- the same dispatcher
-serves both. A leading address or _a_,_b_ range may precede a command; atoms are
+serves both. At the interactive *:* prompt, *Ctrl-P*/*Ctrl-N* step through
+command history and *Ctrl-F* opens the command window; see the *:* command under
+*NORMAL MODE*. A leading address or _a_,_b_ range may precede a command; atoms are
 a line number, *.* (current), *$* (last), and *%* (whole buffer). A bare address
 moves the cursor to that line.
 
@@ -386,27 +388,38 @@ _contrib/lvi-shell.sh_ do).
 	Undo, redo.
 
 *set* _option_...
-	Set options: *wrap*/*nowrap* (and *wrap!* to toggle, *wrap?* to query),
-	*linebreak*/*nolinebreak* (alias *lbr*/*nolbr*, with *linebreak!* and
-	*linebreak?*; when on, a wrapped line breaks at the last whitespace that
-	fits instead of mid-word, falling back to a mid-word break only for a
-	single word longer than the screen),
-	*tabstop*=_N_ (alias *ts*), *shiftwidth*=_N_ (alias *sw*, the *>>*/*<<*
-	indent step), *expandtab*/*noexpandtab* (alias *et*/*noet*; when on, *>>*
-	and the insert-mode *<Tab>* key indent with spaces -- one *shiftwidth* --
-	instead of a tab, leaving *tabstop* to mean only how wide a literal tab
-	renders), and *autoindent*/*noautoindent* (alias
-	*ai*/*noai*; a new line from *o*/*O*/*<CR>* copies the current line's leading
-	whitespace, and a line left holding only that auto-indent is trimmed back to
-	empty). *fmtprg*=_command_ (alias *fp*) is the filter *gq* reflows through
-	(default *fmt*(1), seeded from *$LVI_FMT* at startup but live-settable here,
-	so *set fmtprg=fmt -w 72* rewraps at 72); being space-bearing it takes the
-	rest of the line, so give it its own *set*. Numeric and string options
-	answer *?*; the booleans also toggle with *!*.
-	*scratch*/*noscratch* marks the current buffer
-	ephemeral: it never counts as modified, so *q*/*bd* never nag, *wa* skips it,
-	and a crash does not preserve it. Unlike the others it is per-buffer (like a
-	command window's buffer); it toggles with *!* and answers *?*.
+	Set editor options. A boolean toggles with a *!* suffix and reports with a
+	*?* suffix (*set wrap!*, *set wrap?*); a numeric or string option takes
+	*=*_value_ and reports with *?*. One *set* may list several options, except
+	the space-bearing string options (*fmtprg*), which take the rest of the
+	line and want a *set* to themselves. The options:
+
+	*wrap*, *nowrap*
+		Soft-wrap long lines onto the next screen row, or truncate them at the
+		right edge.
+	*linebreak*, *nolinebreak* (*lbr*, *nolbr*)
+		When wrapping, break at the last whitespace that fits instead of
+		mid-word; a single word wider than the screen still breaks mid-word.
+	*tabstop*=_N_ (*ts*)
+		How many columns a literal tab renders as.
+	*shiftwidth*=_N_ (*sw*)
+		The indent step for *>>*/*<<* (and *>*/*<*).
+	*expandtab*, *noexpandtab* (*et*, *noet*)
+		Indent with spaces, one *shiftwidth*, instead of a tab for *>>* and the
+		insert-mode *<Tab>* key; *tabstop* then only sets how wide a literal tab
+		renders.
+	*autoindent*, *noautoindent* (*ai*, *noai*)
+		A new line from *o*/*O*/*<CR>* copies the current line's leading
+		whitespace; a line left holding only that auto-indent is trimmed back to
+		empty.
+	*fmtprg*=_command_ (*fp*)
+		The filter *gq* reflows through: default *fmt*(1), seeded from *$LVI_FMT*
+		at startup but live-settable here, so *set fmtprg=fmt -w 72* rewraps at
+		72.
+	*scratch*, *noscratch*
+		Mark the current buffer ephemeral: it never counts as modified, so
+		*q*/*bd* never nag, *wa* skips it, and a crash does not preserve it.
+		Per-buffer, unlike the others (like a command window's buffer).
 
 *map* _lhs_ _rhs_, *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*
