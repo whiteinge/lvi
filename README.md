@@ -50,6 +50,11 @@ Deliberate non-goals — the guardrail that keeps the core from drifting:
 - **No visual mode.** The operator + motion + text-object model, the `!` filter,
   and the line-oriented ex commands cover its uses without a selection to hold;
   the manual's *Without visual mode* section is the translation table.
+- **No splits or windows.** One process edits one view; run several side by side
+  under whatever multiplexer you already use — tmux, screen, Zellij, or a tiling
+  window manager — rather than growing a window manager inward. The socket makes
+  cross-view coordination a script's job (see [`contrib/lvi-diff`](contrib/)).
+  (Multiple buffers *within* a view are supported; on-screen splits are not.)
 - **UNIX only.** POSIX environment and standard CLI tools assumed; Windows
   outside WSL is out of scope.
 
