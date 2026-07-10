@@ -739,7 +739,9 @@ and you switch it on from the rc file. No language engine, search engine, or
 quickfix machinery lives in *lvi* itself. The headliners that ship in _contrib_:
 
 - *lvi-highlight* -- syntax highlighting via an external highlighter (Pygments or
-  bat); turn it on with *on change lvi-highlight*.
+  bat); turn it on with *on change lvi-highlight*. Toggle it at runtime with
+  *lvi-highlight off*/*on*, or force the language with *lvi-highlight lang*
+  _name_ when detection guesses wrong.
 - *lvi-search* -- grep the live (unsaved) buffer and step matches with *n*/*N*.
 - *lvi-list* -- quickfix/location lists from any grep/compiler/linter output
   (the vim *-q* format), file-backed and steppable; any number coexist, one is

@@ -42,6 +42,11 @@ Two backends ship (more contributions welcome), and they *theme* differently:
 
 Select one with `LVI_HL_BACKEND`; see the `lvi-highlight` header for the rest.
 
+Turn highlighting off and on at runtime with `lvi-highlight off`/`on`/`toggle`
+(a `:syntax off`), and when detection guesses wrong force the language with
+`lvi-highlight lang NAME` (bare `lang` clears it). Both are per-view; run them
+from inside lvi (`lvi-highlight -h` covers the state files and the caveat).
+
 ### `lvi-search` + `lvi-list` — search and quickfix
 
 A **list** is a plain file of `file:line[:col]:text` entries — the Vim quickfix

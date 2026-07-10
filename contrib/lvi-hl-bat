@@ -1,7 +1,8 @@
 #!/bin/sh
 # lvi-hl-bat -- bat syntax-highlighting adapter for lvi-highlight (ANSI backend).
 #
-# Contract: buffer text on stdin, filename as $1; emits ex commands (produced by
+# Contract: buffer text on stdin, filename as $1, optional language name as $2
+# (overrides bat's filename detection when set); emits ex commands (produced by
 # the shared lvi-hl-ansi parser). Unlike the Pygments (positional) adapter, the
 # COLORS come from bat's own theme, not lvi's :hi -- an ANSI backend brings its
 # theme and lvi reproduces it. Choose the theme with BAT_THEME (or LVI_BAT flags).
@@ -20,8 +21,10 @@ if [ -z "$BAT" ]; then
 fi
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 fname=$1
+lang=${2:-}
 
 set -- --color=always --style=plain --paging=never --wrap=never --tabs=0
 [ -n "$fname" ] && set -- "$@" --file-name "$fname"     # bat detects syntax from it
+[ -n "$lang" ]  && set -- "$@" --language "$lang"       # ...unless a language is forced
 
 "$BAT" "$@" | "$DIR/lvi-hl-ansi"

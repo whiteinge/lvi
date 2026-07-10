@@ -37,6 +37,15 @@
 # `pygments` -> contrib/lvi-hl-pygments), LVI_HL_MAXBYTES (skip buffers larger
 # than this; whole-buffer lex is O(size); default 262144), LVI_HL_DEBUG (a file
 # to capture the worker's stderr).
+#
+# RUNTIME CONTROL. `lvi-highlight off` clears the syntax groups and suppresses
+# the hooks (a `:syntax off`); `on` re-enables, `toggle` flips. When detection
+# guesses wrong, `lvi-highlight lang NAME` forces the highlighter's language
+# (e.g. `lang xml` for an .html buffer that is really XML) and a bare `lang`
+# clears the override. State is per-view (for now), kept beside the socket
+# ($LVI_SOCK.hl-off, $LVI_SOCK.hl-lang), so run these from inside lvi:
+#     map \H :bg lvi-highlight toggle<CR>       " :syntax off / on
+#     " force a language from a :sh under lvi:  lvi-highlight lang xml
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -44,6 +53,24 @@ LVI=${LVI:-lvi}
 BACKEND=${LVI_HL_BACKEND:-pygments}
 MAXBYTES=${LVI_HL_MAXBYTES:-262144}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+# Runtime control (see RUNTIME CONTROL in the header). These manage per-view
+# state beside the socket, then re-exec with no args to repaint (or clear, if we
+# just turned highlighting off). They need $LVI_SOCK, so run them inside lvi.
+case ${1:-} in
+  on | off | toggle | lang)
+    sub=$1; shift
+    sock=${LVI_SOCK:-}
+    [ -n "$sock" ] || { echo "lvi-highlight: '$sub' must run inside lvi (\$LVI_SOCK unset)" >&2; exit 1; }
+    case "$sub" in
+      on)     rm -f "$sock.hl-off" ;;
+      off)    : > "$sock.hl-off" ;;
+      toggle) if [ -f "$sock.hl-off" ]; then rm -f "$sock.hl-off"; else : > "$sock.hl-off"; fi ;;
+      lang)   if [ -n "${1:-}" ]; then printf '%s' "$1" > "$sock.hl-lang"; else rm -f "$sock.hl-lang"; fi ;;
+    esac
+    exec "$0"      # repaint now, or clear if we just turned it off
+    ;;
+esac
 
 # --theme [WID]: push the backend's `--theme` block (a Pygments built-in style,
 # via $LVI_PYGMENTS_STYLE) over the socket, then exit -- a one-shot theme seed
@@ -79,6 +106,17 @@ wid=${1:-$LVI_WID}
 adapter="$DIR/lvi-hl-$BACKEND"
 [ -x "$adapter" ] || { echo "lvi-highlight: no adapter for backend '$BACKEND' ($adapter)" >&2; exit 1; }
 
+# Disabled via `lvi-highlight off`: clear every syntax group and stop. Empty
+# input makes the adapter emit a bare `hl GROUP` for each group it owns.
+if [ -n "${LVI_SOCK:-}" ] && [ -f "$LVI_SOCK.hl-off" ]; then
+  set --
+  while IFS= read -r cmd; do [ -n "$cmd" ] && set -- "$@" "$cmd"; done <<EOF
+$(printf '' | "$adapter" "")
+EOF
+  [ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"
+  exit 0
+fi
+
 # Live buffer + its filename (for language detection). Works on unsaved content.
 text=$("$LVI" -w "$wid" -- '%p') || { echo "lvi-highlight: cannot read view $wid" >&2; exit 1; }
 fname=$("$LVI" -w "$wid" -- 'f' | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
@@ -91,13 +129,17 @@ if [ "$nbytes" -gt "$MAXBYTES" ]; then
   exit 0
 fi
 
-# Adapter: buffer on stdin, filename as $1, emits one `hl GROUP specs` per group.
-# Collect the lines into args and apply them in one socket round-trip.
+# A forced language (`lvi-highlight lang NAME`) overrides the adapter's filename
+# detection; empty means detect as before.
+lang=; [ -n "${LVI_SOCK:-}" ] && [ -f "$LVI_SOCK.hl-lang" ] && lang=$(cat "$LVI_SOCK.hl-lang")
+
+# Adapter: buffer on stdin, filename as $1, optional language as $2; emits one
+# `hl GROUP specs` per group. Collect the lines and apply in one round-trip.
 set --
 while IFS= read -r cmd; do
   [ -n "$cmd" ] && set -- "$@" "$cmd"
 done <<EOF
-$(printf '%s' "$text" | "$adapter" "$fname")
+$(printf '%s' "$text" | "$adapter" "$fname" "$lang")
 EOF
 
 [ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"

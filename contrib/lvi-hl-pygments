@@ -2,7 +2,8 @@
 # lvi-hl-pygments -- Pygments syntax-highlighting adapter for lvi-highlight.
 #
 # Adapter contract (shared by every backend): read the buffer text on stdin,
-# take the filename as argv[1] (may be empty), and print `hl GROUP L:C1-C2 ...`
+# take the filename as argv[1] (may be empty) and an optional language name as
+# argv[2] (overrides filename detection when set), and print `hl GROUP L:C1-C2 ...`
 # ex commands on stdout -- byte columns, 1-based, one line per group. Columns
 # are BYTES so they map straight onto lvi's :hl overlay (which is byte-indexed).
 #
@@ -40,7 +41,7 @@
 #                        emits no color at any depth.
 import os
 import sys
-from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, guess_lexer
+from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, guess_lexer, get_lexer_by_name
 from pygments.util import ClassNotFound
 from pygments.token import Token
 
@@ -174,7 +175,12 @@ def emit_theme():
     sys.stdout.write("\n".join(out) + "\n")
 
 
-def pick_lexer(text, fname):
+def pick_lexer(text, fname, lang=""):
+    if lang:
+        try:
+            return get_lexer_by_name(lang)
+        except ClassNotFound:
+            pass                    # unknown name: fall back to filename/guess
     if fname:
         try:
             return get_lexer_for_filename(fname)
@@ -203,9 +209,10 @@ def add_span(spans, g, line, c1, c2):
 def main():
     text = sys.stdin.read()
     fname = sys.argv[1] if len(sys.argv) > 1 else ""
+    lang = sys.argv[2] if len(sys.argv) > 2 else ""
     spans = {g: [] for g in GROUPS}
 
-    lexer = pick_lexer(text, fname)
+    lexer = pick_lexer(text, fname, lang)
     if lexer is not None:
         line, col = 1, 1            # 1-based line and BYTE column
         for _, ttype, value in lexer.get_tokens_unprocessed(text):
