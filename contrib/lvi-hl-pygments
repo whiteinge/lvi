@@ -60,6 +60,12 @@ GROUP_MAP = [
     (Token.Name.Builtin,    "Builtin"),
     (Token.Name.Constant,   "Constant"),
     (Token.Name.Decorator,  "Preproc"),
+    (Token.Name.Tag,        "Keyword"),   # HTML/XML element names
+    (Token.Name.Attribute,  "Type"),      # HTML/XML attribute names
+    (Token.Name.Namespace,  "Type"),      # module / package names
+    (Token.Name.Exception,  "Type"),      # exception class names
+    (Token.Name.Label,      "Keyword"),   # goto / loop labels
+    (Token.Name.Entity,     "Constant"),  # HTML entities (&amp;, &#160;)
     # Generic.* -- markup/prose/diff tokens the code groups above never cover.
     # Markdown/rST use Heading/Strong/Emph; diff lexers use Inserted/Deleted
     # (and Subheading for hunk headers, folded into Heading here).
