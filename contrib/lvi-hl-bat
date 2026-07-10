@@ -9,6 +9,9 @@
 # Flags matter for column accuracy: --style=plain (no gutter/grid), --wrap=never
 # (don't insert soft newlines) and --tabs=0 (don't expand tabs) keep bat's byte
 # columns identical to the buffer's, which is what lvi-hl-ansi relies on.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 BAT=${LVI_BAT:-}
 if [ -z "$BAT" ]; then
   if   command -v batcat >/dev/null 2>&1; then BAT=batcat   # Debian/Ubuntu name

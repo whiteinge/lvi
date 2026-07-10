@@ -42,6 +42,9 @@
 # unstage-to-HEAD would want a HEAD-vs-index second mode (for now unstage = edit
 # the index + :w); assumes the file ends in a newline when reblobbing. Conflicts
 # are refused up front (resolve them first).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 PIDDIR=${TMPDIR:-/tmp}
 

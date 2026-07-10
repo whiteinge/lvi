@@ -228,8 +228,21 @@ def main():
     sys.stdout.write("\n".join(out) + "\n")
 
 
+def print_help():
+    """Print this script's leading comment block (its full reference)."""
+    with open(__file__) as f:
+        for i, line in enumerate(f):
+            if i == 0 and line.startswith("#!"):
+                continue
+            if not line.startswith("#"):
+                break
+            sys.stdout.write(line[2:] if line.startswith("# ") else line[1:])
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--theme":
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print_help()
+    elif len(sys.argv) > 1 and sys.argv[1] == "--theme":
         emit_theme()
     else:
         main()

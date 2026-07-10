@@ -43,6 +43,9 @@
 # (buffer-snapshot file to read instead of $LVI_BUFFER/%p). Needs ctags and a
 # picker on PATH. Run from inside lvi ($LVI_WID/$LVI_FILE/$LVI_BUFFER exported);
 # from elsewhere pass -w and cd to the tree.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 PICKER=${LVI_PICKER:-fzf}
 CTAGS=${LVI_CTAGS:-ctags}

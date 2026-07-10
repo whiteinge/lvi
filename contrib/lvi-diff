@@ -82,6 +82,9 @@
 # jumps to its top as you scroll the other -- fine for reading, surprising if you
 # then edit the pane you weren't driving. A change-hunk move is two undo steps on
 # the destination and moves that pane's cursor.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 MAXBYTES=${LVI_DIFF_MAXBYTES:-4194304}
 CTX=${LVI_DIFF_FOLDCTX:-3}

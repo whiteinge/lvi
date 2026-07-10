@@ -20,6 +20,16 @@
 -- moves etc.) are skipped. The backend must not re-wrap long lines (pass its
 -- --wrap=never) or expand tabs (--tabs=0), or byte columns would desync.
 
+-- -h/--help: print this script's header comment (its full reference), then exit.
+if arg[1] == "-h" or arg[1] == "--help" then
+  for line in io.lines(arg[0]) do
+    if line:sub(1, 2) == "#!" then                        -- skip the shebang
+    elseif line:sub(1, 2) == "--" then print((line:gsub("^%-%- ?", "")))
+    else break end
+  end
+  os.exit(0)
+end
+
 local MAX = 64            -- distinct styles tracked; also the range cleared per run
 
 local data = io.read("*a") or ""

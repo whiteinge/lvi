@@ -12,6 +12,9 @@
 # root. deno emits no severity, so everything lands as `W:`. Note deno prints
 # diagnostics on STDERR (stdout gets only "Checked 1 file"), so it is stderr
 # that feeds the pipe.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 ext=${1##*.}
 case "$ext" in js|jsx|ts|tsx|mjs|mts) ;; *) ext=ts ;; esac
 deno lint --compact --ext="$ext" - 2>&1 1>/dev/null |

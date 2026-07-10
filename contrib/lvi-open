@@ -12,6 +12,9 @@
 #
 # LVI_WID/LVI_SOCK are exported by lvi. Set LVI if `lvi` is not on PATH; set
 # LVI_PICKER to your finder (default: fzf; fzy, sk, etc. work too).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 PICKER=${LVI_PICKER:-fzf}
 [ -n "$LVI_WID" ] || { echo "lvi-open: run me from inside lvi (no LVI_WID)" >&2; exit 1; }

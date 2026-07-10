@@ -64,6 +64,9 @@
 # Run from inside lvi (a map) and $LVI_WID/$LVI_SOCK are already in the env; from
 # another terminal, pass `-w auto|WID`.
 
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
 LVI=${LVI:-lvi}
 PICKER=${LVI_PICKER:-fzf}
 

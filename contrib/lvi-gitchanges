@@ -32,6 +32,9 @@
 # Config: LVI (client, default `lvi`). Needs lvi-list and git on PATH. Run from
 # inside lvi ($LVI_WID/$LVI_FILE are exported); from elsewhere pass -w and cd to
 # the file's directory.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 
 die() { echo "lvi-gitchanges: $*" >&2; exit 1; }

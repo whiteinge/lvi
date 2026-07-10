@@ -7,6 +7,9 @@
 # echoes that path back in the output, so FILE needs no rewriting here. ruff
 # exits 1 whenever it finds anything, so the pipeline ignores its status; the
 # summary tail ("Found N errors.") has no `:L:C: ` anchor and drops out.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 ruff check --output-format concise --stdin-filename "$1" - 2>/dev/null |
   awk '{
     if (!match($0, /:[0-9]+:[0-9]+: /)) next

@@ -30,6 +30,9 @@
 #
 # Debug: LVI_TAG_DEBUG=1 prints the reassembled cursor offset to stderr.
 
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
 file=$1 mode=$2 line=$3 col=$4
 [ -n "$file" ] && [ -n "$line" ] && [ -n "$col" ] || exit 0
 

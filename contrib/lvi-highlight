@@ -37,6 +37,9 @@
 # `pygments` -> contrib/lvi-hl-pygments), LVI_HL_MAXBYTES (skip buffers larger
 # than this; whole-buffer lex is O(size); default 262144), LVI_HL_DEBUG (a file
 # to capture the worker's stderr).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 BACKEND=${LVI_HL_BACKEND:-pygments}
 MAXBYTES=${LVI_HL_MAXBYTES:-262144}

@@ -44,6 +44,9 @@
 # Config: LVI (client, default `lvi`), LVI_LINT_BACKEND (adapter name),
 # LVI_LINT_MAXBYTES (skip buffers larger than this, default 262144),
 # LVI_LINT_DEBUG (file to capture worker stderr). Needs lvi-list on PATH.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 MAXBYTES=${LVI_LINT_MAXBYTES:-262144}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

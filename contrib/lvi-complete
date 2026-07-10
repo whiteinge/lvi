@@ -35,6 +35,9 @@
 #
 # Config: LVI_PICKER (fzf/fzy/sk, default fzf), LVI_COMPL_MIN (drop words shorter
 # than this; default 2), LVI_COMPL_POPUP (tmux popup when set and $TMUX).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 PICKER=${LVI_PICKER:-fzf}
 MIN=${LVI_COMPL_MIN:-2}
 token=${LVI_COMPL_TOKEN:-}

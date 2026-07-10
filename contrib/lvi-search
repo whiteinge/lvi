@@ -28,6 +28,9 @@
 #
 # Config: LVI (client, default `lvi`), LVI_SEARCH_CASE (sensitive|ignore|smart),
 # LVI_SEARCH_DEBUG (capture worker stderr). Needs lvi-list on PATH.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 
 worker=; [ "$1" = "--worker" ] && { worker=1; shift; }

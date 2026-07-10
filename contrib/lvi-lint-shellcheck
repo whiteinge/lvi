@@ -7,6 +7,9 @@
 # prints gcc format, `-:L:C: level: msg [SCnnnn]`; rewrite the `-` to the real
 # name and fold the level into the E:/W:/I: prefix. Each sub() replaces only
 # the first match, which is the level slot right after the column.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 shellcheck -f gcc - 2>/dev/null |
   awk -v f="$1" '{
     rest = $0

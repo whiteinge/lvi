@@ -31,6 +31,9 @@
 #
 # Operates on bytes (LC_ALL=C). Debug: LVI_INCR_DEBUG=1 traces to stderr.
 
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
 step=1
 base=
 while getopts s:b: opt; do

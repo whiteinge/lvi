@@ -69,6 +69,9 @@
 #
 # Config (env): LVI (client, default `lvi`); LVI_MIRROR_MAXBYTES (skip buffers
 # larger than this; default 262144); LVI_MIRROR_DEBUG (capture worker stderr).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 MAXBYTES=${LVI_MIRROR_MAXBYTES:-262144}
 

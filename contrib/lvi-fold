@@ -35,6 +35,9 @@
 # Config (env): LVI (client, default `lvi`), LVI_FOLD_MARKER (open,close pair,
 # default "{{{,}}}"), LVI_FOLD_MINLINES (skip folds smaller than this many lines,
 # default 2), LVI_FOLD_DEBUG (a file to capture the worker's stderr).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 MARKER=${LVI_FOLD_MARKER:-'{{{,}}}'}
 MINLINES=${LVI_FOLD_MINLINES:-2}
