@@ -424,6 +424,38 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("insert-mode Tab and expandtab", function()
+    it("inserts a literal tab by default", function()
+      local ed = make("x")
+      feed(ed, "A\t\27")
+      expect(ed.buf:line(1)).to.equal("x\t")
+    end)
+    it("expands to spaces by one shiftwidth when expandtab is on", function()
+      local ed = make("")
+      ex.dispatch(ed, "set et sw=4")                  -- shiftwidth, not tabstop, is the indent unit
+      feed(ed, "i\t\27")                              -- from col 1
+      expect(ed.buf:line(1)).to.equal("    ")         -- 4 spaces
+    end)
+    it("is column-aware: fills only to the next shiftwidth boundary", function()
+      local ed = make("ab")
+      ex.dispatch(ed, "set et sw=4")
+      feed(ed, "A\t\27")                              -- cursor at display col 2 -> 2 spaces
+      expect(ed.buf:line(1)).to.equal("ab  ")
+    end)
+    it("uses shiftwidth even when tabstop differs", function()
+      local ed = make("")
+      ex.dispatch(ed, "set et sw=4 ts=8")             -- the exact ~/.lvirc case
+      feed(ed, "i\t\27")
+      expect(ed.buf:line(1)).to.equal("    ")         -- 4 (sw), not 8 (ts)
+    end)
+    it("with autoindent, indentation propagates as spaces", function()
+      local ed = make("")
+      ex.dispatch(ed, "set et sw=4 ai")
+      feed(ed, "i\tfoo\rbar\27")                      -- tab->spaces, then <CR> carries them
+      expect(ed.buf:get()).to.equal({ "    foo", "    bar" })
+    end)
+  end)
+
   describe("autoindent", function()
     it("is off by default: o does not carry indent", function()
       local ed = make("    hello")

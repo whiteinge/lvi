@@ -374,8 +374,10 @@ _contrib/lvi-shell.sh_ do).
 *set* _option_...
 	Set options: *wrap*/*nowrap* (and *wrap!* to toggle, *wrap?* to query),
 	*tabstop*=_N_ (alias *ts*), *shiftwidth*=_N_ (alias *sw*, the *>>*/*<<*
-	indent step), *expandtab*/*noexpandtab* (alias *et*/*noet*; whether
-	*>>* indents with spaces or tabs), and *autoindent*/*noautoindent* (alias
+	indent step), *expandtab*/*noexpandtab* (alias *et*/*noet*; when on, *>>*
+	and the insert-mode *<Tab>* key indent with spaces -- one *shiftwidth* --
+	instead of a tab, leaving *tabstop* to mean only how wide a literal tab
+	renders), and *autoindent*/*noautoindent* (alias
 	*ai*/*noai*; a new line from *o*/*O*/*<CR>* copies the current line's leading
 	whitespace, and a line left holding only that auto-indent is trimmed back to
 	empty). Numeric options answer *?*; the booleans also toggle with *!*.

@@ -183,6 +183,18 @@ local function insert_char(ed, byte_)
   ed.cx = ed.cx + 1
 end
 
+-- <Tab> in insert mode: a literal tab, unless expandtab, then spaces to the
+-- next *shiftwidth* boundary -- shiftwidth is lvi's one indent unit (there is no
+-- softtabstop), so >> and Tab agree, and tabstop is left to mean only how wide a
+-- literal tab renders. Column-aware via the cursor's display column (measured
+-- with tabstop, since that governs how any existing tabs occupy columns).
+local function insert_tab(ed)
+  if not ed.opts.expandtab then insert_char(ed, 9); return end
+  local sw = ed.opts.shiftwidth
+  local dcol = disp.dispcol(line(ed, ed.cy), ed.opts.tabstop, ed.cx)
+  for _ = 1, sw - dcol % sw do insert_char(ed, 32) end
+end
+
 local function split_line(ed) -- <CR> in insert mode
   local s = line(ed, ed.cy)
   local head, tail = s:sub(1, ed.cx - 1), s:sub(ed.cx)
@@ -256,7 +268,8 @@ local function insert_mode(ed)
     elseif k == 5 then ed.cx = #line(ed, ed.cy) + 1    -- Ctrl-E: end of line
     elseif k == 16 then complete(ed, "prev")           -- Ctrl-P: complete (backward)
     elseif k == 14 then complete(ed, "next")           -- Ctrl-N: complete (forward)
-    elseif k == 9 or (k >= 32 and k ~= 127) then insert_char(ed, k) -- printable + UTF-8 bytes
+    elseif k == 9 then insert_tab(ed)                  -- Tab: literal, or spaces if expandtab
+    elseif k >= 32 and k ~= 127 then insert_char(ed, k) -- printable + UTF-8 bytes
     end
     clamp(ed)
   end
