@@ -44,7 +44,10 @@ a compiler) light up per file.
   `lvi-open`'s picker.
 - `:bg CMD` runs detached with **no** terminal handover — no alt-screen flash. Use
   it for non-interactive tools fired by a map that may repeat (`map n :bg lvi-list
-  next<CR>`). It's the same spawn `:on` hooks use.
+  next<CR>`). It's the same spawn `:on` hooks use. A leading address range
+  (`:L1,L2bg CMD`) arrives as `$LVI_LINE1`/`$LVI_LINE2`, the non-mutating
+  counterpart to a `[range]!` filter, so a tool can act on a typed line span
+  without a bespoke command (`lvi-stagediff` uses it for partial staging).
 - **Self-backgrounding.** A tool that must *read* the buffer (`lvi-highlight`,
   `lvi-search` via `%p`) can't do so synchronously from a `:silent !` child: lvi's
   loop is frozen waiting on that child, so a foreground read would deadlock. They
@@ -399,9 +402,11 @@ for lvi. That file mode is also what makes it a git mergetool (below).
 It opens a split: **left is the git index** (`git show :file`), **right is the
 working tree**, so the diff between them is exactly your *unstaged* changes. `\s`
 stages the hunk under the cursor — it moves into the index pane and the index
-updates at once. And because the index pane's text simply **is** the staged
-content, you can hand-edit it — or `u`-undo a stage — and `:w` to commit that exact
-state; that is how unstaging works. It reblobs the whole buffer (`git hash-object
+updates at once. Two changes with no unchanged line between them are one hunk, so
+`\s` takes both; `:L1,L2bg lvi-stagediff --stage-range` stages just the working
+lines you name, which is how you split them. And because the index pane's text
+simply **is** the staged content, you can hand-edit it — or `u`-undo a stage — and
+`:w` to commit that exact state; that is how unstaging works. It reblobs the whole buffer (`git hash-object
 -w` + `git update-index`), so there's no partial-patch fuzz to misapply. Built on
 `lvi-diff`, so the highlighting, scrollbind, and `]c`/`[c` come free. Run
 `lvi-stagediff FILE` inside a new tmux window.
