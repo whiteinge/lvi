@@ -275,13 +275,17 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 Typed at the *:* prompt and sent over the socket alike -- the same dispatcher
 serves both. At the interactive *:* prompt, *Ctrl-P*/*Ctrl-N* step through
 command history and *Ctrl-F* opens the command window; see the *:* command under
-*NORMAL MODE*. A leading address or _a_,_b_ range may precede a command; atoms are
-a line number, *.* (current), *$* (last), and *%* (whole buffer). A bare address
-moves the cursor to that line.
+*NORMAL MODE*. A leading address or _a_,_b_ range may precede a command. An
+address is a line number, *.* (current), *$* (last), or *'*_x_ (mark _x_), with
+optional *+*_n_ / *-*_n_ offsets (a bare *+*/*-* is one line); *%* is shorthand
+for *1,$*. Two addresses join with *,* or *;* (*;* reads the second relative to
+the first). A bare address moves the cursor there. Addresses lvi cannot resolve
+itself, notably */re/* search addresses, go to the system *ex* along with the
+command.
 
 Any command lvi does not implement itself is delegated to the system *ex*(1)
-(override with *$LVI_EX*) -- that is where *s*, *g*, *m*, *t*, *j* and full
-address syntax come from. The command names documented in this section are the
+(override with *$LVI_EX*) -- that is where *s*, *g*, *m*, *t*, *j* and the rest of
+the address grammar come from. The command names documented in this section are the
 ones lvi OWNS: for these, lvi's semantics apply, shadowing ex's command of the
 same name (lvi's *d* is not ex's *d*). A future lvi release may claim further
 names; a script that must have the system ex's reading of a line regardless

@@ -53,24 +53,52 @@ function M.set_reg(ed, name, text, linewise)
   ed.regs['"'] = r
 end
 
--- Parse an optional leading address or a,b range. Returns a, b, rest (with a
--- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
--- as shorthand for 1,$.
+-- Parse an optional leading address or a two-address range, returning a, b, rest
+-- (a and b nil when no address is present). An address is a base atom with any
+-- number of +/- line offsets folded in:
+--   base:    N | . (current) | $ (last) | 'x (mark x)
+--   offset:  +N | -N   (a bare +/- is +/-1; they chain: .+3-1)
+-- '%' stays the 1,$ shorthand; a leading offset with no base counts from the
+-- current line (:+d is the next line). Two atoms join with ',' or ';'; ';' moves
+-- the current line to the first address before the second is read (POSIX -- it
+-- matters once /re/ addresses land). Anything we cannot resolve here -- an unset
+-- mark, a /re/ search address -- yields nil so dispatch hands the whole line to
+-- the system ex, which owns the full address grammar. Lines come back UNCLAMPED;
+-- line_range still clamps and orders them.
 local function parse_range(ed, s)
   s = s:gsub("^%s+", "")
   if s:sub(1, 1) == "%" then return 1, ed.buf:nlines(), s:sub(2) end
-  local function atom(str)
-    local n, r = str:match("^(%d+)(.*)$")
-    if n then return tonumber(n), r end
-    local c = str:sub(1, 1)
-    if c == "." then return ed.cy, str:sub(2) end
-    if c == "$" then return ed.buf:nlines(), str:sub(2) end
-    return nil, str
+
+  local function atom(str, cur)
+    str = str:gsub("^%s+", "")
+    local base, r
+    local n = str:match("^%d+")
+    if n then base, r = tonumber(n), str:sub(#n + 1)
+    elseif str:sub(1, 1) == "." then base, r = cur, str:sub(2)
+    elseif str:sub(1, 1) == "$" then base, r = ed.buf:nlines(), str:sub(2)
+    elseif str:sub(1, 1) == "'" then                        -- 'x -- a mark
+      local pos = ed.marks[str:sub(2, 2)]
+      if not pos then return nil, str end                   -- unset/unknown -> defer to ex
+      base, r = pos[1], str:sub(3)
+    elseif str:sub(1, 1) == "+" or str:sub(1, 1) == "-" then
+      base, r = cur, str                                    -- leading offset -> from cur
+    else
+      return nil, str
+    end
+    while true do                                           -- fold +N / -N (bare = +/-1)
+      local sign, digits, rest = r:match("^%s*([+-])(%d*)(.*)$")
+      if not sign then break end
+      base = base + (sign == "+" and 1 or -1) * (digits == "" and 1 or tonumber(digits))
+      r = rest
+    end
+    return base, r
   end
-  local a, r = atom(s)
+
+  local a, r = atom(s, ed.cy)
   if not a then return nil, nil, s end
-  if r:sub(1, 1) == "," then
-    local b, r2 = atom(r:sub(2))
+  local sep = r:sub(1, 1)
+  if sep == "," or sep == ";" then
+    local b, r2 = atom(r:sub(2), sep == ";" and a or ed.cy)
     return a, (b or a), r2
   end
   return a, a, r

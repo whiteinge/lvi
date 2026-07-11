@@ -29,6 +29,34 @@ describe("ex.dispatch", function()
       ex.dispatch(ed, "99")
       expect(ed.cy).to.equal(3)
     end)
+    it("resolves a mark range ('a,'b)", function()
+      local ed = ed_with("a\nb\nc\nd\ne")
+      ed.marks["a"] = { 2, 1 }
+      ed.marks["b"] = { 4, 1 }
+      expect((ex.dispatch(ed, "'a,'bp"))).to.equal("b\nc\nd")
+    end)
+    it("folds +/- offsets (bare +/- is +/-1, and they chain)", function()
+      local ed = ed_with("a\nb\nc\nd\ne\nf"); ed.cy = 2
+      expect((ex.dispatch(ed, ".+2p"))).to.equal("d")   -- 2 + 2 = 4
+      expect((ex.dispatch(ed, "$-1p"))).to.equal("e")   -- 6 - 1 = 5
+      expect((ex.dispatch(ed, ".+3-1p"))).to.equal("d") -- 2 + 3 - 1 = 4
+    end)
+    it("a leading offset counts from the current line (:+p)", function()
+      local ed = ed_with("a\nb\nc\nd"); ed.cy = 2
+      expect((ex.dispatch(ed, "+p"))).to.equal("c")     -- next line
+      expect((ex.dispatch(ed, "-p"))).to.equal("a")     -- previous line
+    end)
+    it("';' evaluates the second address from the first, ',' from the cursor", function()
+      local ed = ed_with("a\nb\nc\nd\ne\nf"); ed.cy = 5
+      expect((ex.dispatch(ed, "1;+2p"))).to.equal("a\nb\nc")       -- +2 from line 1
+      expect((ex.dispatch(ed, "1,+2p"))).to.equal("a\nb\nc\nd\ne\nf") -- +2 from cursor (5) -> clamped $
+    end)
+    it("defers an unset mark to the system ex without mutating (safe no-op)", function()
+      local ed = ed_with("a\nb\nc")
+      local _, s = ex.dispatch(ed, "'z,'yd")   -- marks never set -> falls through to ex
+      expect(ed.buf:get()).to.equal({ "a", "b", "c" })
+      expect(s).to.equal("ok")                 -- ex-unrunnable is a safe no-op by design
+    end)
   end)
 
   describe("print", function()
@@ -60,6 +88,15 @@ describe("ex.dispatch", function()
       local ed = ed_with("a\nb\nc"); ed.cy = 1
       ex.dispatch(ed, "d")
       expect(ed.buf:get()).to.equal({ "b", "c" })
+    end)
+    it("a mark-addressed delete now fills the unnamed register", function()
+      local ed = ed_with("a\nb\nc\nd\ne")
+      ed.marks["a"] = { 2, 1 }
+      ed.marks["b"] = { 4, 1 }
+      ex.dispatch(ed, "'a,'bd")
+      expect(ed.buf:get()).to.equal({ "a", "e" })
+      expect(ed.regs['"'].text).to.equal("b\nc\nd\n")
+      expect(ed.regs['"'].linewise).to.equal(true)
     end)
   end)
 
