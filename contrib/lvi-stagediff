@@ -51,6 +51,19 @@
 #   ]c / [c (either pane)     jump to the next / prev hunk (from lvi-diff)
 #   (lvi-diff's \p/\o are off here; use \s so the move also reblobs.)
 #
+# THE g@ WIRING. --attach arms g@ on the working pane for you; the operatorfunc it
+# sets there is, in full (an absolute $SELF and an LVI= prefix so a custom $LVI
+# propagates to the spawned child):
+#     set operatorfunc=LVI=lvi /path/to/lvi-stagediff --stage-range
+# --stage-range takes no baked args: g@ exports the motion's span as $LVI_LINE1/2,
+# and it rediscovers the index view + repo from $LVI_FILE/$LVI_WID. So with the
+# tool on $PATH the minimal hand-armed form is just:
+#     set operatorfunc=lvi-stagediff --stage-range
+# then g@{motion} stages that span (g@ip, g@}, 3g@@). To (re)bind it to a key,
+# set operatorfunc and press g@ in one map -- the plain-key stand-in for vim's
+# <expr> map (mind lvi's no-timeout maps: pick a key that isn't a prefix clash):
+#     map \S :set operatorfunc=lvi-stagediff --stage-range<CR>g@
+#
 # Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH wires
 # staging onto two open views; --stage IDX TOP REPOPATH [WORK LINE] is the one-shot
 # \s fires; --stage-range reads $LVI_LINE1/2 and rediscovers IDX/TOP/REPOPATH from
