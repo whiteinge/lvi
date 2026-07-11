@@ -529,9 +529,12 @@ argument (`//`, `#`, `:`, `/* */`, `<!-- -->`, or a shell-safe alias like `hash`
 
 ```
 map gc :set opfunc=lvi-comment<CR>g@
-map gcc :set opfunc=lvi-comment<CR>g@@
+map gC :set opfunc=lvi-comment<CR>g@@
 ```
 
-`gcip` and `gcc` land where the plugins put them. Commenting is line-wise, so a
-charwise motion still toggles the whole lines it touches.
+So `gcip` toggles a paragraph and `gC` the current line. Note vim's `gcc` can't
+be a map: lvi's mapper has no timeout, so `gc` fires the moment it's typed and a
+`gcc` map is unreachable — for the current line use `gc@` (the `@` is `g@`'s
+doubled key) or the distinct `gC`. Commenting is line-wise, so a charwise motion
+still toggles the whole lines it touches.
 

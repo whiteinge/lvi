@@ -31,10 +31,13 @@
 #   :set operatorfunc=lvi-comment hash    force '#' regardless of the file
 #
 # Bindings (lvirc) -- set operatorfunc, then g@ (the plain-key stand-in for
-# vim's <expr> map), plus a doubled-key one-liner for the current line:
+# vim's <expr> map). So `gcip` toggles a paragraph, `gcj` the next two lines:
 #   map gc :set operatorfunc=lvi-comment<CR>g@
-#   map gcc :set operatorfunc=lvi-comment<CR>g@@
-# Now `gcip` toggles a paragraph and `gcc` toggles the line, as the plugins do.
+#   map gC :set operatorfunc=lvi-comment<CR>g@@
+# NB: vim's `gcc` (comment the line) CANNOT be a map here -- lvi's mapper has no
+# timeout, so `gc` fires the instant it is typed and a `gcc` map is unreachable.
+# For the current line use `gc@` (the @ is g@'s doubled/again key, no extra map),
+# or the distinct `gC` above. `g@@` and a count still work off the raw operator.
 #
 # Operates on bytes (LC_ALL=C). Debug: LVI_COMMENT_DEBUG=1 traces to stderr (g@
 # discards a spawn's stderr, so trace by invoking the script directly).

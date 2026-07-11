@@ -451,7 +451,10 @@ _contrib/lvi-shell.sh_ do).
 
 *map* _lhs_ _rhs_, *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*
-	*<Bslash>* *<lt>* and *<C-x>* for control keys.
+	*<Bslash>* *<lt>* and *<C-x>* for control keys. There is no wait-for-more
+	timeout: a _lhs_ fires the instant it completes, so one mapping cannot be a
+	prefix of another (map *gc* and *gcc* is unreachable) -- give the longer one
+	a distinct key.
 
 *hl* _group_ [_L_:_C1_-_C2_ ...]
 	Paint _group_ over the given byte ranges (bare _L_ = whole line); no ranges
@@ -931,12 +934,15 @@ below, with the happy-path rc lines that turn it on:
 
 *lvi-comment* -- toggle line comments
 	Comment or un-comment the lines a motion spans, also on *g@*; the style comes
-	from the file's extension or an argument (*gcip*, *gcc*):
+	from the file's extension or an argument (*gcip*, *gcj*):
 
 	```
 	map gc :set opfunc=lvi-comment<CR>g@
-	map gcc :set opfunc=lvi-comment<CR>g@@
+	map gC :set opfunc=lvi-comment<CR>g@@
 	```
+
+	(*gcc* can't be a map: with no *map* timeout, *gc* fires at once, so use *gC*
+	or *gc@* for the current line.)
 
 *lvi-reflow* -- reflow a list
 	Rewrap a bulleted or numbered list through *gq*, keeping each item's marker
