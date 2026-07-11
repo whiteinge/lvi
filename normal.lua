@@ -216,6 +216,17 @@ local function insert_char(ed, byte_)
   ed.cx = ed.cx + 1
 end
 
+-- Assemble a whole (possibly multibyte) char from an already-read lead byte,
+-- pulling its remaining continuation bytes off the input. Any command that reads
+-- a char to act on -- f/t/F/T, r, R -- must go through this: reading only the
+-- lead byte lands mid-char and leaks the continuation bytes back into the input
+-- stream (inserted as text or run as commands), which is bug 6.
+local function read_char_from(ed, b)
+  local out = { string.char(b) }
+  for _ = 2, disp.charlen(b) do out[#out + 1] = string.char(getkey(ed)) end
+  return table.concat(out)
+end
+
 -- <Tab> in insert mode: a literal tab, unless expandtab, then spaces to the
 -- next *shiftwidth* boundary -- shiftwidth is lvi's one indent unit (there is no
 -- softtabstop), so >> and Tab agree, and tabstop is left to mean only how wide a
@@ -314,10 +325,10 @@ end
 
 -- R: overwrite mode. Reuses insert's cursor semantics (mode == "insert" lets the
 -- cursor sit at #s+1 so typing past EOL extends the line). Each printable key
--- replaces the char under the cursor (or appends at/after EOL); <CR> splits like
--- insert; backspace just moves left (no original-char restore -- retype to fix).
--- Overwrite is byte-oriented, matching the rest of lvi's minimal input handling:
--- ASCII is exact; a typed multibyte char is not specially reassembled.
+-- replaces the whole char under the cursor (or appends at/after EOL); <CR> splits
+-- like insert; backspace just moves left (no original-char restore -- retype to
+-- fix). A typed multibyte char is read whole (read_char_from) and replaces one
+-- char, so overwriting an em-dash leaves the line valid UTF-8, not a stray byte.
 local function replace_mode(ed)
   ed.changed = true
   ed.mode = "insert"
@@ -330,12 +341,14 @@ local function replace_mode(ed)
     elseif k == 127 or k == 8 then                     -- Backspace: move left only
       if ed.cx > 1 then ed.cx = disp.prev_char(line(ed, ed.cy), ed.cx) end
     elseif k == 9 or (k >= 32 and k ~= 127) then
+      local ch = read_char_from(ed, k)                 -- whole char, multibyte included
       local s = line(ed, ed.cy)
-      if ed.cx > #s then insert_char(ed, k)            -- past EOL: extend
+      if ed.cx > #s then                               -- past EOL: extend
+        for i = 1, #ch do insert_char(ed, ch:byte(i)) end
       else
         local nc = disp.next_char(s, ed.cx)
-        ed.buf:set(ed.cy, s:sub(1, ed.cx - 1) .. string.char(k) .. s:sub(nc))
-        ed.cx = ed.cx + 1
+        ed.buf:set(ed.cy, s:sub(1, ed.cx - 1) .. ch .. s:sub(nc))
+        ed.cx = ed.cx + #ch
       end
     end
     clamp(ed)
@@ -558,24 +571,11 @@ local function do_find(ed, kind, ch, count)
   return c
 end
 
--- Read one whole target char for f/t/F/T. A multibyte char (an em-dash, say)
--- arrives as several key bytes; consume the lead byte's full length. Reading a
--- single byte matched on the lead byte alone, landed the cursor mid-char, and
--- leaked the trailing continuation bytes back into the input stream (inserted as
--- text under `c`, run as commands otherwise) -- which is what mangled em-dashes
--- down to a bare `80 94` in the repro file (bug 6).
-local function read_target(ed)
-  local b = getkey(ed)
-  local out = { string.char(b) }
-  for _ = 2, disp.charlen(b) do out[#out + 1] = string.char(getkey(ed)) end
-  return table.concat(out)
-end
-
 -- f/t are forward+inclusive; F/T are backward (exclusive of the origin in our
 -- range model). Each records ed.last_find so ;/, can repeat it.
 local function find_motion(kind, inclusive)
   return { kind = "char", inclusive = inclusive, move = function(ed, count)
-    ed.last_find = { kind = kind, char = read_target(ed) }
+    ed.last_find = { kind = kind, char = read_char_from(ed, getkey(ed)) }
     local c = do_find(ed, kind, ed.last_find.char, count)
     return ed.cy, c or ed.cx
   end }
@@ -1409,8 +1409,9 @@ actions = {
       ed.buf:insert(ed.cy + 1, newlines)
       ed.cy, ed.cx = ed.cy + n, first_nonblank(suffix)
     else
-      ed.buf:set(ed.cy, s:sub(1, a - 1) .. string.rep(string.char(key), n) .. s:sub(endb))
-      ed.cx = a + n - 1
+      local ch = read_char_from(ed, key)          -- whole char, multibyte included
+      ed.buf:set(ed.cy, s:sub(1, a - 1) .. string.rep(ch, n) .. s:sub(endb))
+      ed.cx = a + (n - 1) * #ch                    -- onto the last replaced char's start
     end
     ed.changed = true
   end,

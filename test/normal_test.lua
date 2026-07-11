@@ -147,6 +147,26 @@ describe("normal-mode interpreter", function()
       feed(ed, "i" .. E .. "\27")
       expect(ed.buf:line(1)).to.equal(E .. "ab")
     end)
+    -- Same class as bug 6: r/R once read a single byte, so a multibyte
+    -- replacement wrote a stray lead byte and leaked the rest into the input.
+    it("r replaces with a whole multibyte char", function()
+      local ed = make("abc")
+      feed(ed, "r" .. E)
+      expect(ed.buf:line(1)).to.equal(E .. "bc"); expect(ed.cx).to.equal(1)
+      feed(ed, "lx")                              -- no leaked bytes: 'x' deletes the 'b' cleanly
+      expect(ed.buf:line(1)).to.equal(E .. "c")
+    end)
+    it("3r replaces each char, cursor on the last (multibyte)", function()
+      local ed = make("abcd")
+      feed(ed, "3r" .. E)
+      expect(ed.buf:line(1)).to.equal(E .. E .. E .. "d")
+      expect(ed.cx).to.equal(1 + 2 * #E)          -- start of the 3rd replacement
+    end)
+    it("R overwrites with whole multibyte chars", function()
+      local ed = make("abcd")
+      feed(ed, "R" .. E .. "Z\27")
+      expect(ed.buf:line(1)).to.equal(E .. "Zcd")
+    end)
   end)
 
   describe("| (goto column)", function()
