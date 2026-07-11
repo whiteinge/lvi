@@ -215,45 +215,65 @@ function Buffer:undo_checkpoint()
   u.group = nil
 end
 
--- Apply a group's inverse splices in reverse; returns the first affected line.
-local function apply_group(self, g)
-  local firstline
-  for i = #g, 1, -1 do
-    firstline = g[i].start
-    self:splice(g[i].start, g[i].ndel, g[i].ins)
+-- Byte column (1-based) at which strings a and b first diverge -- i.e. where the
+-- edit landed. Equal lines report column 1 (vi's fallback); when one is a prefix
+-- of the other, the first byte past the shared run.
+local function first_diff(a, b)
+  if a == b then return 1 end
+  local n = math.min(#a, #b)
+  for i = 1, n do
+    if a:byte(i) ~= b:byte(i) then return i end
   end
-  return firstline
+  return n + 1
 end
 
--- Undo the last change group; returns the affected line, or nil if none.
+-- Apply a group's inverse splices in reverse; returns the first affected line
+-- and the column on it where content actually changed (so undo/redo can restore
+-- the cursor to the edit site, not column 1). The column is derived by diffing
+-- that line's content on either side of the splice -- the undo log is
+-- line-granular, so this reconstructs the byte column the records never stored.
+local function apply_group(self, g)
+  local firstline, firstcol
+  for i = #g, 1, -1 do
+    local start = g[i].start
+    local before = self.lines[start] or ""
+    self:splice(start, g[i].ndel, g[i].ins)
+    firstline, firstcol = start, first_diff(before, self.lines[start] or "")
+  end
+  return firstline, firstcol
+end
+
+-- Undo the last change group; returns the affected line and change column, or
+-- nil if none.
 function Buffer:undo()
   local u = self._undo
   self:undo_checkpoint()
   local g = table.remove(u.done)
   if not g then return nil end
   u.sink = {}
-  local line = apply_group(self, g)
+  local line, col = apply_group(self, g)
   u.sink.id = g.id                                    -- redo restores state g.id
   u.undone[#u.undone + 1] = u.sink
   u.sink = nil
   u.now = (#u.done > 0) and u.done[#u.done].id or 0   -- back to the prior state
   update_modified(self)
-  return line
+  return line, col
 end
 
--- Redo the last undone group; returns the affected line, or nil if none.
+-- Redo the last undone group; returns the affected line and change column, or
+-- nil if none.
 function Buffer:redo()
   local u = self._undo
   local g = table.remove(u.undone)
   if not g then return nil end
   u.sink = {}
-  local line = apply_group(self, g)
+  local line, col = apply_group(self, g)
   u.sink.id = g.id
   u.done[#u.done + 1] = u.sink
   u.sink = nil
   u.now = g.id
   update_modified(self)
-  return line
+  return line, col
 end
 
 -- ---- persistence ------------------------------------------------------------

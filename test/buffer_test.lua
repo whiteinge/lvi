@@ -208,6 +208,22 @@ describe("buffer", function()
     it("returns nil with nothing to undo", function()
       expect(buffer.new("a"):undo()).to_not.exist()
     end)
+    it("returns the affected line AND the change column (bug 1)", function()
+      -- Change a byte mid-line; undo/redo report where it diverged, so the
+      -- editor can put the cursor on the edit, not column 1.
+      local b = buffer.new("the quick brown")
+      b:set(1, "the qXick brown")               -- 'u' -> 'X' at byte 6
+      local ul, uc = b:undo()
+      expect(ul).to.equal(1); expect(uc).to.equal(6)
+      local rl, rc = b:redo()
+      expect(rl).to.equal(1); expect(rc).to.equal(6)
+    end)
+    it("reports column 1 for a whole-line change (bug 1)", function()
+      local b = buffer.new("a\nb\nc")
+      b:delete(2, 2)                             -- remove line 2
+      local _, uc = b:undo()                     -- re-inserts "b" at line 2
+      expect(uc).to.equal(1)
+    end)
   end)
 
   describe("rev counter", function()

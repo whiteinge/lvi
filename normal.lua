@@ -1413,12 +1413,12 @@ actions = {
   [15] = function(ed) jump_back(ed) end,   -- Ctrl-O: older position in the jumplist
   [9]  = function(ed) jump_fwd(ed) end,    -- Ctrl-I / Tab: newer position
   [b("u")] = function(ed)
-    local l = ed.buf:undo()
-    if l then ed.cy, ed.cx = l, 1; clamp(ed) else ed.message = "Already at oldest change" end
+    local l, c = ed.buf:undo()
+    if l then ed.cy, ed.cx = l, c or 1; clamp(ed) else ed.message = "Already at oldest change" end
   end,
   [18] = function(ed) -- Ctrl-R: redo
-    local l = ed.buf:redo()
-    if l then ed.cy, ed.cx = l, 1; clamp(ed) else ed.message = "Already at newest change" end
+    local l, c = ed.buf:redo()
+    if l then ed.cy, ed.cx = l, c or 1; clamp(ed) else ed.message = "Already at newest change" end
   end,
   -- q{reg} starts recording keys into a register; q again stops. Recording
   -- reuses getkey's capture; the trailing 'q' that stops it is dropped. A macro
