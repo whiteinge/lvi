@@ -22,8 +22,9 @@
 #   cycle prev    step older / newer, then send `u"~p` (put over the socket).
 #   cycle next    Press RIGHT AFTER a paste -- the `u` assumes the last change
 #                 was that paste (the paste-then-cycle contract, as in YankRing).
-#   pick          fzf over the ring (newest first, first line shown); paste the
-#                 choice at the cursor (no undo -- a fresh paste, not a cycle).
+#   pick          $LVI_PICKER over the ring (newest first, first line shown, each
+#                 prefixed with its index); paste the choice at the cursor (no
+#                 undo -- a fresh paste, not a cycle).
 #   list          the ring as `index<TAB>first-line`, newest first (debug/peek).
 #   clear         forget the whole ring.
 #
@@ -135,10 +136,13 @@ case "$sub" in
   pick)
     total=$(count); [ "$total" -gt 0 ] || die "yankring empty"
     seq=$(getseq)
+    # A self-contained "N: text" line: the index shows (a position readout) and
+    # is parsed back off the front, so this works on any $LVI_PICKER -- no
+    # fzf-only --with-nth/--delimiter, which fzy (a plain line filter) rejects.
     sel=$(i=0; while [ "$i" -lt "$total" ]; do
-            printf '%d\t%s\n' "$i" "$(head -n1 "$dir/$((seq - i))" 2>/dev/null)"; i=$((i + 1))
-          done | "$PICKER" --with-nth=2.. --delimiter='	') || exit 0
-    i=$(printf '%s' "$sel" | cut -f1)
+            printf '%d: %s\n' "$i" "$(head -n1 "$dir/$((seq - i))" 2>/dev/null)"; i=$((i + 1))
+          done | "$PICKER") || exit 0
+    i=${sel%%:*}
     case "$i" in ''|*[!0-9]*) exit 0 ;; esac
     setcur "$i"
     send "normal \"${REG}p" ;;                            # fresh paste of the chosen entry (no undo)
