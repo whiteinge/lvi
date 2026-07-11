@@ -186,7 +186,7 @@ def pick_lexer(text, fname, lang=""):
         try:
             return get_lexer_by_name(lang)
         except ClassNotFound:
-            pass                    # unknown name: fall back to filename/guess
+            pass                    # unknown name: fall back to filename
     if fname:
         try:
             return get_lexer_for_filename(fname)
@@ -195,10 +195,14 @@ def pick_lexer(text, fname, lang=""):
                 return guess_lexer_for_filename(fname, text)
             except ClassNotFound:
                 pass
-    try:
-        return guess_lexer(text)
-    except ClassNotFound:
-        return None
+    # Deliberately NO bare guess_lexer(text) last resort: it never declines --
+    # it always returns *some* programming lexer, so a plain-text file with no
+    # extension (or an unnamed buffer) gets prose painted as code (ordinary
+    # words like "class"/"for"/"return" lit as keywords, numbers as Number).
+    # No confident filename/lang match means no highlighting, same as most
+    # editors with an unknown filetype. A .txt resolves to TextLexer above,
+    # which tiles as plain Token.Text and so emits no spans anyway.
+    return None
 
 
 def add_span(spans, g, line, c1, c2):
