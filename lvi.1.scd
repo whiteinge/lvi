@@ -172,6 +172,12 @@ _operator_*i*_object_, _operator_*a*_object_
 Registers *a*-*z* and the unnamed register (") hold deletes and yanks. A macro is
 just register text, so a yanked register can be replayed with *@*.
 
+A delete or change with no named register also feeds the automatic delete
+registers, as in vi: a whole-line or multi-line delete shifts the numbered stack
+*"1* to *"9* down one and lands in *"1* (so *"1* is the most recent, *"2* the one
+before it); a delete of less than a line goes to the small-delete register *"-*.
+Naming a register (*"a*) leaves both untouched, and yanks never touch them.
+
 A register may instead be backed by shell commands with *register* (below): a
 yank or delete into it pipes the text out and a put reads fresh in. Backing *+*
 with the system clipboard tools is the idiom, so *"+y* copies and *"+p* pastes.

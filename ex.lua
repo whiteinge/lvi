@@ -53,6 +53,25 @@ function M.set_reg(ed, name, text, linewise)
   ed.regs['"'] = r
 end
 
+-- Record a DELETE or CHANGE, adding vi's numbered/small-delete bookkeeping on
+-- top of set_reg. With no register named:
+--   * a LARGE delete (linewise, or charwise spanning a newline) shifts the
+--     numbered stack "1.."9 down one and stores the text in "1;
+--   * a SMALL delete (charwise, within a single line) goes to the "- register.
+-- Naming a register ("add) skips all of that -- only that register and the
+-- unnamed '"' move, exactly like vi/Vim. Yanks never reach here (they call
+-- set_reg directly); the numbered stack is delete history, not a yank ring.
+function M.set_del_reg(ed, name, text, linewise)
+  M.set_reg(ed, name, text, linewise)
+  if name then return end
+  if linewise or text:find("\n", 1, true) then          -- large -> shift into "1
+    for i = 9, 2, -1 do ed.regs[tostring(i)] = ed.regs[tostring(i - 1)] end
+    ed.regs["1"] = { text = text, linewise = linewise }
+  else                                                   -- small -> "-
+    ed.regs["-"] = { text = text, linewise = linewise }
+  end
+end
+
 -- Parse an optional leading address or a two-address range, returning a, b, rest
 -- (a and b nil when no address is present). An address is a base atom with any
 -- number of +/- line offsets folded in:
@@ -660,16 +679,17 @@ def("wq x", function(ed, c)
 end)
 
 -- :[range]d[elete] [buffer] -- delete the lines, saving them to a register just
--- like the normal-mode `d` operator: always the unnamed '"', plus a named
--- register when a single-letter buffer is given (POSIX ex's optional buffer
--- arg). The text is linewise (trailing '\n'), matching a linewise yank/dd, so a
--- following :put / p pastes whole lines. (Mark/search addresses like :'a,'bd
--- still fall through to the system ex, whose registers lvi can't see -- see the
--- addressing note at the top of this file.)
+-- like the normal-mode `d` operator: always the unnamed '"' (and the numbered
+-- stack "1, since a line delete is "large"), plus a named register when a
+-- single-letter buffer is given (POSIX ex's optional buffer arg). The text is
+-- linewise (trailing '\n'), matching a linewise yank/dd, so a following :put / p
+-- pastes whole lines. (Mark/search addresses like :'a,'bd still fall through to
+-- the system ex, whose registers lvi can't see -- see the addressing note at the
+-- top of this file.)
 def("d delete", function(ed, c)
   local from, to = line_range(ed, c.a, c.b)
   local reg = c.args:match("^(%a)%s*$")           -- optional single-letter buffer
-  M.set_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
+  M.set_del_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
   ed.buf:delete(from, to)
   ed.cy = clampline(ed, from)
   ed.cx = 1

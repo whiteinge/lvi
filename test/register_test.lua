@@ -197,6 +197,75 @@ describe("command-backed registers", function()
       expect(ed.writes[1].text).to.equal("aaa\n")
     end)
   end)
+
+  describe("numbered and small-delete registers", function()
+    it("a linewise delete shifts the numbered stack \"1..\"9", function()
+      local ed = make("one\ntwo\nthree\nfour")
+      feed(ed, "dd")
+      expect(ed.regs["1"].text).to.equal("one\n")
+      expect(ed.regs["1"].linewise).to.equal(true)
+      feed(ed, "dd")                              -- "one" shifts to "2
+      expect(ed.regs["1"].text).to.equal("two\n")
+      expect(ed.regs["2"].text).to.equal("one\n")
+      feed(ed, "dd")
+      expect(ed.regs["1"].text).to.equal("three\n")
+      expect(ed.regs["2"].text).to.equal("two\n")
+      expect(ed.regs["3"].text).to.equal("one\n")
+    end)
+
+    it("a within-line delete goes to \"- , leaving the numbered stack alone", function()
+      local ed = make("hello\nworld")
+      feed(ed, "x")                               -- delete 'h'
+      expect(ed.regs["-"].text).to.equal("h")
+      expect(ed.regs["-"].linewise).to.equal(false)
+      expect(ed.regs["1"]).to.equal(nil)
+    end)
+
+    it("dw of a word on one line is a small delete", function()
+      local ed = make("foo bar")
+      feed(ed, "dw")
+      expect(ed.regs["-"].text).to.equal("foo ")
+      expect(ed.regs["1"]).to.equal(nil)
+    end)
+
+    it("a small delete leaves an earlier numbered delete intact", function()
+      local ed = make("keep\nxy")
+      feed(ed, "dd")                              -- "keep\n" -> "1
+      feed(ed, "x")                               -- small -> "-
+      expect(ed.regs["1"].text).to.equal("keep\n")
+      expect(ed.regs["-"].text).to.equal("x")
+    end)
+
+    it("a named delete register skips numbered/small bookkeeping", function()
+      local ed = make("one\ntwo\nthree")
+      feed(ed, "dd")                              -- "1 = one
+      feed(ed, '"add')                            -- into "a; "1 must not shift
+      expect(ed.regs["a"].text).to.equal("two\n")
+      expect(ed.regs["1"].text).to.equal("one\n")
+      expect(ed.regs["2"]).to.equal(nil)
+    end)
+
+    it("a change is a delete for the numbered stack", function()
+      local ed = make("alpha\nbeta")
+      feed(ed, "cc")                              -- linewise change; deleted text -> "1
+      expect(ed.regs["1"].text).to.equal("alpha\n")
+    end)
+
+    it("yanks never touch the numbered or small registers", function()
+      local ed = make("one\ntwo")
+      feed(ed, "yy")
+      expect(ed.regs['"'].text).to.equal("one\n")
+      expect(ed.regs["1"]).to.equal(nil)
+      expect(ed.regs["-"]).to.equal(nil)
+    end)
+
+    it("puts back from \"1", function()
+      local ed = make("one\ntwo")
+      feed(ed, "dd")                              -- "1 = "one\n", buffer: two
+      feed(ed, '"1p')                             -- put "1 below the cursor
+      expect(ed.buf:get()).to.equal({ "two", "one" })
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

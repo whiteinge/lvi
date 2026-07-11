@@ -159,6 +159,10 @@ end
 -- and any register name can be backed. The shell-out is injected (ed.reg_read /
 -- ed.reg_write, absent headless), so this module stays pure/testable.
 local set_reg = ex.set_reg   -- one implementation, shared with ex.lua's :d (M.set_reg there)
+-- Deletes and changes route through set_del_reg instead, which layers vi's
+-- numbered ("1.."9) and small-delete ("-) bookkeeping on top of set_reg; yanks
+-- stay on set_reg (the numbered stack is delete history, not a yank ring).
+local set_del_reg = ex.set_del_reg
 
 -- Turn a backend's raw stdout into a register value. A clipboard is just bytes
 -- with no linewise flag, so we infer: text carrying any newline is treated as
@@ -386,7 +390,8 @@ local function op_lines(ed, op, a, c, reg)
     return
   end
   local text = table.concat(ed.buf:get(a, c), "\n") .. "\n" -- linewise regs end in \n
-  set_reg(ed, reg, text, true)
+  local rec = (op == "y") and set_reg or set_del_reg  -- yank vs delete/change bookkeeping
+  rec(ed, reg, text, true)
   if op == "y" then
     ed.cy = a
   elseif op == "d" then
@@ -448,7 +453,8 @@ local function op_chars_range(ed, op, sl, sc, tl, tc, inclusive, reg)
     end
     ed.cy, ed.cx = sl, sc; ed.changed = true; clamp(ed); return
   end
-  set_reg(ed, reg, text, false)
+  local rec = (op == "y") and set_reg or set_del_reg  -- yank vs delete/change bookkeeping
+  rec(ed, reg, text, false)
   if op == "y" then
     ed.cy, ed.cx = sl, sc
   else
@@ -1219,7 +1225,7 @@ actions = {
     if #s == 0 then return end
     local a, endb = ed.cx, ed.cx
     for _ = 1, (count or 1) do if endb <= #s then endb = disp.next_char(s, endb) end end
-    set_reg(ed, reg, s:sub(a, endb - 1), false)
+    set_del_reg(ed, reg, s:sub(a, endb - 1), false)
     ed.buf:set(ed.cy, s:sub(1, a - 1) .. s:sub(endb))
     ed.changed = true
     clamp(ed)
@@ -1231,7 +1237,7 @@ actions = {
     local start = a
     for _ = 1, (count or 1) do start = disp.prev_char(s, start) end
     if start >= a then return end
-    set_reg(ed, reg, s:sub(start, a - 1), false)
+    set_del_reg(ed, reg, s:sub(start, a - 1), false)
     ed.buf:set(ed.cy, s:sub(1, start - 1) .. s:sub(a))
     ed.cx = start
     ed.changed = true
@@ -1256,7 +1262,7 @@ actions = {
   [b("s")] = function(ed, count, reg)
     local s, a, endb = line(ed, ed.cy), ed.cx, ed.cx
     for _ = 1, (count or 1) do if endb <= #s then endb = disp.next_char(s, endb) end end
-    set_reg(ed, reg, s:sub(a, endb - 1), false)
+    set_del_reg(ed, reg, s:sub(a, endb - 1), false)
     ed.buf:set(ed.cy, s:sub(1, a - 1) .. s:sub(endb))
     ed.changed = true
     insert_mode(ed)
