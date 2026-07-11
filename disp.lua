@@ -29,6 +29,7 @@ local function charlen(b)
   elseif b < 0xF0 then return 3
   else return 4 end
 end
+M.charlen = charlen   -- byte count of the char a lead byte opens (f/t target read)
 
 -- Decode the codepoint at byte i; returns codepoint, byte length.
 local function decode(s, i)

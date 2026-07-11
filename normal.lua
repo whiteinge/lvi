@@ -522,33 +522,60 @@ local function word_end(ed, count, big)
   return l, math.max(1, c)
 end
 
+-- Last occurrence of ch that STARTS at a byte < bound (nil if none). ch may be
+-- multibyte; matches stay char-aligned because a UTF-8 lead byte never appears
+-- mid-character, so a plain byte find can only land on a char boundary.
+local function rfind_before(s, ch, bound)
+  local i, from = nil, 1
+  while true do
+    local p = s:find(ch, from, true)
+    if not p or p >= bound then break end
+    i, from = p, p + 1
+  end
+  return i
+end
+
 -- f/t/F/T within-line char search, shared by the motions and by ;/,. Returns the
--- target column, or nil if not found.
+-- target column, or nil if not found. `ch` is a whole (possibly multibyte) char;
+-- byte columns step by disp.next_char/prev_char and by #ch so a landing never
+-- bisects a char -- reading only the lead byte (the old bug) matched mid-char.
 local function do_find(ed, kind, ch, count)
-  local s, c = line(ed, ed.cy), ed.cx
+  local s, c, w = line(ed, ed.cy), ed.cx, #ch
   for _ = 1, (count or 1) do
     if kind == "f" then
       local i = s:find(ch, c + 1, true); if not i then return nil end; c = i
     elseif kind == "t" then
-      local from = (s:sub(c + 1, c + 1) == ch) and c + 2 or c + 1
-      local i = s:find(ch, from, true); if not i then return nil end; c = i - 1
+      local from = (s:sub(c + 1, c + w) == ch) and (c + 1 + w) or (c + 1)
+      local i = s:find(ch, from, true); if not i then return nil end; c = disp.prev_char(s, i)
     elseif kind == "F" then
-      local i; for j = c - 1, 1, -1 do if s:sub(j, j) == ch then i = j; break end end
-      if not i then return nil end; c = i
+      local i = rfind_before(s, ch, c); if not i then return nil end; c = i
     elseif kind == "T" then
-      local from = (s:sub(c - 1, c - 1) == ch) and c - 2 or c - 1
-      local i; for j = from, 1, -1 do if s:sub(j, j) == ch then i = j; break end end
-      if not i then return nil end; c = i + 1
+      local i = rfind_before(s, ch, c)
+      if i and i + w == c then i = rfind_before(s, ch, i) end   -- already just past it: keep going
+      if not i then return nil end; c = i + w
     end
   end
   return c
+end
+
+-- Read one whole target char for f/t/F/T. A multibyte char (an em-dash, say)
+-- arrives as several key bytes; consume the lead byte's full length. Reading a
+-- single byte matched on the lead byte alone, landed the cursor mid-char, and
+-- leaked the trailing continuation bytes back into the input stream (inserted as
+-- text under `c`, run as commands otherwise) -- which is what mangled em-dashes
+-- down to a bare `80 94` in the repro file (bug 6).
+local function read_target(ed)
+  local b = getkey(ed)
+  local out = { string.char(b) }
+  for _ = 2, disp.charlen(b) do out[#out + 1] = string.char(getkey(ed)) end
+  return table.concat(out)
 end
 
 -- f/t are forward+inclusive; F/T are backward (exclusive of the origin in our
 -- range model). Each records ed.last_find so ;/, can repeat it.
 local function find_motion(kind, inclusive)
   return { kind = "char", inclusive = inclusive, move = function(ed, count)
-    ed.last_find = { kind = kind, char = string.char(getkey(ed)) }
+    ed.last_find = { kind = kind, char = read_target(ed) }
     local c = do_find(ed, kind, ed.last_find.char, count)
     return ed.cy, c or ed.cx
   end }

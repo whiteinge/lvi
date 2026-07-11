@@ -84,6 +84,24 @@ describe("normal-mode interpreter", function()
       local ed = make("hello")
       feed(ed, "dfl"); expect(ed.buf:line(1)).to.equal("lo")
     end)
+    -- Bug 6: a multibyte target must be read whole. Reading only the lead byte
+    -- landed the cursor mid-char and leaked the trailing bytes into the input.
+    it("f/t/F/T take a whole multibyte target char", function()
+      local EM = "\226\128\148"                       -- em-dash, e2 80 94
+      local line = "ab" .. EM .. "cd" .. EM .. "ef"    -- em-dashes at bytes 3 and 8
+      local function cx(keys) local ed = make(line); feed(ed, keys); return ed.cx end
+      expect(cx("f" .. EM)).to.equal(3)                -- onto the em-dash
+      expect(cx("t" .. EM)).to.equal(2)                -- just before it
+      expect(cx("$F" .. EM)).to.equal(8)               -- backward onto the 2nd
+      expect(cx("$T" .. EM)).to.equal(11)              -- backward, just after it
+      expect(cx("f" .. EM .. ";")).to.equal(8)         -- ; repeats the char
+    end)
+    it("ct<multibyte> leaves the target char intact, no stray bytes (bug 6)", function()
+      local EM = "\226\128\148"
+      local ed = make("ab" .. EM .. "cd")
+      feed(ed, "ct" .. EM); feed(ed, "XY"); feed(ed, "\27")
+      expect(ed.buf:line(1)).to.equal("XY" .. EM .. "cd")   -- em-dash preserved verbatim
+    end)
   end)
 
   describe("gg and marks", function()
