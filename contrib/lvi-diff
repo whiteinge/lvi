@@ -285,6 +285,48 @@ xfer() {
   [ $# -gt 0 ] && "$LVI" -w "$dstw" -- "$@"
 }
 
+# Partial-hunk put -- move an EXPLICIT self line span [L1,L2] onto PEER, not the
+# whole hunk under the cursor. This is what lets a caller peel two changes that
+# `diff` coalesced into one hunk (no unchanged line between them). Used by
+# lvi-stagediff's :[range]bg staging; direction is put-only (source=self=SELF).
+#   xfer-range PEER SELF L1 L2
+# The span is clamped to the enclosing hunk. An equal-count change block maps its
+# sub-range to PEER positionally (source line as+k <-> peer line bs+k); a run of
+# self-only lines (`d`) inserts just the selected ones; any other shape (an
+# unequal change, a peer-only `a`) has no clean per-line map, so it falls back to
+# moving the whole hunk rather than misplacing lines.
+xferrange() {
+  peer=$1; self=$2; l1=$3; l2=$4
+  { [ -n "$peer" ] && [ -n "$self" ] && [ -n "$l1" ] && [ -n "$l2" ]; } || {
+    echo "lvi-diff --xfer-range: need PEER SELF L1 L2" >&2; return 1; }
+  sf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.rs.XXXXXX") || return 1
+  pf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.rp.XXXXXX") || return 1
+  trap 'rm -f "$sf" "$pf"' EXIT
+  "$LVI" -w "$self" -- '%p' > "$sf" || { echo "lvi-diff: cannot read $self" >&2; return 1; }
+  "$LVI" -w "$peer" -- '%p' > "$pf" || { echo "lvi-diff: cannot read $peer" >&2; return 1; }
+
+  set -- $(diff "$sf" "$pf" | awk -v l1="$l1" -v l2="$l2" '
+    /^[0-9]/ {
+      match($0,/[acd]/); op=substr($0,RSTART,1)
+      old=substr($0,1,RSTART-1); new=substr($0,RSTART+1)
+      oa=old+0; ob=oa; if(index(old,",")){oa=substr(old,1,index(old,",")-1)+0; ob=substr(old,index(old,",")+1)+0}
+      na=new+0; nb=na; if(index(new,",")){na=substr(new,1,index(new,",")-1)+0; nb=substr(new,index(new,",")+1)+0}
+      if(op=="a"){as=oa+1;ae=oa;bs=na;be=nb} else if(op=="d"){as=oa;ae=ob;bs=na+1;be=na} else {as=oa;ae=ob;bs=na;be=nb}
+      if(as<=l2 && l1<=ae) {                              # this hunk overlaps the span
+        rl1=(l1>as)?l1:as; rl2=(l2<ae)?l2:ae             # clamp to the hunk
+        if(op=="c" && (ae-as)==(be-bs)) { print bs+(rl1-as), bs+(rl2-as), rl1, rl2; exit }
+        else if(op=="d")                { print bs, be, rl1, rl2; exit }   # empty delete, insert sub-range
+        else                            { print bs, be, as, ae; exit }     # fallback: whole hunk
+      }
+    }')
+  [ $# -eq 4 ] || { echo "lvi-diff: no hunk in self lines $l1,$l2 of view $self" >&2; return 0; }
+  ds=$1; de=$2; ss=$3; se=$4
+  set --
+  [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d"
+  [ "$ss" -le "$se" ] && set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$sf'"
+  [ $# -gt 0 ] && "$LVI" -w "$peer" -- "$@"
+}
+
 # One-shot hunk navigation -- ]c / [c. Jump SELF to the next/prev hunk, top-anchor
 # it, and align the PEER via the cached map (a socket :top won't fire the peer's
 # scroll hook, so we set both here). No wraparound -- no-op at the ends.
@@ -318,6 +360,7 @@ hunk() {
 
 case "$1" in
   --xfer)       shift; xfer "$@"; exit $? ;;
+  --xfer-range) shift; xferrange "$@"; exit $? ;;   # partial-hunk put (lvi-stagediff)
   --hunk)       shift; hunk "$@"; exit $? ;;
   --scrollsync) shift; scrollsync "$@"; exit $? ;;
   --foldtoggle) shift; foldtoggle "$@"; exit $? ;;  # zx: fold/unfold unchanged

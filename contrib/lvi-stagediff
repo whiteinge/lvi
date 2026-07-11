@@ -26,22 +26,40 @@
 # misapply (no fuzz), composes trivially (stage another hunk = reblob again), and
 # falls straight out of "the index pane's text IS the staged state."
 #
+# PARTIAL / ADJACENT HUNKS. \s moves a whole diff-hunk, and `diff` coalesces two
+# changes with no unchanged line between them into ONE hunk -- so \s can't split
+# them apart (neither can `git add -p`; that's what its `e` is for). Two outs, both
+# riding the same "index pane text IS the blob" model:
+#   * :L1,L2bg lvi-stagediff --stage-range -- stage just the working lines L1..L2.
+#     \s is a one-key map and a map can carry only the cursor line; a typed range
+#     command rides ex's address grammar, so you can pick one section of a merged
+#     hunk (e.g. `:12,14bg lvi-stagediff --stage-range`). Line span in $LVI_LINE1/2.
+#   * Hand-edit -- the index pane is a live buffer: stage the merged hunk with \s,
+#     then delete back (or edit) the part you didn't mean to stage and :w. The
+#     blob is whatever you leave, so any state you can type is a state you can
+#     stage. This is also the out for the shapes --stage-range punts on (below).
+#
 # SYNOPSIS
 #   lvi-stagediff FILE        open the index|working split for FILE and wire it up
 #   lvi-stagediff             use $LVI_FILE (i.e. run it from a map inside lvi)
 #   \s      (working pane)    stage the hunk under the cursor
+#   :L1,L2bg lvi-stagediff --stage-range   stage only working lines L1..L2 (partial)
 #   :w      (index pane)      stage the current index text (after a hand edit / undo)
 #   ]c / [c (either pane)     jump to the next / prev hunk (from lvi-diff)
 #   (lvi-diff's \p/\o are off here; use \s so the move also reblobs.)
 #
 # Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH wires
 # staging onto two open views; --stage IDX TOP REPOPATH [WORK LINE] is the one-shot
-# \s fires; --reblob TOP REPOPATH is the `on write` hook (IDX = $LVI_WID).
+# \s fires; --stage-range reads $LVI_LINE1/2 and rediscovers IDX/TOP/REPOPATH from
+# the environment; --reblob TOP REPOPATH is the `on write` hook (IDX = $LVI_WID).
 #
 # LIMITS (MVP): one file, no directory/index browser; a dedicated per-hunk
 # unstage-to-HEAD would want a HEAD-vs-index second mode (for now unstage = edit
 # the index + :w); assumes the file ends in a newline when reblobbing. Conflicts
-# are refused up front (resolve them first).
+# are refused up front (resolve them first). --stage-range maps a sub-range cleanly
+# for an equal-count change block or a run of added lines; other shapes (an unequal
+# change, a pure deletion) fall back to staging the whole enclosing hunk -- hand-
+# edit the index for those.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -83,6 +101,39 @@ stage() {
   "$LVI" -w "$work" -- "status stage staged $rp" >/dev/null 2>&1
 }
 
+# --stage-range: stage only the working lines $LVI_LINE1..$LVI_LINE2 -- a
+# :[range]bg selection -- rather than the whole hunk. This is how you peel two
+# changes that `diff` coalesced into one hunk: select just one section's lines and
+# stage them, leaving the other unstaged. Unlike \s (a one-key map, which can
+# carry only the cursor line), this rides ex's own address grammar, so the far end
+# comes in as a real range. No baked args -- the paired index view and repo paths
+# are rediscovered from the environment, so the typed command stays short:
+#     :L1,L2bg lvi-stagediff --stage-range
+stage_range() {
+  work=$LVI_WID; l1=$LVI_LINE1; l2=$LVI_LINE2
+  { [ -n "$work" ] && [ -n "$l1" ] && [ -n "$l2" ]; } || {
+    echo "lvi-stagediff --stage-range: run as ':L1,L2bg lvi-stagediff --stage-range'" >&2; return 1; }
+  file=$LVI_FILE
+  [ -n "$file" ] || { echo "lvi-stagediff --stage-range: no \$LVI_FILE" >&2; return 1; }
+  dir=$(dirname "$file")
+  top=$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "lvi-stagediff: not inside a git repository" >&2; return 1; }
+  rp=$(cd "$dir" && git ls-files --full-name -- "$(basename "$file")")
+  [ -n "$rp" ] || { echo "lvi-stagediff: not tracked by git: $file" >&2; return 1; }
+  # The index view is the live one (other than us) editing a seed we planted.
+  idx=""
+  for w in $("$LVI" -l 2>/dev/null | cut -f1); do
+    [ "$w" = "$work" ] && continue
+    f=$("$LVI" -w "$w" -- f 2>/dev/null | sed -n 's/^"\(.*\)" .*/\1/p')
+    case "$f" in "$PIDDIR"/lvi-stage.idx.*) idx=$w; break ;; esac
+  done
+  [ -n "$idx" ] || { echo "lvi-stagediff --stage-range: no index view found (start with 'lvi-stagediff FILE')" >&2; return 1; }
+  "$DIFF" --xfer-range "$idx" "$work" "$l1" "$l2" || return 1
+  reblob "$idx" "$top" "$rp" || return 1
+  "$DIFF" --refresh "$idx" "$work"
+  "$LVI" -w "$work" -- "status stage staged $rp lines $l1-$l2" >/dev/null 2>&1
+}
+
 # --attach: run the (daemonless) diff setup with \p/\o off, then add the two
 # staging hooks: \s on the working pane, and `on write` on the index pane so a :w
 # there reblobs the current index text. Scrollbind, hunk nav, and re-highlight all
@@ -108,10 +159,11 @@ gc_seeds() {
 }
 
 case "$1" in
-  --stage)  shift; stage "$@"; exit $? ;;
+  --stage)       shift; stage "$@"; exit $? ;;
+  --stage-range) shift; stage_range; exit $? ;;   # :L1,L2bg selection (reads $LVI_LINE1/2)
   # --reblob TOP REPOPATH -- the index pane's `on write` hook; IDX = $LVI_WID.
-  --reblob) shift; reblob "$LVI_WID" "$1" "$2"; exit $? ;;
-  --attach) shift; attach "$@"; exit $? ;;
+  --reblob)      shift; reblob "$LVI_WID" "$1" "$2"; exit $? ;;
+  --attach)      shift; attach "$@"; exit $? ;;
 esac
 
 # --- launcher -----------------------------------------------------------------
