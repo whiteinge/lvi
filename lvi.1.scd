@@ -364,11 +364,14 @@ _contrib/lvi-shell.sh_ do).
 	(*lvi-saveas*, and friends) and tags the shell prompt -- *(lvi foo.txt)* --
 	so the parked editor is never forgotten.
 
-*bg* _cmd_
+\[_range_]*bg* _cmd_
 	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the
 	terminal -- so, unlike *!*/*silent !*, no alt-screen flash. For
 	non-interactive tools driven by a map that may fire repeatedly (e.g.
-	*map n :bg lvi-list next<CR>*); a _cmd_ needing the tty must use *!*.
+	*map n :bg lvi-list next<CR>*); a _cmd_ needing the tty must use *!*. A
+	leading address range is resolved and exported as *LVI_LINE1*/*LVI_LINE2*
+	(the non-mutating counterpart to the *!* filter), so a tool can act on a
+	typed line span; without a range both are empty.
 
 *normal* _keys_
 	Feed _keys_ as normal-mode keystrokes -- the escape hatch that gives the

@@ -724,16 +724,21 @@ def("silent sil", function(ed, c)
   return p, s
 end)
 
--- :bg CMD -- run a shell command detached, output discarded, WITHOUT handing
--- over the terminal (unlike :!/:silent !, which drop out of and back into the
--- alt screen -- a full-screen flash that is jarring when a map fires it
+-- :[range]bg CMD -- run a shell command detached, output discarded, WITHOUT
+-- handing over the terminal (unlike :!/:silent !, which drop out of and back
+-- into the alt screen -- a full-screen flash that is jarring when a map fires it
 -- repeatedly, e.g. n/N stepping a list). Same mechanism as :on hooks; the
 -- poll loop stays live, so the command's socket callbacks are serviced at
 -- once. For non-interactive tools only -- a command that needs the tty (a
--- prompt, a pager) must use :! / :silent !.
+-- prompt, a pager) must use :! / :silent !. A leading address range is resolved
+-- (like `:!`'s) and exported as $LVI_LINE1/$LVI_LINE2, so a tool can act on a
+-- user-typed line span -- the non-mutating sibling of the `:[range]!` filter.
 def("bg", function(ed, c)
   if c.args == "" then return "no command", "err" end
-  if ed.spawn_bg then ed.spawn_bg(c.args) end
+  if ed.spawn_bg then
+    if c.a then local from, to = line_range(ed, c.a, c.b); ed.spawn_bg(c.args, nil, from, to)
+    else ed.spawn_bg(c.args) end
+  end
   return "", "ok"
 end)
 

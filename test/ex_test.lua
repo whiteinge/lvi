@@ -674,6 +674,21 @@ describe("ex.dispatch", function()
       expect(got).to.equal("lvi-list next")            -- ran through spawn_bg, not with_tty
       expect(select(2, ex.dispatch(ed, "bg"))).to.equal("err")   -- empty command
     end)
+    it(":[range]bg resolves the address and hands the bounds to spawn_bg", function()
+      -- editor.lua's spawn_bg stamps these into $LVI_LINE1/$LVI_LINE2; that setenv
+      -- lives in the tty/socket path (editor.new), so here we verify ex.lua's half:
+      -- the range it resolves and passes. Stub spawn_bg to capture the args.
+      local ed = ed_with("a\nb\nc\nd\ne"); local args
+      ed.spawn_bg = function(cmd, buf, l1, l2) args = { cmd = cmd, l1 = l1, l2 = l2 } end
+      ex.dispatch(ed, "bg tool")
+      expect(args.l1).to.equal(nil)                     -- no address -> no bounds
+      ex.dispatch(ed, "2,4bg tool")
+      expect(args.l1).to.equal(2); expect(args.l2).to.equal(4)
+      ex.dispatch(ed, "3bg tool")                       -- single address -> L1==L2
+      expect(args.l1).to.equal(3); expect(args.l2).to.equal(3)
+      ed.cy = 5; ex.dispatch(ed, "%bg tool")            -- whole buffer
+      expect(args.l1).to.equal(1); expect(args.l2).to.equal(5)
+    end)
     it("stamps the cursor context into a spawned command's environment", function()
       local sys = require("sys")
       local normal = require("normal")

@@ -479,11 +479,23 @@ function M.run(opts)
     sys.setenv("LVI_COL", ed.cx)
     sys.setenv("LVI_TOP", ed.top)          -- viewport top line, for `on scroll`
     sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
+    -- Range bounds default to empty here (the no-range state every spawn surface
+    -- re-establishes); only a ranged `:bg` overwrites them, right after this runs,
+    -- so a prior ranged spawn can't leak its L1/L2 into a later rangeless child.
+    sys.setenv("LVI_LINE1", "")
+    sys.setenv("LVI_LINE2", "")
   end
   -- Spawn a shell command detached and non-blocking, with its output discarded
   -- (a hook must not write to the tty or block the poll loop). Used to fire
-  -- event hooks; the subshell backgrounds so os.execute returns at once.
-  ed.spawn_bg = function(cmd, buf) ed.export_context(buf); os.execute("(" .. cmd .. ") >/dev/null 2>&1 &") end
+  -- event hooks; the subshell backgrounds so os.execute returns at once. When a
+  -- ranged `:bg` supplies line1/line2, they're exported as $LVI_LINE1/$LVI_LINE2
+  -- so a tool can act on a user-typed line range (the read-only sibling of `:!`);
+  -- absent, the child sees them empty (cleared by export_context above).
+  ed.spawn_bg = function(cmd, buf, line1, line2)
+    ed.export_context(buf)
+    if line1 then sys.setenv("LVI_LINE1", line1); sys.setenv("LVI_LINE2", line2 or line1) end
+    os.execute("(" .. cmd .. ") >/dev/null 2>&1 &")
+  end
   -- Command-backed registers (`:register`): a yank/delete into the register pipes
   -- its text to `write`; a put reads `read`'s stdout. Synchronous and tty-free --
   -- yank/put are discrete actions and a clipboard tool (wl-copy, pbpaste, ...)
