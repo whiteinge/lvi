@@ -990,8 +990,12 @@ local motions = {
 -- doesn't feed this; only the core jump motions do.
 local JUMP_MAX = 100
 
--- Record a jump origin (dedup by line like vim, cap the list, reset to the edge).
-local function jump_record(j, l, c)
+-- Record a position into a rolling {list, idx} store (dedup by line like vim, cap
+-- the list, reset idx to the edge). Shared by the jumplist here and the driver's
+-- changelist (editor.record_change feeds ed.changes through this) -- same shape,
+-- two stores, because jumps and edits answer different questions (see :jumps /
+-- :changes). Exported as M.record_pos.
+local function record_pos(j, l, c)
   for i = #j.list, 1, -1 do
     if j.list[i][1] == l then table.remove(j.list, i) end
   end
@@ -999,6 +1003,7 @@ local function jump_record(j, l, c)
   while #j.list > JUMP_MAX do table.remove(j.list, 1) end
   j.idx = #j.list + 1
 end
+M.record_pos = record_pos
 
 -- Ctrl-O: step to an older position. On the first step from the live edge, the
 -- current position is recorded first (like vim), so Ctrl-I can bring you back.
@@ -1006,7 +1011,7 @@ local function jump_back(ed)
   local j = ed.jumps
   if #j.list == 0 then return end
   if j.idx > #j.list then
-    jump_record(j, ed.cy, ed.cx)  -- save the edge; leaves idx == #list+1
+    record_pos(j, ed.cy, ed.cx)   -- save the edge; leaves idx == #list+1
     j.idx = #j.list               -- ...then step onto the just-saved entry
   end
   if j.idx <= 1 then return end   -- nothing older
@@ -1024,6 +1029,23 @@ local function jump_fwd(ed)
   clamp(ed)
 end
 
+-- g; / g,: walk the changelist (ed.changes, fed by keyboard edits in the driver
+-- -- see editor.record_change). Unlike Ctrl-O, the live position is NOT saved:
+-- the list holds only edit sites, so g; from the edge (idx == #list+1) lands on
+-- the most recent change. idx is a 1-based cursor; g; steps older, g, newer, and
+-- both clamp at the ends (vi beeps; we set a message). Not jump-class -- change
+-- navigation doesn't feed the jumplist.
+local function change_nav(ed, n, older)
+  local ch = ed.changes
+  if #ch.list == 0 then ed.message = "change list is empty"; return end
+  local idx = (older and ch.idx - n) or (ch.idx + n)
+  if idx < 1 then idx = 1; ed.message = "at start of changelist"
+  elseif idx > #ch.list then idx = #ch.list; ed.message = "at end of changelist" end
+  ch.idx = idx
+  ed.cy, ed.cx = ch.list[idx][1], ch.list[idx][2]
+  clamp(ed)
+end
+
 local function do_motion(ed, m, count)
   local oy, ox = ed.cy, ed.cx
   local tl, tc = m.move(ed, count)
@@ -1031,9 +1053,17 @@ local function do_motion(ed, m, count)
   clamp(ed)
   -- Record the origin in the jumplist -- but only if a jump-class motion
   -- actually moved us, so a no-op jump (mistyped [[, % off a bracket, missing
-  -- mark) leaves no stray entry.
+  -- mark) leaves no stray entry. Same event sets the previous-context mark
+  -- (POSIX vi's ` / '), so `` and '' return to where the last jump left from --
+  -- and a second `` toggles back, since this very motion (`{mark} is jump-class)
+  -- reads the old value before we overwrite it. The `\`` and `'` keys index the
+  -- ONE previous-context mark, so both must be set; distinct tables, never a
+  -- shared reference -- the splice hook adjusts each entry in ed.marks once, and
+  -- aliasing would double-shift it.
   if m.jump and (ed.cy ~= oy or ed.cx ~= ox) then
-    jump_record(ed.jumps, oy, ox)
+    record_pos(ed.jumps, oy, ox)
+    ed.marks["`"] = { oy, ox }
+    ed.marks["'"] = { oy, ox }
   end
 end
 
@@ -1883,6 +1913,8 @@ local function command(ed)
     if GCASE[k2] then apply_gcase(ed, k2, count1)
     elseif k2 == b("q") then apply_lines_filter(ed, b("q"), count1, false)
     elseif k2 == b("@") then apply_opfunc(ed, count1)
+    elseif k2 == b(";") then change_nav(ed, count1 or 1, true)   -- g;: older change
+    elseif k2 == b(",") then change_nav(ed, count1 or 1, false)  -- g,: newer change
     else do_motion(ed, { kind = "line", move = function(e, c) return g_motion_move(e, k2, c) end }, count1) end
   elseif motions[k] then
     do_motion(ed, motions[k], count1)

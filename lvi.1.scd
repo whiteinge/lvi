@@ -87,8 +87,11 @@ leading count, e.g. *3dw*.
 *`*_m_ *'*_m_
 	Jump to mark _m_ (exact position / first non-blank of its line). The mark
 	*`.* is set automatically to the position of your last change, so *`.*
-	returns to where you were typing. (*contrib/lvi-pos* adds a cross-session
-	*`"* -- where you last were when the file was closed.)
+	returns to where you were typing. The marks *`* and *'* (as in *``* and
+	*''*) are the previous-context mark, set automatically to where the last
+	jump left from -- so *``* returns there, and a second *``* toggles back.
+	(*contrib/lvi-pos* adds a cross-session *`"* -- where you last were when the
+	file was closed.)
 
 *Ctrl-O* *Ctrl-I*
 	Go to an older / newer position in the jumplist -- a per-buffer rolling
@@ -96,6 +99,14 @@ leading count, e.g. *3dw*.
 	that can move far: *G*, *%*, the mark jumps (*`* *'*), paragraph/section
 	(*{* *}* *[[* *]]*), sentence (*(* *)*), and the screen positions (*H* *M*
 	*L*). Plain moves (*h j k l*, *w*, *f*) are not jumps. *Ctrl-I* is *Tab*.
+	*:jumps* shows it.
+
+*g;* *g,*
+	Go to an older / newer position in the changelist -- a per-buffer rolling
+	record of where your keyboard edits landed (one stop per line, newest
+	last). *g;* from the resting position lands on your most recent change;
+	*g,* walks back toward newer ones. A count repeats (*3g;*). This is the
+	list behind the *`.* mark, which is just its head; *:changes* lists it.
 
 ## Operators and edits
 
@@ -568,7 +579,11 @@ _contrib/lvi-shell.sh_ do).
 	set: lvi has no global or file marks, and even *mA* is buffer-local, so there
 	is no file column. Multi-line output pages like *%p* at the prompt.
 
-*fire* [_event_]
+*jumps*, *changes*
+	List the jumplist (*Ctrl-O* / *Ctrl-I*) or changelist (*g;* / *g,*), oldest
+	first, one line each as _line_ _col_ _text_; a *>* marks the current
+	position (a trailing *>* means it is at the resting edge, not navigating).
+	Both are PER-BUFFER, like *marks*, so each lists the current buffer's.
 	Raise _event_ (default *change*) by hand. Because socket-driven edits never
 	fire *change* (the anti-loop gate above), a tool that edits over the
 	socket -- a formatter, a diff-hunk applier -- leaves *change* consumers

@@ -883,6 +883,28 @@ describe("ex.dispatch", function()
       expect(ex.dispatch(ed, "marks a")).to.equal("a      9    1  only")
     end)
   end)
+
+  describe(":jumps / :changes", function()
+    it("report nothing when the lists are empty", function()
+      local ed = ed_with("a\nb\nc")
+      expect(ex.dispatch(ed, "jumps")).to.equal("no jumps")
+      expect(ex.dispatch(ed, "changes")).to.equal("no changes")
+    end)
+    it("list positions oldest-first with > on the current one", function()
+      local ed = ed_with("first\n  indented\nthird")
+      ed.changes = { list = { { 1, 1 }, { 3, 2 } }, idx = 2 }  -- idx sits on line 3
+      expect(ex.dispatch(ed, "changes")).to.equal(
+        "      1    1  first\n" ..
+        ">     3    2  third")                     -- leading blanks stripped
+    end)
+    it("marks a trailing > when idx is at the resting edge", function()
+      local ed = ed_with("a\nb\nc")
+      ed.jumps = { list = { { 2, 1 } }, idx = 2 }  -- idx == #list+1: not navigating
+      expect(ex.dispatch(ed, "jumps")).to.equal(
+        "      2    1  b\n" ..
+        ">")
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)

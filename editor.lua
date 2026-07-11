@@ -91,6 +91,7 @@ function M.new_ed()
     highlights = {},          -- :hl group -> ranges (transient overlay)
     folds = {},               -- { {s,e,open}, ... } view overlay (see fold.lua)
     jumps = { list = {}, idx = 1 },  -- Ctrl-O/Ctrl-I jumplist
+    changes = { list = {}, idx = 1 },  -- g;/g, changelist (fed by keyboard edits)
 
     -- the buffer list (bufs.init populates)
     buffers = nil, bufidx = nil, altbuf = nil,
@@ -258,6 +259,11 @@ function M.note_keyboard_change(ed, prev_buf, prev_rev)
     ed.change_pending = true
     if ed.buf == prev_buf then
       ed.marks["."] = { ed.cy, ed.cx }
+      -- The `.` mark is the head of the changelist: same edit-attribution point,
+      -- same store shape as the jumplist (dedup by line, so a burst of typing on
+      -- one line collapses to a single g;/g, stop). record_pos resets idx to the
+      -- edge, so the next g; lands on this change.
+      normal.record_pos(ed.changes, ed.cy, ed.cx)
     end
   end
 end
@@ -306,6 +312,7 @@ function M.make_splice_hook(ed)
     end
     for _, m in pairs(ed.marks) do adj(m) end
     for _, p in ipairs(ed.jumps.list) do adj(p) end
+    for _, p in ipairs(ed.changes.list) do adj(p) end
     -- Folds are line ranges; shift both endpoints through the same rule, then
     -- drop any fold the edit collapsed to a single line or inverted (a fold
     -- must span >= 2 lines to hide anything). Undo/redo replay inverse splices,

@@ -1095,6 +1095,28 @@ local function do_marks(ed, args)
 end
 def("marks", function(ed, c) return do_marks(ed, c.args) end)
 
+-- :jumps / :changes (Vim's) -- list a per-buffer position store ({list, idx}),
+-- oldest first, one line each as "line col text" (col is a 1-based byte column,
+-- as :pos/:marks report). A ">" flags the current position -- the entry idx sits
+-- on, or a trailing ">" when idx is at the live edge (idx == #list+1, not
+-- navigating). Both stores are per-buffer (bufs swaps them with the view state),
+-- so each lists the current buffer's. The jumplist is fed by jump-class motions
+-- (Ctrl-O/Ctrl-I walk it); the changelist by keyboard edits (g;/g, walk it, and
+-- the `.` mark is its head). Multi-line output pages like :%p at the prompt.
+local function do_poslist(ed, store, empty)
+  if #store.list == 0 then return empty, "ok" end
+  local rows = {}
+  for i, p in ipairs(store.list) do
+    local mark = (i == store.idx) and ">" or " "
+    local text = (ed.buf:line(clampline(ed, p[1])) or ""):gsub("^%s+", "")
+    rows[#rows + 1] = ("%s %5d %4d  %s"):format(mark, p[1], p[2], text)
+  end
+  if store.idx > #store.list then rows[#rows + 1] = ">" end  -- at the edge
+  return table.concat(rows, "\n"), "ok"
+end
+def("jumps", function(ed) return do_poslist(ed, ed.jumps, "no jumps") end)
+def("changes", function(ed) return do_poslist(ed, ed.changes, "no changes") end)
+
 -- :fire [EVENT] -- raise an event by hand (default: change). The change
 -- hooks are deliberately armed only by keyboard edits (the anti-loop gate,
 -- see :on above), which leaves a tool that edits over the socket -- a

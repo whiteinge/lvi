@@ -129,6 +129,58 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("jumplist (Ctrl-O / Ctrl-I) and previous-context mark", function()
+    it("`` returns to where the last jump left from, and toggles", function()
+      local ed = make("a\nb\nc\nd\ne")
+      feed(ed, "G"); expect(ed.cy).to.equal(5)    -- jump from line 1 to line 5
+      feed(ed, "``"); expect(ed.cy).to.equal(1)   -- back to the pre-jump spot
+      feed(ed, "``"); expect(ed.cy).to.equal(5)   -- a second `` toggles forward
+    end)
+    it("'' jumps to the previous-context line", function()
+      local ed = make("a\nb\nc\nd\ne")
+      feed(ed, "3G"); feed(ed, "G")               -- context becomes line 3
+      feed(ed, "''"); expect(ed.cy).to.equal(3)
+    end)
+    it("Ctrl-O steps to older jump origins, Ctrl-I back toward newer", function()
+      local ed = make("a\nb\nc\nd\ne")
+      feed(ed, "3G")                              -- origin line 1 recorded
+      feed(ed, "G")                               -- origin line 3 recorded, at 5
+      feed(ed, "\15"); expect(ed.cy).to.equal(3)  -- Ctrl-O: newest origin
+      feed(ed, "\15"); expect(ed.cy).to.equal(1)  -- older
+      feed(ed, "\9");  expect(ed.cy).to.equal(3)  -- Ctrl-I / Tab: back toward newer
+    end)
+  end)
+
+  describe("changelist (g; / g,)", function()
+    -- The changelist is fed in the driver's note_keyboard_change (keyboard edits
+    -- only), so simulate one keyboard pump per edit, as the poll loop does.
+    local function kbd(ed, s)
+      local pb, pr = ed.buf, ed.buf.rev
+      feed(ed, s)
+      editor.note_keyboard_change(ed, pb, pr)
+    end
+    it("g; walks to older edits, g, back to newer, clamping at the ends", function()
+      local ed = make("one\ntwo\nthree\nfour")
+      kbd(ed, "1GixA\27")                         -- edit line 1
+      kbd(ed, "3GixB\27")                         -- edit line 3
+      kbd(ed, "2GixC\27")                         -- edit line 2 (most recent)
+      feed(ed, "g;"); expect(ed.cy).to.equal(2)   -- most recent change
+      feed(ed, "g;"); expect(ed.cy).to.equal(3)
+      feed(ed, "g;"); expect(ed.cy).to.equal(1)   -- oldest
+      feed(ed, "g;"); expect(ed.cy).to.equal(1)   -- clamps at the oldest
+      feed(ed, "g,"); expect(ed.cy).to.equal(3)   -- back toward newer
+    end)
+    it("honors a count, collapses same-line edits, and heads the `. mark", function()
+      local ed = make("one\ntwo\nthree\nfour")
+      kbd(ed, "1GixA\27")
+      kbd(ed, "1GAyy\27")                         -- second edit on line 1: dedups
+      kbd(ed, "4GixD\27")
+      expect(#ed.changes.list).to.equal(2)        -- line 1 collapsed to one stop
+      expect(ed.marks["."][1]).to.equal(4)        -- `. is the most recent edit
+      feed(ed, "2g;"); expect(ed.cy).to.equal(1)  -- two older -> the line-1 edit
+    end)
+  end)
+
   describe("UTF-8", function()
     local E = "\195\169" -- 'é', 2 bytes, 1 cell
     it("h and l move by character across multibyte", function()

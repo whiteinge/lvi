@@ -13,11 +13,12 @@ local M = {}
 
 -- Per-buffer view state (everything else -- text, path, modified, undo -- lives
 -- in the buffer object; the rest of ed is shared across buffers).
-local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "folds", "jumps" }
+local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "folds", "jumps", "changes" }
 
 local function fresh(buf)
   return { buf = buf, cx = 1, cy = 1, top = 1, topsub = 0, leftcol = 0,
-           marks = {}, highlights = {}, folds = {}, jumps = { list = {}, idx = 1 } }
+           marks = {}, highlights = {}, folds = {}, jumps = { list = {}, idx = 1 },
+           changes = { list = {}, idx = 1 } }
 end
 
 local function save(ed)
@@ -42,7 +43,7 @@ local function load(ed, i)
   local rec = ed.buffers[i]
   ed.buf = rec.buf
   -- The current buffer reports its splices so the editor can shift this view's
-  -- marks/jumps (editor.make_splice_hook; absent in headless/unit contexts).
+  -- marks/jumps/changelist (editor.make_splice_hook; absent in headless/unit).
   ed.buf.on_splice = ed.splice_hook
   for _, k in ipairs(VIEW) do ed[k] = rec[k] end
   -- bufenter fires after the entered buffer is current, so the hook (a list
