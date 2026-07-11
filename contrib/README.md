@@ -95,7 +95,10 @@ register to external commands: a yank or delete pipes the text out through
 clipboard is the idiom — `register + read wl-paste write wl-copy` (or
 `pbcopy`/`pbpaste`, `xclip`, a `tmux` buffer) — so `"+y` copies and `"+p`
 pastes. This is core config, not a script; [`lvirc.sample`](lvirc.sample) has
-the per-platform lines.
+the per-platform lines. Backing the **unnamed** register (`register "" write
+CMD` — doubled, since a lone `"` in the rc is a comment) is special: since `"`
+mirrors every yank and delete, its *write* is the one point they all flow
+through, so a history tool needs no key remapping. `lvi-yankring` is built on it.
 
 **The highlighter contract**: `lvi-highlight` is a backend-agnostic harness;
 a backend is one adapter, `lvi-hl-<name>`, with a single contract: **buffer
@@ -351,6 +354,24 @@ change as you type, so `` `. `` returns to the last edit within a session. (A
 hook can't set that mark safely — `on change` can fire mid-insert, where
 the keystrokes would land as text — so the core stamps it directly;
 the tool owns only the cross-session `` `" ``.)
+
+### `lvi-yankring` — cycle through yank/delete history at paste time
+
+vim's YankRing / yanky.nvim: every yank and delete is remembered, and after a
+paste you walk that paste back through older entries instead of hunting for the
+right numbered register. The numbered delete registers (`"1`–`"9`) live in the
+core and stay addressable; this is the *ergonomic* on top, where you never type
+a register name — you paste, then cycle.
+
+No core support beyond one seam: backing the unnamed register's *write* (see
+above) hands the script every yank and delete, so it needs no key remapping to
+capture. A second register (`~`) is `read`-backed with the ring's current entry,
+and each cycle key is one `:bg` map that steps the cursor and sends `u"~p` (undo
+the paste, put the stepped entry), replacing the pasted text in place. `\p`/`\P`
+walk older/newer, `\y` picks any entry through `$LVI_PICKER`. The ring is
+per-view beside the socket (point `LVI_YANKRING_DIR` at a shared path to carry
+one across views); it rides the unnamed register, so it replaces neither the
+numbered registers nor the `+` clipboard.
 
 ### `lvi-mirror` — live-share a buffer across panes
 

@@ -111,6 +111,25 @@ register + read wl-paste write wl-copy              " Wayland (wl-clipboard)
 " a command-backed register also shows its read/write spec. Map it for a glance:
 map \r :registers<CR>
 
+" ---- yank ring (YankRing / yanky.nvim-style history) -------------------------
+" Backing the UNNAMED register's write fires on every yank and delete, so it is
+" the one capture point a history tool hangs off. lvi-yankring keeps a per-view
+" ring of them; you paste normally, then walk the paste back through older
+" entries. Register ~ (a name you will not yank into) reads the ring's current
+" entry, and the cycle keys undo the paste and re-put the next one. (`""` is the
+" unnamed register spelled comment-safely -- a lone `"` here would be a comment.)
+" Both register lines are required: `""` write feeds the ring; `~` read is what
+" p-cycling and pick put through. The maps below do nothing without both.
+register "" write lvi-yankring push
+register ~ read lvi-yankring get
+" Press these RIGHT AFTER a p/P -- the undo assumes the last change was a paste:
+map \p :bg lvi-yankring cycle prev<CR>     " ...replace it with the older entry
+map \P :bg lvi-yankring cycle next<CR>     " ...or the newer one
+map \y :silent !lvi-yankring pick<CR>      " or pick any entry through $LVI_PICKER
+" The ring rides the unnamed register, so it sits alongside the numbered delete
+" registers ("1.."9, "-) and the "+ clipboard above -- it replaces neither. Point
+" LVI_YANKRING_DIR at a shared path to carry one ring across views.
+
 " ---- tags -------------------------------------------------------------------
 " lvi-tags lists this file's ctags tags in file order through your picker and
 " jumps to the one you choose -- a jump-to-symbol and a file outline in one key.

@@ -1,0 +1,155 @@
+#!/bin/sh
+# lvi-yankring [-w auto|WID] push | get | cycle prev|next | pick | list | clear
+#
+# A yank/delete history you cycle through at paste time -- vim's YankRing /
+# yanky.nvim, built from the pieces lvi already has: a register backend for
+# capture, a read-backed register for the entry to paste, and one map that
+# undoes a paste and re-puts the next entry. lvi grows no ring; this script owns
+# it, driven entirely by the socket and a couple of files.
+#
+# THE MODEL. Backing the unnamed register's `write` (`register " write
+# lvi-yankring push`) fires on EVERY yank and delete -- the single chokepoint
+# they all flow through -- so `push` sees them all with no key remapping and no
+# per-operator wiring. You paste normally with `p`/`P` (the most-recent entry,
+# straight from the unnamed register). Then a cycle key walks that paste back
+# through older entries: it steps our cursor and sends `u"~p` -- undo the paste,
+# put the now-current ring entry -- so each press replaces the pasted text with
+# the next one down. A picker (`pick`) jumps to any entry directly.
+#
+#   push          stdin -> a new ring entry (register `write` backend). Dedups a
+#                 consecutive repeat; resets the cycle cursor to the newest.
+#   get           the current cursor entry -> stdout (register `read` backend).
+#   cycle prev    step older / newer, then send `u"~p` (put over the socket).
+#   cycle next    Press RIGHT AFTER a paste -- the `u` assumes the last change
+#                 was that paste (the paste-then-cycle contract, as in YankRing).
+#   pick          fzf over the ring (newest first, first line shown); paste the
+#                 choice at the cursor (no undo -- a fresh paste, not a cycle).
+#   list          the ring as `index<TAB>first-line`, newest first (debug/peek).
+#   clear         forget the whole ring.
+#
+# STORAGE is a directory of one-file-per-entry (no encoding: an entry is raw
+# bytes, newlines and all, in its own file), per view beside the socket so it
+# dies with the view -- YankRing's per-instance history, not a persistent store.
+# Files are named by a monotonic counter (`.seq`), higher = newer, so order is
+# arithmetic: no `ls`/`sort`, and `push` (which runs SYNCHRONOUSLY on the yank
+# keystroke, like a clipboard copy) is a handful of syscalls -- write one file,
+# drop the one that fell past the cap, reset the cursor.
+#   $LVI_SOCK.yankring/<n>     entry n (raw text)         (per view)
+#   $LVI_SOCK.yankring/.seq    last counter (newest = .seq)
+#   $LVI_SOCK.yankring/.cur    the cycle cursor (0 = newest)
+# The directory hangs off $LVI_SOCK, so socket discovery (which filters `[ -S ]`)
+# skips it. LVI_YANKRING_DIR relocates it -- point several views at one path for
+# a shared ring (the cursor rides along, so they share the cycle position too).
+#
+# SPAWN DISCIPLINE. `push`/`get` are register backends: lvi runs them inline
+# (yank/put are synchronous) with $LVI_* exported, so they only touch files --
+# no socket call, nothing to deadlock. `cycle` is bound with `:bg` (detached,
+# loop stays live, no alt-screen flash): it updates the cursor file, THEN sends
+# `u"~p` with --detach, so the file write happens-before the put and `get` reads
+# the stepped cursor. `pick` needs the picker's tty (`:silent !`, loop frozen),
+# so its socket put is --detach too, landing when lvi resumes.
+#
+# FIDELITY. The `write` backend gets only text, not the linewise flag, so `get`
+# is read back the way the clipboard is: text with a newline pastes linewise,
+# without one charwise. A linewise yank round-trips; a charwise multi-line yank
+# comes back linewise. Same tradeoff `"+` already makes.
+#
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
+# LVI_YANKRING_MAX (entries kept, default 50), LVI_YANKRING_REG (the read-backed
+# register the maps put from, default `~` -- a name you will not yank into),
+# LVI_YANKRING_DIR (store path; default beside the socket).
+# See lvirc.sample for the register lines and key maps.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+MAX=${LVI_YANKRING_MAX:-50}
+REG=${LVI_YANKRING_REG:-'~'}
+
+die()   { echo "lvi-yankring: $*" >&2; exit 1; }
+usage() { echo "usage: lvi-yankring [-w auto|WID] push|get|cycle prev|next|pick|list|clear" >&2; exit 2; }
+
+# ---- resolve the target view + its ring directory ---------------------------
+want_wid=
+[ "${1:-}" = "-w" ] && { want_wid=${2:-}; shift 2; }
+sub=${1:-}; [ -n "$sub" ] || usage; shift
+
+target=${want_wid:-${LVI_WID:-auto}}            # what we hand to `lvi -w`
+if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK                                # inside lvi: trust the exported socket
+elif [ "$target" = auto ]; then
+  n=$($LVI -l | grep -c .)
+  [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+  sock=$($LVI -l | cut -f2)
+else
+  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || die "no running view '$target'"
+fi
+dir=${LVI_YANKRING_DIR:-$sock.yankring}
+
+send()   { $LVI -w "$target" --detach -- "$@"; }               # fire-and-forget (see header)
+getseq() { s=$(cat "$dir/.seq" 2>/dev/null); case $s in ''|*[!0-9]*) echo 0;; *) echo "$s";; esac; }
+getcur() { c=$(cat "$dir/.cur" 2>/dev/null); case $c in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
+setcur() { mkdir -p "$dir" 2>/dev/null; printf '%s\n' "$1" > "$dir/.cur"; }
+count()  { s=$(getseq); [ "$s" -gt "$MAX" ] && echo "$MAX" || echo "$s"; }  # entries kept = min(seq, MAX)
+
+case "$sub" in
+  push)
+    # Synchronous on the yank keystroke -- keep it to files. New text becomes the
+    # newest entry (counter+1); a consecutive duplicate is dropped so holding a
+    # paste-and-yank rhythm doesn't flood the ring. Either way the cursor resets
+    # to the newest, so the next cycle starts one below what `p` just pasted.
+    mkdir -p "$dir" 2>/dev/null || exit 0
+    tmp=$(mktemp "$dir/.push.XXXXXX") || exit 0            # dot-prefixed: not an entry file
+    trap 'rm -f "$tmp"' EXIT INT TERM
+    cat > "$tmp"
+    [ -s "$tmp" ] || { setcur 0; exit 0; }                # empty (e.g. a no-op delete): nothing to keep
+    seq=$(getseq)
+    if [ "$seq" -gt 0 ] && cmp -s "$tmp" "$dir/$seq"; then setcur 0; exit 0; fi  # dedup vs newest
+    n=$((seq + 1))
+    mv "$tmp" "$dir/$n" && printf '%s\n' "$n" > "$dir/.seq"
+    rm -f "$dir/$((n - MAX))"                              # drop the one that fell past the cap
+    setcur 0 ;;
+
+  get)
+    seq=$(getseq); [ "$seq" -gt 0 ] || exit 0
+    total=$(count); c=$(getcur)
+    [ "$c" -lt 0 ] && c=0; [ "$c" -ge "$total" ] && c=$((total - 1))
+    n=$((seq - c))
+    [ -f "$dir/$n" ] && cat "$dir/$n" ;;                  # missing (hand-deleted) -> empty -> put no-op
+
+  cycle)
+    total=$(count); [ "$total" -gt 0 ] || exit 0
+    seq=$(getseq); c=$(getcur)
+    case "${1:-}" in
+      prev) c=$((c + 1)) ;;                               # older
+      next) c=$((c - 1)) ;;                               # newer
+      *)    die "cycle needs prev|next" ;;
+    esac
+    [ "$c" -lt 0 ] && c=0; [ "$c" -ge "$total" ] && c=$((total - 1))
+    setcur "$c"
+    send "normal u\"${REG}p" ;;                           # undo the paste, put the stepped entry
+
+  pick)
+    total=$(count); [ "$total" -gt 0 ] || die "yankring empty"
+    seq=$(getseq)
+    sel=$(i=0; while [ "$i" -lt "$total" ]; do
+            printf '%d\t%s\n' "$i" "$(head -n1 "$dir/$((seq - i))" 2>/dev/null)"; i=$((i + 1))
+          done | "$PICKER" --with-nth=2.. --delimiter='	') || exit 0
+    i=$(printf '%s' "$sel" | cut -f1)
+    case "$i" in ''|*[!0-9]*) exit 0 ;; esac
+    setcur "$i"
+    send "normal \"${REG}p" ;;                            # fresh paste of the chosen entry (no undo)
+
+  list)
+    total=$(count); seq=$(getseq); i=0
+    while [ "$i" -lt "$total" ]; do
+      printf '%d\t%s\n' "$i" "$(head -n1 "$dir/$((seq - i))" 2>/dev/null)"; i=$((i + 1))
+    done ;;
+
+  clear) rm -rf "$dir" ;;
+
+  *) usage ;;
+esac

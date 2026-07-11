@@ -183,7 +183,9 @@ yank or delete into it pipes the text out and a put reads fresh in. Backing *+*
 with the system clipboard tools is the idiom, so *"+y* copies and *"+p* pastes.
 Backing the unnamed register (") instead fires its *write* on every yank and
 delete, since ") mirrors them all, giving an external history or clipboard tool
-one capture point to hang off without remapping keys.
+one capture point to hang off without remapping keys. In an rc file name it *""*
+(doubled): a lone *"* there begins a comment, so *register "" write* _cmd_ backs
+it without being truncated. *contrib/lvi-yankring* is built on exactly this.
 
 *registers* (*reg*) lists every register and its contents (map it for a quick
 glance, e.g. *map \\r :registers<CR>*).

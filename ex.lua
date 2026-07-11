@@ -982,10 +982,14 @@ end)
 -- the other keyword or end of line, so a `read`/`write` command may hold spaces
 -- and pipes but not the literal other keyword as a bare word (no real clipboard
 -- tool does). Any register name works; `+` is only the conventional clipboard
--- one. lvi never spawns these itself -- yank/put do, synchronously.
+-- one, and `""` is the unnamed register -- doubled because a lone `"` in an rc
+-- file is a comment (see config.lua), so `register " ...` there would truncate;
+-- `register "" write CMD` backs it comment-safely (both surfaces accept it).
+-- lvi never spawns these itself -- yank/put do, synchronously.
 def("register", function(ed, c)
   local name, rest = c.args:match("^(%S+)%s*(.-)%s*$")
   if not name then return "usage: register NAME [read CMD] [write CMD]", "err" end
+  if name == '""' then name = '"' end            -- rc-safe spelling of the unnamed register
   if #name ~= 1 then return "register: NAME must be a single character", "err" end
   if rest == "" then ed.reg_backends[name] = nil; return "", "ok" end
   local rd, wr
