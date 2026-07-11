@@ -277,7 +277,13 @@ def add_span(spans, g, line, c1, c2):
 
 
 def main():
-    text = sys.stdin.read()
+    # Read raw bytes and decode with surrogateescape, not strict UTF-8: a buffer
+    # can hold a stray non-UTF-8 byte (a latin-1 char in a diff, a binary blob),
+    # and a plain sys.stdin.read() would raise UnicodeDecodeError and kill every
+    # span. surrogateescape maps each undecodable byte to a lone surrogate that
+    # re-encodes to the *same* byte, so the byte-column math below stays exact
+    # (unlike errors="replace", whose U+FFFD is 3 bytes and would shift offsets).
+    text = sys.stdin.buffer.read().decode("utf-8", "surrogateescape")
     fname = sys.argv[1] if len(sys.argv) > 1 else ""
     lang = sys.argv[2] if len(sys.argv) > 2 else ""
     spans = {g: [] for g in GROUPS}
@@ -289,7 +295,7 @@ def main():
             g = group_for(ttype)
             parts = value.split("\n")
             for k, part in enumerate(parts):
-                nb = len(part.encode("utf-8"))
+                nb = len(part.encode("utf-8", "surrogateescape"))
                 if g is not None and nb > 0:
                     add_span(spans, g, line, col, col + nb - 1)
                 if k < len(parts) - 1:  # a newline followed this part
