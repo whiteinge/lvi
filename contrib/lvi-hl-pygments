@@ -187,6 +187,13 @@ def emit_theme():
 SHEBANG_ALIAS = {"node": "javascript", "nodejs": "javascript",
                  "tclsh": "tcl", "wish": "tcl"}
 
+# Extension-less git message files -> the closest Pygments lexer. There is no
+# git-commit lexer, so `diff` is the pragmatic pick: it correctly colors the
+# embedded diff of a `git commit -v` buffer and leaves the subject/body/`#`
+# comment lines plain, so it never mis-paints the prose message.
+FILENAME_MAP = {"COMMIT_EDITMSG": "diff", "MERGE_MSG": "diff",
+                "TAG_EDITMSG": "diff"}
+
 
 def lexer_from_shebang(text):
     # A shebang explicitly declares the interpreter, so mapping it to a lexer is
@@ -226,6 +233,12 @@ def pick_lexer(text, fname, lang=""):
         except ClassNotFound:
             pass                    # unknown name: fall back to filename
     if fname:
+        mapped = FILENAME_MAP.get(os.path.basename(fname))
+        if mapped:
+            try:
+                return get_lexer_by_name(mapped)
+            except ClassNotFound:
+                pass
         try:
             return get_lexer_for_filename(fname)
         except ClassNotFound:
