@@ -68,35 +68,64 @@ function M.tmp()
   return ("%s/tmp.%d.%d"):format(M.dir(), sys.getpid(), tmp_n)
 end
 
--- Discover existing view sockets. Uses a POSIX shell glob with only builtins
--- (for / [ / printf) so there is no dependency on `ls` (which the user may have
--- shadowed on PATH) and no divergent struct dirent in our tree. Returns a list
--- of { wid = ..., path = ... } for the LIVE views only.
+-- Reap a view's sidecar files: everything sharing its socket-path prefix. Core's
+-- own per-view litter (sockpath.buf, sockpath.stamp.N) lives there, and contrib
+-- tools park their per-view state at $LVI_SOCK.<suffix> by convention (lvi-list's
+-- .lists/ + .focus, lvi-spell's .spell, lvi-fmt's .last, ...). None of it is
+-- reaped by unlinking the socket alone, so once the socket goes those siblings
+-- are orphaned forever -- hence this sweep, run both on clean exit (editor
+-- cleanup) and lazily when list_sockets() reaps a dead socket, mirroring how the
+-- socket itself is handled. Both files and directories go, so rm -rf, not unlink.
+-- The bare socket path (no dot) is NOT matched, so callers unlink it separately.
+-- The prefix is quoted as one word with an unquoted ".*" so a base dir with
+-- spaces is safe; a no-match leaves the literal glob, which -f silently ignores.
+function M.reap_sidecars(sockpath)
+  os.execute(("rm -rf -- %s.* 2>/dev/null"):format(sys.shq(sockpath)))
+end
+
+-- Discover live view sockets and GC dead ones. Globs EVERY entry in the per-uid
+-- dir (not just sockets) with a builtins-only shell loop -- no dependency on `ls`
+-- (which the user may have shadowed on PATH) and no divergent struct dirent in
+-- our tree. Returns { wid = ..., path = ... } for the LIVE views only.
 --
--- Each candidate is liveness-probed by try-connect -- the same test sys.listen
--- uses, and for the same reason: a crashed view leaves its socket file behind,
--- and errno is not portable, so "does someone answer?" is the reliable signal.
--- A socket nothing answers on is stale garbage, so we reap it (unlink) as we go.
--- This is race-free against a starting view: connect only fails when no one is
--- listening, and a view mid-bind has no file yet (or will unlink+rebind its own
--- stale path anyway). Both callers -- `-l` and `auto` resolution -- want live
--- views, so the filtering lives here rather than being duplicated in each.
+-- Liveness is decided by try-connect -- the same test sys.listen uses, and for
+-- the same reason: a crashed view leaves its socket file behind, and errno is not
+-- portable, so "does someone answer?" is the reliable signal. Connect succeeds
+-- only on a live listener, and it is race-free against a starting view (connect
+-- fails only when no one is listening, and a view mid-bind has no file yet or
+-- rebinds its own stale path). A wid whose socket answers is live and protects
+-- its whole `<wid>.*` sidecar namespace; every other numeric wid is dead, so its
+-- stale socket and all sidecars are reaped (see reap_sidecars). Reaping by wid
+-- namespace -- not just beside a dead socket we happen to probe -- is what clears
+-- the orphans a view leaves when its socket was already reaped in a prior run.
+-- Only numeric wids (pids) are GC'd, so path.tmp()'s `tmp.<pid>.<n>` files (a
+-- different, caller-managed namespace) are left untouched. Both callers -- `-l`
+-- and `auto` resolution -- want live views, so the filtering lives here.
 function M.list_sockets()
-  local cmd = ('for f in "%s"/*; do [ -S "$f" ] && printf "%%s\\n" "$f"; done')
-              :format(M.socket_dir())
+  local dir = M.socket_dir()
+  local cmd = ('for f in "%s"/*; do [ -e "$f" ] && printf "%%s\\n" "$f"; done')
+              :format(dir)
   local p = io.popen(cmd)
   if not p then return {} end
-  local paths = {}
-  for line in p:lines() do paths[#paths + 1] = line end -- drain before probing
+  local entries = {}
+  for line in p:lines() do entries[#entries + 1] = line end -- drain before probing
   p:close()
-  local out = {}
-  for _, sock in ipairs(paths) do
-    local fd = sys.connect(sock)                   -- liveness probe (try-connect)
+  local out, live_wid, dead_wid = {}, {}, {}
+  for _, f in ipairs(entries) do
+    local wid = f:match("([^/]+)$"):match("^([^.]*)")  -- basename up to first dot
+    local fd = sys.connect(f)                          -- liveness probe (try-connect)
     if fd then
-      sys.close(fd)                                -- alive: keep it
-      out[#out + 1] = { wid = sock:match("([^/]+)$"), path = sock }
-    else
-      sys.unlink(sock)                             -- dead: reap the stale socket
+      sys.close(fd)                                    -- alive: a live socket
+      live_wid[wid] = true
+      out[#out + 1] = { wid = wid, path = f }
+    elseif wid:match("^%d+$") then
+      dead_wid[wid] = true                             -- a view wid, socket not answering
+    end
+  end
+  for wid in pairs(dead_wid) do
+    if not live_wid[wid] then                          -- guard: a sibling socket may be live
+      sys.unlink(dir .. "/" .. wid)                    -- the stale socket, if this wid had one
+      M.reap_sidecars(dir .. "/" .. wid)               -- ...and its orphaned sidecars
     end
   end
   return out

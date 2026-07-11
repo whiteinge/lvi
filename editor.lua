@@ -738,10 +738,11 @@ function M.run(opts)
     for fd in pairs(conns) do sys.close(fd) end
     sys.close(lfd)
     sys.unlink(ed.sock_path)
-    os.remove(ed.buffer_scratch)                 -- reap the :wbuf snapshot, if any
-    for _, rec in ipairs(ed.buffers) do          -- reap the conflict stamps
-      if rec.buf._stamp then os.remove(rec.buf._stamp) end
-    end
+    -- Sweep the whole $LVI_SOCK.* namespace in one shot: our own .buf snapshot
+    -- and .stamp.N conflict stamps, plus any contrib per-view sidecars parked
+    -- there (see path.reap_sidecars). On the crash path this runs before
+    -- preserve(), which writes .recover.N afterward, so recovery files survive.
+    path.reap_sidecars(ed.sock_path)
     if tty then sys.write(1, term.show .. term.alt_off) end
     if saved ~= nil then sys.restore(saved) end
   end

@@ -145,8 +145,9 @@ function M.unlink(path) return C.unlink(path) == 0 end
 --- it falls back to a shared /tmp.
 function M.mkdir(path, mode) return C.mkdir(path, mode or 0x1c0) == 0 end -- 0700
 
--- Shell-quote one word for the /bin/sh one-liners below.
+-- Shell-quote one word for the /bin/sh one-liners below (and path.lua's reap).
 local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
+M.shq = shq
 
 --- Mirror src's mtime onto dst, creating dst (`touch -r`, POSIX). The mtime
 --- primitive without stat(2), whose struct is as platform-divergent as termios
