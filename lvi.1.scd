@@ -181,6 +181,9 @@ Naming a register (*"a*) leaves both untouched, and yanks never touch them.
 A register may instead be backed by shell commands with *register* (below): a
 yank or delete into it pipes the text out and a put reads fresh in. Backing *+*
 with the system clipboard tools is the idiom, so *"+y* copies and *"+p* pastes.
+Backing the unnamed register (") instead fires its *write* on every yank and
+delete, since ") mirrors them all, giving an external history or clipboard tool
+one capture point to hang off without remapping keys.
 
 *registers* (*reg*) lists every register and its contents (map it for a quick
 glance, e.g. *map \\r :registers<CR>*).

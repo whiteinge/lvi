@@ -37,20 +37,29 @@ function M.record_history(ed, cmd)
   if #h > CMDHIST_MAX then table.remove(h, 1) end
 end
 
+-- Pipe register text to a backend's `write` command (the clipboard seam) when
+-- the register NAME is command-backed (:register) and we can shell out (absent
+-- headless). No-op otherwise.
+local function reg_pipe(ed, name, text)
+  local be = ed.reg_backends[name]
+  if be and be.write and ed.reg_write then ed.reg_write(be.write, text) end
+end
+
 -- Write a register value. A register is { text, linewise }. `name` (nil = the
 -- unnamed register only) sets the named register; the unnamed '"' ALWAYS
--- mirrors the last yank/delete. A command-backed named register (:register)
--- also pipes its text to `write` (the clipboard seam). Shared by the ex line
--- commands (:d) and normal.lua's operators so a yank/delete means the same
+-- mirrors the last yank/delete. A command-backed register (:register) also
+-- pipes its text to `write` -- for the NAMED target, and, because '"' mirrors
+-- every yank/delete, for '"' as well (guarded so an explicit '"' target does
+-- not double-fire). Backing '"' is thus the single capture point every
+-- yank/delete flows through -- the seam a history tool (lvi-yankring) uses --
+-- while an un-backed '"' (the default) shells out nowhere. Shared by the ex
+-- line commands (:d) and normal.lua's operators so a yank/delete means the same
 -- thing on every surface -- normal.lua binds its `set_reg` to this.
 function M.set_reg(ed, name, text, linewise)
   local r = { text = text, linewise = linewise }
-  if name then
-    ed.regs[name] = r
-    local be = ed.reg_backends[name]
-    if be and be.write and ed.reg_write then ed.reg_write(be.write, text) end
-  end
+  if name then ed.regs[name] = r; reg_pipe(ed, name, text) end
   ed.regs['"'] = r
+  if name ~= '"' then reg_pipe(ed, '"', text) end
 end
 
 -- Record a DELETE or CHANGE, adding vi's numbered/small-delete bookkeeping on
