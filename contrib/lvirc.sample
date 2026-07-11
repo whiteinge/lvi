@@ -181,6 +181,22 @@ map \= :bg lvi-fmt<CR>
 " letter, and bullet markers; nested lists nest). Then gqip/gqq reflow lists too:
 "   set fmtprg=lvi-reflow -w 79
 
+" ---- filetype settings (vim's ftplugin) --------------------------------------
+" The per-file-type fmtprg above, generalized. lvi-ftype reads $LVI_FILE on every
+" buffer entry and sets sw/et/fmtprg/... from the name: Python at sw=4 with `ruff
+" format`, shell at sw=2 with shfmt. It ships as a TEMPLATE -- copy it to your
+" config dir, edit its CONFIGURE table, and point the hook at your copy (on takes
+" a shell line, so an absolute path works and the name is free):
+"   on bufenter ~/.config/lvi/lvi-ftype
+" With lvi-detect-indent on your PATH it also matches the file's actual indent (a
+" 2-space file over a 4-space default); without it, indent keys off the name.
+" It owns fmtprg -- set your global gq default in the script's default_fmt, since
+" a bare `set fmtprg=...` in the rc no longer sticks once the hook re-projects it.
+" Options are view-global, not per-buffer, so the table is re-applied on every
+" switch and a manual :set lasts only until you switch away. Use one such hook,
+" not several: two would race.
+on bufenter lvi-ftype
+
 " ---- position memory (viminfo's `") ------------------------------------------
 " lvi-pos remembers where you were in each file across sessions, in a plain-text
 " store under $XDG_STATE_HOME (LVI_POS_FILE to move it). `save` records the spot;

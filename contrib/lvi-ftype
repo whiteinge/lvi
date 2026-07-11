@@ -1,0 +1,124 @@
+#!/bin/sh
+# lvi-ftype -- per-filetype options (sw, et, fmtprg, ...) on buffer entry.
+#
+# vim's ftplugin, re-cut for lvi: on entering a buffer, look at its name and push
+# the right options over the socket. No filetype-detection engine and no
+# per-buffer option store -- two `case`s and a few `set`s. Wire it as a bufenter
+# hook, which fires for the starting buffer and on every :e / switch:
+#
+#     on bufenter lvi-ftype
+#
+# THIS SHIPS AS A TEMPLATE -- editing it is the point. Options are personal, so
+# copy it into your config dir, edit the CONFIGURE table, and aim the hook at
+# your copy. `on CMD` is a shell line, so an absolute path needs no $PATH setup
+# and the name is free:
+#
+#     on bufenter ~/.config/lvi/lvi-ftype
+#
+# Two stages keep it maintainable. CLASSIFY maps a name (or, for the
+# extensionless, a shebang) to a filetype word; CONFIGURE maps that word to
+# options. So a filetype's settings live in ONE place -- the extension list and
+# the shebang list are just two detectors feeding the same word, and `file`(1)
+# or another detector would slot in beside them. The CONFIGURE table is what you
+# tweak.
+#
+# Use ONE such hook, not several stacked. Options are view-global, not
+# per-buffer, so each rule is a TOTAL projection: it sets everything it cares
+# about and the `*)` arm resets the rest, re-applied on every switch so no buffer
+# inherits the last one's settings. Corollary, by design: a manual `:set sw=2`
+# lasts only until the next switch, when the table re-projects over it. There is
+# no per-buffer "the user touched this" bit to preserve it -- for a lasting
+# change, edit the table.
+#
+# Optionally, lvi-detect-indent reads the file's actual indentation and overrides
+# the table's et/sw, so editing a 2-space file does not fight it with a 4-space
+# default (content beats name; an inconclusive or absent detector leaves the
+# table's value). It is one line below -- comment it out to key indent off the
+# name alone, or drop lvi-detect-indent on your PATH to enable it.
+#
+# fmtprg is the payoff: per-language `gq` / `:fmt` formatters. It (and
+# operatorfunc, and any other value bearing spaces) takes the REST of its :set
+# line, so it goes as its own command; the packable flags share one `set`.
+# `lvi -w -- A B` sends A and B as two commands, so both reach the view at once.
+# It is projected on every switch like the flags -- an arm with no formatter of
+# its own falls back to $default_fmt -- so the hook OWNS fmtprg: set your global
+# gq default in $default_fmt, not with a bare `set fmtprg=...` in the rc, which
+# the hook would re-project away on the next buffer entry.
+#
+# $LVI_FILE names the buffer and $LVI_WID the view -- both exported for every
+# hook. To test outside a hook, supply them yourself and watch the ok/error
+# replies a hook would discard:
+#
+#     LVI_WID=$(lvi -l | cut -f1) LVI_FILE=foo.py lvi-ftype
+#
+# LVI overrides the client (default `lvi`).
+
+LVI=${LVI:-lvi}
+fname=$LVI_FILE
+[ -n "$fname" ] || exit 0        # unnamed buffer: nothing to key off
+
+# --- CLASSIFY: name (then shebang) -> a filetype word. Add detectors here. -----
+ft=
+case "$fname" in
+  *.py)                          ft=python ;;
+  *.sh|*.bash|.bashrc|.profile)  ft=sh ;;
+  *.go)                          ft=go ;;
+  *.rs)                          ft=rust ;;
+  *.json)                        ft=json ;;
+  *.js|*.jsx|*.mjs|*.cjs)        ft=js ;;
+  *.ts|*.tsx|*.mts|*.cts)        ft=ts ;;
+  *.css|*.scss|*.less)           ft=css ;;
+  *.html|*.htm)                  ft=html ;;
+  *.yml|*.yaml)                  ft=yaml ;;
+  *.toml)                        ft=toml ;;
+  *.lua)                         ft=lua ;;
+  *.c|*.h|*.cc|*.cpp|*.hpp)      ft=c ;;
+  *.md|*.markdown|*.txt)         ft=prose ;;
+  Makefile|makefile|*.mk)        ft=make ;;
+  *) case $([ -r "$fname" ] && head -n1 -- "$fname") in
+       '#!'*python*)       ft=python ;;
+       '#!'*sh|'#!'*bash)  ft=sh ;;
+     esac ;;
+esac
+
+# --- CONFIGURE: filetype word -> options. This is the part to edit. ------------
+# `opt` packs the space-free flags into one `set`; `fmt` (fmtprg), when set, gets
+# its own command. Keep the `*)` arm total -- it resets what the last buffer left.
+opt= fmt=
+case "$ft" in
+  python) opt='sw=4 et'     fmt='ruff format -' ;;
+  sh)     opt='sw=2 et'     fmt='shfmt -i 2' ;;
+  go)     opt='sw=8 noet'   fmt='gofmt' ;;
+  rust)   opt='sw=4 et'     fmt='rustfmt --emit stdout' ;;
+  json)   opt='sw=2 et'     fmt='jq .' ;;
+  js)     opt='sw=2 et'     fmt='prettier --parser babel' ;;
+  ts)     opt='sw=2 et'     fmt='prettier --parser typescript' ;;
+  css)    opt='sw=2 et'     fmt='prettier --parser scss' ;;
+  html)   opt='sw=2 et'     fmt='prettier --parser html' ;;
+  yaml)   opt='sw=2 et' ;;   # YAML forbids tabs
+  toml)   opt='sw=2 et' ;;
+  lua)    opt='sw=2 et' ;;
+  c)      opt='sw=4 et' ;;
+  prose)  opt='sw=4 et lbr' ;;
+  make)   opt='sw=8 noet' ;;
+  *)      opt='sw=8 noet' ;;
+esac
+
+# The fmtprg for any filetype above with no formatter of its own -- your global
+# `gq` default, now that this hook owns fmtprg (it re-projects on every switch,
+# so a bare `set fmtprg=...` in the rc would not stick per buffer). lvi-reflow
+# reflows lists and prose; use plain `fmt` if you prefer.
+default_fmt='lvi-reflow -w 79'
+
+# Optional: let the file's real indentation win over the table's et/sw. The
+# detected tokens are appended, and a later :set token wins, so they override
+# sw/et while leaving flags like `lbr` intact. Skip filetypes where tabs are
+# mandatory no matter what the file currently holds (make recipes). Comment out
+# the line to disable, or drop lvi-detect-indent off your PATH.
+case "$ft" in make) ;; *) opt="$opt $(lvi-detect-indent "$fname" 2>/dev/null)" ;; esac
+
+# --- plumbing (leave alone) ----------------------------------------------------
+# fmtprg is always sent (an arm with no formatter falls back to $default_fmt), so
+# it is a total projection like the flags -- it never inherits the last buffer's.
+set -- "set $opt" "set fmtprg=${fmt:-$default_fmt}"
+exec $LVI -w "${LVI_WID:-auto}" -- "$@"

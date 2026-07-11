@@ -538,3 +538,43 @@ be a map: lvi's mapper has no timeout, so `gc` fires the moment it's typed and a
 doubled key) or the distinct `gC`. Commenting is line-wise, so a charwise motion
 still toggles the whole lines it touches.
 
+### `lvi-ftype` — per-filetype options
+
+vim keeps filetype settings in `ftplugin/`; lvi keeps them in two shell `case`s.
+On `on bufenter` the script maps `$LVI_FILE` to a filetype word — by extension,
+or a shebang for the extensionless — then maps that word to options it sets over
+the socket: Python at `sw=4` with `ruff format -`, shell at `sw=2` with `shfmt`.
+Splitting classify from configure keeps each filetype's settings in one place;
+the extension and shebang lists are just two detectors feeding the same word.
+
+```
+on bufenter lvi-ftype
+```
+
+It ships as a template, since options are personal: copy it to your config dir,
+edit the configure table, and point the hook at your copy (`on` takes a shell
+line, so `on bufenter ~/.config/lvi/lvi-ftype` works and the name is free).
+Options are view-global, not per-buffer, so each rule is total — it sets
+everything it cares about and a `*)` default resets the rest, re-run on every
+switch so no buffer inherits the last one's. The corollary: a manual `:set`
+mid-session lasts only until the next switch, so edit the table for a lasting
+change.
+
+One optional line hands the file to `lvi-detect-indent` (below), whose reading
+of the actual indentation overrides the table's `et`/`sw` — so a 2-space file
+isn't edited at your 4-space default. Content beats name; comment the line out
+to key indent off the name alone.
+
+### `lvi-detect-indent` — infer indentation from content
+
+The companion to `lvi-ftype`'s name-based projection: read a file and emit the
+`set`-tokens for its established indentation (`et sw=2`, `noet`, or nothing when
+it can't tell). vim-sleuth as a filter. If `editorconfig`(1) is installed and a
+`.editorconfig` applies, its ruling wins; otherwise it sniffs the head — leading
+tabs against spaces, and for spaces the most common indent step as the unit. It
+reads the file on disk, not the live buffer, since indentation is a property of
+the saved file and a disk read needs no socket (an unsaved or new buffer reads
+as inconclusive, leaving the caller's default). Runnable by hand
+(`lvi-detect-indent foo.py`) or piped (`… | lvi-detect-indent -`); `lvi-ftype`
+calls it as its indent stage.
+

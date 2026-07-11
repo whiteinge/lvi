@@ -1,0 +1,61 @@
+#!/bin/sh
+# lvi-detect-indent [FILE|-] -- infer indent options from a file's content.
+#
+# Emit lvi `set`-tokens for a file's established indentation, or nothing when it
+# can't tell. Companion to lvi-ftype: where that projects options from the file's
+# NAME, this reads its CONTENT, so editing a 2-space file doesn't fight it with a
+# 4-space default. vim-sleuth, re-cut as a filter.
+#
+# Output is one line of tokens for a single `set`, or empty:
+#     et sw=2      spaces, 2 wide
+#     noet         tabs
+#     (nothing)    too little evidence -- the caller keeps its own default
+#
+# Precedence: if editorconfig(1) is installed and a .editorconfig applies, its
+# ruling wins (deterministic, project-declared); otherwise the bytes are sniffed.
+# The sniff reads the file's head (bounded), counts leading tabs against leading
+# spaces, and for spaces takes the most common indent STEP -- the width by which
+# nested lines deepen -- as the unit, which is robust to depth and to the odd
+# off-by-one comment line. It sets et/noet and (for spaces) sw; tab DISPLAY width
+# (ts) is left to your preference, since matching a tabbed file means using tabs,
+# not agreeing on how wide they render.
+#
+# FILE defaults to $LVI_FILE; `-` reads stdin. It reads the file on DISK, not the
+# live buffer: indentation is a property of the saved file, and a disk read needs
+# no socket (so no deadlock on the pre-loop bufenter, and an unsaved or brand-new
+# buffer simply reads as inconclusive, leaving the caller's default to stand).
+#
+# Used by lvi-ftype; also runnable by hand: `lvi-detect-indent foo.py`.
+
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next}/^#/{sub(/^# ?/,"");print;next}{exit}' "$0" ;; esac
+
+f=${1:-$LVI_FILE}
+[ "$f" = "-" ] || [ -n "$f" ] || exit 0
+
+# 1. EditorConfig -- delegate to the core CLI, never reimplement the spec.
+if [ "$f" != "-" ] && [ -r "$f" ] && command -v editorconfig >/dev/null 2>&1; then
+  style= size=
+  eval "$(editorconfig "$f" 2>/dev/null | sed -n \
+    's/^indent_style=\(.*\)/style=\1/p; s/^indent_size=\([0-9][0-9]*\)/size=\1/p')"
+  case $style in
+    tab)   echo noet; exit 0 ;;
+    space) [ -n "$size" ] && echo "et sw=$size" || echo et; exit 0 ;;
+  esac
+fi
+
+# 2. Content sniff of the head.
+{ [ "$f" = "-" ] && cat || head -n 512 -- "$f"; } 2>/dev/null | awk '
+  /^\t/               { tabs++; prev=1; pind=0; next }   # tab-led line
+  /^ *[^ \t]/ && /^ / {                                  # space-led line
+      match($0, /^ */); ind = RLENGTH; spaces++
+      if (prev && ind > pind) { d = ind - pind; if (d >= 1 && d <= 8) step[d]++ }
+      pind = ind; prev = 1; next
+  }
+  /[^ \t]/            { pind = 0; prev = 1 }              # flush-left content
+  END {
+      if (tabs > spaces) { print "noet"; exit }           # tabs win the majority
+      if (spaces < 3) exit                                # too little to call
+      best = 0; unit = 0
+      for (w = 2; w <= 8; w++) if (step[w] > best) { best = step[w]; unit = w }
+      if (unit && best >= 2) print "et sw=" unit
+  }'

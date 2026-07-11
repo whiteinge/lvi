@@ -954,6 +954,17 @@ below, with the happy-path rc lines that turn it on:
 	set fmtprg=lvi-reflow -w 79
 	```
 
+*lvi-ftype* -- per-filetype options
+	Set *sw*, *et*, *fmtprg* and the rest from the file's name on entry (vim's
+	ftplugin as two shell *case*s): Python at *sw=4* with *ruff format*, shell at
+	*sw=2* with *shfmt*. With *lvi-detect-indent* alongside it, the file's own
+	indentation overrides the name. It ships as a template; copy it, edit the
+	table, and aim the hook at your own copy:
+
+	```
+	on bufenter lvi-ftype
+	```
+
 The lines above are the happy path. *contrib/lvirc.sample* has the full annotated
 set -- every binding, theme, and variant -- and each tool's *-h* (or
 *contrib/README.md*) explains what it does and how it works.
