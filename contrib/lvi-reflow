@@ -1,0 +1,119 @@
+#!/bin/sh
+# lvi-reflow [-w WIDTH] [WIDTH] -- reflow ASCII lists as a stdin->stdout filter.
+#
+# The one piece of vim's `formatoptions`/`formatlistpat` machinery that has no
+# faithful CLI equivalent: rewrap a bulleted/numbered list and keep each item's
+# marker while HANGING the wrapped continuation under the item's text (not under
+# the marker). par(1) repeats the prefix (right for `> ` quotes, wrong for `- `
+# bullets); fmt(1) can't hang at all; pandoc(1) only knows Markdown. So this is a
+# small purpose-built filter -- no socket, no editor state: it reads the selected
+# lines on stdin and writes the reflowed lines on stdout, which is exactly the
+# contract of vi's `!` operator and of `gq`.
+#
+# DRIVE IT two ways, both already in the core:
+#   * `!{motion}lvi-reflow -w 72<CR>` -- the `!` filter operator prompts with the
+#     range; you type the command. `!ip`, `!}`, `!!` (current line + count).
+#   * `set fmtprg=lvi-reflow -w 72` in ~/.lvirc -- then `gqip` / `gqq` reflow
+#     lists (gq runs fmtprg; this is the closest thing to vim's gq you get).
+#
+# WHAT COUNTS AS A LIST ITEM -- a faithful port of a hand-tuned vim
+# `formatlistpat`, embedded below as one ERE (edit MARKER to taste):
+#   * ordered / roman / single-letter, with an optional opening bracket and a
+#     closing delimiter:  `1.`  `12)`  `a)`  `(iv)`  `[3]`  `A:`  `{b}`
+#   * a bullet char followed by whitespace:  `-`  `+`  `o`  `*`  en-dash  bullet
+# The item's text starts at the end of that match; wrapped continuation lines are
+# indented to that column (the hanging indent). A deeper-indented item is its own
+# item with its own hang, so nested lists nest. A run of non-marker, non-blank
+# lines is one paragraph, wrapped at its first line's indent. Blank lines are
+# paragraph breaks and are preserved verbatim. Trailing whitespace is trimmed;
+# adjacent words are joined with a single space (vim's nojoinspaces feel).
+#
+# Not a formatter dispatcher (that's lvi-fmt) and not list-aware in the semantic
+# sense (that's pandoc): it does one line-shaped job -- rewrap text that may or
+# may not be a list -- so it composes with any file type, code comments included.
+#
+# Config (env): LVI_REFLOW_WIDTH (default 79; -w / a bare numeric arg override),
+# LVI_REFLOW_TABSTOP (tab width used when measuring indent, default 8).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+width=${LVI_REFLOW_WIDTH:-79}
+tab=${LVI_REFLOW_TABSTOP:-8}
+while [ $# -gt 0 ]; do
+  case $1 in
+    -w)      width=${2:-}; shift 2 ;;
+    -w*)     width=${1#-w}; shift ;;
+    [0-9]*)  width=$1; shift ;;
+    *) echo "lvi-reflow: unknown argument '$1' (usage: lvi-reflow [-w WIDTH])" >&2; exit 2 ;;
+  esac
+done
+case $width in ''|*[!0-9]*) echo "lvi-reflow: width must be a positive integer" >&2; exit 2 ;; esac
+
+exec awk -v width="$width" -v tab="$tab" '
+# One ERE for a list marker, anchored at start: (ordered|bullet) + trailing ws.
+# The ordered branch is optional-open-bracket, then digits / roman / one letter,
+# then one of ] : . ) } -- the closing set leads with ] so it is a literal.
+BEGIN {
+  MARKER = "^[ \t]*(([[({]?([0-9]+|[iIvVxXlLcCdDmM]+|[a-zA-Z])[]:.)}])|([-+o*]|\xe2\x80\x93|\xe2\x80\xa2))[ \t]+"
+}
+
+# Display columns of s, counting a tab as advancing to the next multiple of tab.
+function dispwidth(s,   i, c, w) {
+  w = 0
+  for (i = 1; i <= length(s); i++) {
+    c = substr(s, i, 1)
+    if (c == "\t") w += tab - (w % tab)
+    else w += 1
+  }
+  return w
+}
+function spaces(n,   s) { s = ""; while (length(s) < n) s = s " "; return s }
+function rstrip(s) { sub(/[ \t]+$/, "", s); return s }
+
+# Greedy word-wrap: first line carries pfx, the rest carry cont (an indent of
+# spaces sized to pfx). A word wider than the budget still takes its own line.
+function emit(pfx, cont, text,   n, words, i, line, lw, ww, first) {
+  n = split(text, words, /[ \t]+/)
+  line = pfx; lw = dispwidth(pfx); first = 1
+  for (i = 1; i <= n; i++) {
+    if (words[i] == "") continue
+    ww = dispwidth(words[i])
+    if (first)                       { line = line words[i]; lw += ww; first = 0 }
+    else if (lw + 1 + ww <= width)   { line = line " " words[i]; lw += 1 + ww }
+    else { print rstrip(line); line = cont words[i]; lw = dispwidth(cont) + ww }
+  }
+  print rstrip(line)   # first==1 (empty content) prints the bare marker
+}
+function flush() {
+  if (!have) return
+  emit(bpfx, bcont, btext)
+  have = 0; bpfx = ""; bcont = ""; btext = ""
+}
+
+/^[ \t]*$/ { flush(); print ""; next }        # blank line: paragraph break
+
+match($0, MARKER) {                            # a new list item
+  flush()
+  have = 1
+  bpfx = substr($0, 1, RLENGTH)
+  bcont = spaces(dispwidth(bpfx))
+  btext = substr($0, RLENGTH + 1)
+  next
+}
+
+{                                              # non-marker, non-blank line
+  if (have) {                                  # ... continues the open paragraph
+    s = $0; sub(/^[ \t]+/, "", s)
+    btext = btext " " s
+  } else {                                     # ... starts a plain paragraph
+    have = 1
+    match($0, /^[ \t]*/)
+    bpfx = substr($0, 1, RLENGTH)
+    bcont = bpfx                               # plain text keeps its indent verbatim
+    btext = substr($0, RLENGTH + 1)
+  }
+}
+
+END { flush() }
+'

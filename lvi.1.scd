@@ -415,7 +415,8 @@ _contrib/lvi-shell.sh_ do).
 	*fmtprg*=_command_ (*fp*)
 		The filter *gq* reflows through: default *fmt*(1), seeded from *$LVI_FMT*
 		at startup but live-settable here, so *set fmtprg=fmt -w 72* rewraps at
-		72.
+		72. Point it at *lvi-reflow*(_contrib_) to reflow lists, marker and
+		hanging indent kept.
 	*scratch*, *noscratch*
 		Mark the current buffer ephemeral: it never counts as modified, so
 		*q*/*bd* never nag, *wa* skips it, and a crash does not preserve it.
@@ -890,6 +891,16 @@ below, with the happy-path rc lines that turn it on:
 	```
 	map <C-a> :.!lvi-incr<CR>
 	map <C-x> :.!lvi-incr -s -1<CR>
+	```
+
+*lvi-reflow* -- reflow a list
+	Rewrap a bulleted or numbered list through *gq*, keeping each item's marker
+	and hanging the wrapped lines under its text -- the *formatlistpat* job
+	*fmt*(1) can't do (ordered, roman, letter, and bullet markers; nested lists
+	nest). Point *fmtprg* at it and *gqip* / *gqq* reflow lists:
+
+	```
+	set fmtprg=lvi-reflow -w 79
 	```
 
 The lines above are the happy path. *contrib/lvirc.sample* has the full annotated

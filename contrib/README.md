@@ -469,3 +469,23 @@ Leading zeros are preserved (`007`→`008`) and numberless lines pass through. T
 old reflex back on one line. It's the clearest demonstration of the point — a
 whole editor feature that ships as a filter because the operator already exists.
 
+### `lvi-reflow` — reflow a list, hanging indent and all
+
+`gq` and `!` reflow a range through a filter, and `fmt`(1) does the job until the
+range is a list: it won't keep the bullet on line one and hang the wrapped
+continuation under the item's text. `par`(1) repeats the prefix — right for `> `
+quotes, wrong for `- ` bullets — and `pandoc`(1) only knows Markdown.
+`lvi-reflow` reads the selected lines, rewraps each item under its own marker,
+nests deeper items, and wraps a plain paragraph at its own indent:
+
+```
+!ip lvi-reflow -w 72     reflow this paragraph/list at 72
+set fmtprg=lvi-reflow    then gqip / gqq reflow lists (vim's gq)
+```
+
+It knows ordered, roman, and single-letter markers (`1.`, `(iv)`, `a)`, `[3]`),
+the bullets `- + o * – •`, and an optional opening bracket: a port of a
+hand-tuned vim `formatlistpat`, embedded as one regex you can edit. Reflowing
+twice is a fixpoint. Like that pattern, a paragraph-leading `e.g. ` reads as a
+list item — tighten the regex if it bites.
+

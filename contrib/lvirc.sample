@@ -175,6 +175,11 @@ map \= :bg lvi-fmt<CR>
 "   set fmtprg=fmt -w 72                " a startup default width
 "   map \fe :set fmtprg=fmt -w 72<CR>   " switch to email width on demand
 "   map \fm :set fmtprg=fmt -w 80<CR>   " ...or Markdown width
+"
+" fmt(1) drops a list's hanging indent. lvi-reflow is a drop-in fmtprg that keeps
+" each item's marker and hangs the wrapped lines under its text (ordered, roman,
+" letter, and bullet markers; nested lists nest). Then gqip/gqq reflow lists too:
+"   set fmtprg=lvi-reflow -w 79
 
 " ---- position memory (viminfo's `") ------------------------------------------
 " lvi-pos remembers where you were in each file across sessions, in a plain-text
