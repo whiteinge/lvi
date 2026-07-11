@@ -43,6 +43,36 @@ describe("editor.refresh scrolling", function()
       editor.refresh(ed)
       expect(ed.top).to.equal(1); expect(ed.topsub).to.equal(2) -- cursor's sub-row
     end)
+
+    -- Bugs 4/5: an insert-mode cursor past EOL on an exactly-full row lands on
+    -- the phantom edge-wrap row (disp.locate returns csub == segment count). The
+    -- visibility walk must count that row, or it wrongly decides the on-screen
+    -- cursor is off-screen and slams its line to the bottom (mid) / scrolls
+    -- prematurely (bottom). rows=12 -> textrows=11, wrap width = 10.
+    local function forty_lines_one_full(fullidx)
+      local t = {}
+      for i = 1, 40 do t[i] = (i == fullidx) and ("x"):rep(10) or "s" end
+      local ed = editor.new_ed()
+      ed.buf = buffer.new(table.concat(t, "\n"))
+      ed.rows, ed.cols = 12, 10
+      ed.opts.wrap = true
+      ed.mode = "insert"                       -- so cx may sit at #line+1 (past EOL)
+      return ed
+    end
+    it("keeps a mid-viewport line put on a phantom edge-wrap (bug 5)", function()
+      local ed = forty_lines_one_full(25)
+      ed.cy, ed.cx, ed.top, ed.topsub = 25, 11, 20, 0   -- line 25 at row 5, cursor past EOL
+      editor.refresh(ed)
+      expect(ed.top).to.equal(20)                       -- did NOT jump the line to the bottom
+      expect(ed.topsub).to.equal(0)
+    end)
+    it("scrolls at most one row for a phantom edge-wrap on the last row (bug 4)", function()
+      local ed = forty_lines_one_full(11)
+      ed.cy, ed.cx, ed.top, ed.topsub = 11, 11, 1, 0    -- line 11 on the last text row
+      editor.refresh(ed)
+      expect(ed.top).to.equal(2)                        -- one gentle row, not a leap
+      expect(ed.topsub).to.equal(0)
+    end)
   end)
 end)
 

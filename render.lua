@@ -143,6 +143,15 @@ function M.frame(ed)
           end
           a, sc, si = b, sc + w, si + 1
         until a > len
+        -- Phantom edge-wrap row: the cursor is past EOL on an exactly-full row, so
+        -- disp.locate placed it on a fresh continuation row (ccsub == segment
+        -- count, cccol == 0). The segment loop never drew that row; draw it empty
+        -- and land the cursor there, matching refresh's phantom-aware scroll.
+        if l == ed.cy and ccsub >= si and si >= skip and sr < textrows then
+          out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol
+          crow, ccol = sr + 1, cccol + 1
+          sr = sr + 1
+        end
         skip = 0
         l = hasfolds and fold.next_vline(folds, l, nl) or (l + 1)
       end

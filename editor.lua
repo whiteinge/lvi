@@ -403,11 +403,17 @@ local function refresh(ed)
       ed.top, ed.topsub = ed.cy, csub                 -- cursor above top: scroll up
     else
       -- Is the cursor in view? Walk forward from the top, bounded by textrows.
+      -- The cursor line gets one extra row when the cursor sits on the phantom
+      -- edge-wrap row past EOL (disp.locate returns csub == segment count for an
+      -- exactly-full row): without this the walk enumerates only real segments,
+      -- never reaches that csub, wrongly concludes "off-screen", and the reposition
+      -- below slams the line to the last row (the mid-viewport jump-to-bottom bug).
       local l, sub, count, visible = ed.top, ed.topsub, 0, false
       while count < textrows do
         if l == ed.cy and sub == csub then visible = true; break end
         if l == nil or l > nl then break end
         local ns = ed_segs(ed, l, W, ts)
+        if l == ed.cy and csub >= ns then ns = csub + 1 end
         if sub + 1 < ns then sub = sub + 1 else l, sub = ed_nextv(ed, l, nl), 0 end
         count = count + 1
       end
