@@ -187,12 +187,16 @@ def emit_theme():
 SHEBANG_ALIAS = {"node": "javascript", "nodejs": "javascript",
                  "tclsh": "tcl", "wish": "tcl"}
 
-# Extension-less git message files -> the closest Pygments lexer. There is no
-# git-commit lexer, so `diff` is the pragmatic pick: it correctly colors the
-# embedded diff of a `git commit -v` buffer and leaves the subject/body/`#`
-# comment lines plain, so it never mis-paints the prose message.
+# Extension-less files Pygments won't match by name -> the closest lexer.
+# Git message files: no git-commit lexer exists, so `diff` is the pragmatic pick
+# -- it colors the embedded diff of a `git commit -v` buffer and leaves the
+# subject/body/`#` comment lines plain, never mis-painting the prose message.
+# lvirc: an lvi rc is a file of ex commands, and ex-command syntax shares Vim
+# script's `"`-to-end-of-line comment, so VimL lights the `"` comments and the
+# leading command names about right.
 FILENAME_MAP = {"COMMIT_EDITMSG": "diff", "MERGE_MSG": "diff",
-                "TAG_EDITMSG": "diff"}
+                "TAG_EDITMSG": "diff",
+                ".lvirc": "vim", "lvirc": "vim", "lvirc.sample": "vim"}
 
 
 def lexer_from_shebang(text):
