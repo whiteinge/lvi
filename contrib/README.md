@@ -47,7 +47,11 @@ a compiler) light up per file.
   next<CR>`). It's the same spawn `:on` hooks use. A leading address range
   (`:L1,L2bg CMD`) arrives as `$LVI_LINE1`/`$LVI_LINE2`, the non-mutating
   counterpart to a `[range]!` filter, so a tool can act on a typed line span
-  without a bespoke command (`lvi-stagediff` uses it for partial staging).
+  without a bespoke command (`lvi-stagediff` uses it for partial staging). The
+  `g@` operator is the same spawn driven from a *motion*: `:set operatorfunc=CMD`
+  then `g@{motion}` fires `CMD` over the span, adding `$LVI_COL1`/`$LVI_COL2` and
+  `$LVI_KIND` so a charwise operator can reach part of a line (`lvi-surround`,
+  `lvi-comment`).
 - **Self-backgrounding.** A tool that must *read* the buffer (`lvi-highlight`,
   `lvi-search` via `%p`) can't do so synchronously from a `:silent !` child: lvi's
   loop is frozen waiting on that child, so a foreground read would deadlock. They
@@ -404,7 +408,8 @@ working tree**, so the diff between them is exactly your *unstaged* changes. `\s
 stages the hunk under the cursor — it moves into the index pane and the index
 updates at once. Two changes with no unchanged line between them are one hunk, so
 `\s` takes both; `:L1,L2bg lvi-stagediff --stage-range` stages just the working
-lines you name, which is how you split them. And because the index pane's text
+lines you name, and `g@{motion}` (armed as an operatorfunc — `g@ip`, `3g@@`) does
+the same by motion, which is how you split them. And because the index pane's text
 simply **is** the staged content, you can hand-edit it — or `u`-undo a stage — and
 `:w` to commit that exact state; that is how unstaging works. It reblobs the whole buffer (`git hash-object
 -w` + `git update-index`), so there's no partial-patch fuzz to misapply. Built on
@@ -493,4 +498,40 @@ the bullets `- + o * – •`, and an optional opening bracket: a port of a
 hand-tuned vim `formatlistpat`, embedded as one regex you can edit. Reflowing
 twice is a fixpoint. Like that pattern, a paragraph-leading `e.g. ` reads as a
 list item — tighten the regex if it bites.
+
+### `lvi-surround` — wrap a span in a delimiter pair
+
+Where `lvi-incr` and `lvi-reflow` ride the `!` filter, these two ride `g@` — the
+operator whose action is an external command over the motion's span (`:set
+operatorfunc=…`, then `g@{motion}`). `!` splices a filter's stdout back over
+whole lines; `g@` hands the span to the tool through the environment and lets it
+edit over the socket, so it reaches *part* of a line — a charwise motion carries
+byte columns, not just line numbers. That is what surround needs: `g@iw` wraps
+the inner word, `g@$` to end of line, `g@@` a whole line (delimiters on their own
+lines). One argument names the pair — a shell-safe alias, or the literal quoted:
+
+```
+map s( :set opfunc=lvi-surround paren<CR>g@
+map s" :set opfunc=lvi-surround dquote<CR>g@
+map s* :set opfunc=lvi-surround star<CR>g@
+```
+
+Now `s(iw` parenthesizes the word and `s*ip` emphasizes a paragraph. Pairs:
+`( [ { <`, the quotes `" ' \``, and `* _`. `.` repeats the last one.
+
+### `lvi-comment` — toggle line comments
+
+Also on `g@`, and a *toggle*: if every non-blank line in the span is already
+commented it strips the comment, otherwise it adds one — so the same key does
+both. `g@ip` toggles a paragraph, `g@G` to end of file. The syntax comes from an
+argument (`//`, `#`, `:`, `/* */`, `<!-- -->`, or a shell-safe alias like `hash`
+/ `cblock` / `html`) or, with none, from the file's extension:
+
+```
+map gc :set opfunc=lvi-comment<CR>g@
+map gcc :set opfunc=lvi-comment<CR>g@@
+```
+
+`gcip` and `gcc` land where the plugins put them. Commenting is line-wise, so a
+charwise motion still toggles the whole lines it touches.
 

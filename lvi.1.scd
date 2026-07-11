@@ -136,6 +136,17 @@ _operator_*i*_object_, _operator_*a*_object_
 	*gqq* reflows the current line. Just *!* with a fixed command, so *gqip*
 	is *!ip fmt*.
 
+*g@*
+	Hand the span of a motion or text object to the external *operatorfunc*
+	command (see *set*), spawned in the background as *:bg* does. Where *!* and
+	*gq* filter the lines through a command and splice its output back, *g@*
+	exports the span through the environment and lets the tool edit over the
+	socket, so it can reach part of a line. *g@@* acts on the current line
+	(*3g@@* on three). Nothing happens until *operatorfunc* is set; then it is
+	the seam an external operator plugs into. This is the motion-driven sibling
+	of *:*_range_*bg*: *contrib* ships *lvi-surround* and *lvi-comment* on it,
+	and *lvi-stagediff* arms it for motion-scoped staging.
+
 *x* *r*_x_ *p* *P*
 	Delete character, replace character with _x_, put after/before.
 
@@ -397,8 +408,8 @@ _contrib/lvi-shell.sh_ do).
 	Set editor options. A boolean toggles with a *!* suffix and reports with a
 	*?* suffix (*set wrap!*, *set wrap?*); a numeric or string option takes
 	*=*_value_ and reports with *?*. One *set* may list several options, except
-	the space-bearing string options (*fmtprg*), which take the rest of the
-	line and want a *set* to themselves. The options:
+	the space-bearing string options (*fmtprg*, *operatorfunc*), which take the
+	rest of the line and want a *set* to themselves. The options:
 
 	*wrap*, *nowrap*
 		Soft-wrap long lines onto the next screen row, or truncate them at the
@@ -425,6 +436,14 @@ _contrib/lvi-shell.sh_ do).
 		at startup but live-settable here, so *set fmtprg=fmt -w 72* rewraps at
 		72. Point it at *lvi-reflow*(_contrib_) to reflow lists, marker and
 		hanging indent kept.
+	*operatorfunc*=_command_ (*opfunc*)
+		The shell command *g@*_motion_ spawns over the span (empty by default,
+		so *g@* is a no-op until set). Run detached like *:bg*, with the span in
+		the environment: *$LVI_LINE1* and *$LVI_LINE2* (the line span, always),
+		plus *$LVI_COL1*/*$LVI_COL2* (1-based byte columns, inclusive) and
+		*$LVI_KIND* (*char* or *line*) for a charwise motion. The value runs
+		through the shell, so quote a special character (*set opfunc=lvi-surround
+		'('*). Usually bound: *map s( :set opfunc=lvi-surround paren<CR>g@*.
 	*scratch*, *noscratch*
 		Mark the current buffer ephemeral: it never counts as modified, so
 		*q*/*bd* never nag, *wa* skips it, and a crash does not preserve it.
@@ -899,6 +918,24 @@ below, with the happy-path rc lines that turn it on:
 	```
 	map <C-a> :.!lvi-incr<CR>
 	map <C-x> :.!lvi-incr -s -1<CR>
+	```
+
+*lvi-surround* -- wrap a span in a delimiter pair
+	The surround reflex on the *g@* operator: arm it, then *g@*_motion_ wraps the
+	span. Bind a key per pair (*s(iw*, *s"$*):
+
+	```
+	map s( :set opfunc=lvi-surround paren<CR>g@
+	map s" :set opfunc=lvi-surround dquote<CR>g@
+	```
+
+*lvi-comment* -- toggle line comments
+	Comment or un-comment the lines a motion spans, also on *g@*; the style comes
+	from the file's extension or an argument (*gcip*, *gcc*):
+
+	```
+	map gc :set opfunc=lvi-comment<CR>g@
+	map gcc :set opfunc=lvi-comment<CR>g@@
 	```
 
 *lvi-reflow* -- reflow a list

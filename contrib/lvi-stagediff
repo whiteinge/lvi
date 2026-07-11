@@ -43,6 +43,9 @@
 #   lvi-stagediff FILE        open the index|working split for FILE and wire it up
 #   lvi-stagediff             use $LVI_FILE (i.e. run it from a map inside lvi)
 #   \s      (working pane)    stage the hunk under the cursor
+#   g@{motion} (working pane) stage the motion's line span (g@ip, 3g@@, ...) --
+#                             the motion-driven partial-stage, armed as an
+#                             operatorfunc; \s takes the whole hunk, g@ any span
 #   :L1,L2bg lvi-stagediff --stage-range   stage only working lines L1..L2 (partial)
 #   :w      (index pane)      stage the current index text (after a hand edit / undo)
 #   ]c / [c (either pane)     jump to the next / prev hunk (from lvi-diff)
@@ -142,6 +145,11 @@ attach() {
   idx=$1; work=$2; top=$3; rp=$4
   LVI_DIFF_NOMAP=1 LVI="$LVI" "$DIFF" "$idx" "$work" || return 1
   "$LVI" -w "$work" -- "map \\s :bg LVI=$LVI $SELF --stage $idx $top $rp<CR>" >/dev/null 2>&1
+  # Arm g@ on the working pane as the motion-driven sibling of \s: g@{motion}
+  # stages the motion's line span. --stage-range reads $LVI_LINE1/2 (which g@
+  # sets) and rediscovers idx/top/rp from the environment, so no baked args --
+  # exactly the :L1,L2bg path, now reachable by any motion (g@ip, g@}, 3g@@).
+  "$LVI" -w "$work" -- "set operatorfunc=LVI=$LVI $SELF --stage-range" >/dev/null 2>&1
   "$LVI" -w "$idx"  -- "on write LVI=$LVI $SELF --reblob $top $rp" >/dev/null 2>&1
   "$LVI" -w "$idx"  -- 'status stage [index -- edit + :w to (un)stage]' >/dev/null 2>&1
   "$LVI" -w "$work" -- 'status stage [working -- \s stages the hunk]' >/dev/null 2>&1

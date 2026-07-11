@@ -1,0 +1,102 @@
+#!/bin/sh
+# lvi-surround PAIR  --  wrap the span of a g@ motion in a delimiter pair. The
+# tpope-surround reflex ("add () around this word") rebuilt on the g@ operator
+# instead of a bespoke ys/cs/ds grammar: lvi has no operatorfunc-only builtin, so
+# `:set operatorfunc=lvi-surround PAIR` arms it and g@{motion} does the rest --
+# the motion picks the text, this script wraps it.
+#
+# It is a SPAWN-flavor operator (fired detached by g@, like :bg), so it reads the
+# span from the environment and edits back over the socket rather than filtering
+# stdin->stdout the way the ! operator's tools do (lvi-incr, lvi-reflow). That is
+# what lets it reach PART of a line: a charwise motion hands over byte columns,
+# not just whole lines.
+#
+# THE SPAN (exported by g@, see the manpage):
+#   $LVI_KIND          "char" | "line"
+#   $LVI_LINE1/2       the line span (always)
+#   $LVI_COL1/2        1-based byte columns on LINE1/LINE2, inclusive (char only)
+#   $LVI_WID           the view to edit (every spawn gets it)
+# A charwise span is wrapped INLINE (open before COL1, close after COL2); a
+# linewise span gets the delimiters on their own lines, indented to match LINE1
+# (so g@@ on a block reads like a brace-wrapped group).
+#
+# PAIR is a delimiter -- either half names the pair -- or a shell-safe ALIAS.
+# Prefer the alias when arming (see the note by the case below on why a bare
+# delimiter can fail silently):
+#   ( ) paren    [ ] bracket    { } brace    < > angle
+#   " dquote     ' squote       ` tick       * star    _ under
+#
+# SYNOPSIS
+#   :set operatorfunc=lvi-surround paren      arm it, then:
+#   g@iw                                      ( ) around the inner word
+#   g@$                                       ... to end of line
+#   g@@                                       ... the current line, delimiters
+#                                             on their own lines (2g@@ = two)
+#
+# Arming is a mouthful to type, so bind a key per pair (lvirc). The <expr>-map
+# trick from vim becomes a plain key sequence -- set operatorfunc, then g@:
+#   map s( :set operatorfunc=lvi-surround paren<CR>g@
+#   map s" :set operatorfunc=lvi-surround dquote<CR>g@
+#   map s* :set operatorfunc=lvi-surround star<CR>g@
+# Now `s(iw` wraps the word, `s"$` quotes to end of line, `s*ip` a paragraph.
+#
+# Operates on bytes (LC_ALL=C), so COL1/COL2 land right for multibyte text.
+# Debug: LVI_SURROUND_DEBUG=1 traces to stderr -- but g@ discards a spawn's
+# stderr, so trace by invoking it straight (LVI_KIND=char LVI_LINE1=1 ... lvi-surround ().
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+LVI=${LVI:-lvi}
+dbg=${LVI_SURROUND_DEBUG:-}
+trace() { [ -n "$dbg" ] && echo "lvi-surround: $*" >&2; return 0; }
+
+pair=${1:?"usage: lvi-surround PAIR   (a delimiter, or a safe alias -- see -h)"}
+# The literal char and its shell-safe alias both name the same pair. Prefer the
+# alias when arming: the operatorfunc value runs through sh (os.execute), so a
+# bare ( or ` or * would be mangled -- and the spawn's error is discarded, so a
+# quoting slip fails SILENTLY. `paren` cannot. (A quoted literal works too:
+# :set operatorfunc=lvi-surround '(' -- but the alias is the no-footgun path.)
+case "$pair" in
+  '('|')'|paren)        open='(' close=')' ;;
+  '['|']'|bracket)      open='[' close=']' ;;
+  '{'|'}'|brace)        open='{' close='}' ;;
+  '<'|'>'|angle)        open='<' close='>' ;;
+  '"'|dquote|quote)     open='"' close='"' ;;
+  "'"|squote|apos)      open="'" close="'" ;;
+  '`'|tick|backtick)    open='`' close='`' ;;
+  '*'|star)             open='*' close='*' ;;
+  '_'|under)            open='_' close='_' ;;
+  *) echo "lvi-surround: unknown pair: $pair" >&2; exit 2 ;;
+esac
+
+w=${LVI_WID:?"lvi-surround: no LVI_WID -- run it as a g@ operatorfunc inside lvi"}
+l1=${LVI_LINE1:?"lvi-surround: no LVI_LINE1 -- arm with :set operatorfunc= then g@ motion"}
+l2=${LVI_LINE2:-$l1}
+kind=${LVI_KIND:-line}
+c1=${LVI_COL1:-}
+c2=${LVI_COL2:-}
+n=$((l2 - l1 + 1))
+trace "kind=$kind lines=$l1-$l2 cols=$c1-$c2 pair=$open$close"
+
+tmp=${TMPDIR:-/tmp}/lvi-surround.$$
+orig=$tmp.orig; new=$tmp.new
+trap 'rm -f "$orig" "$new"' EXIT
+
+"$LVI" -w "$w" -- "${l1},${l2}p" > "$orig" || { trace "read failed"; exit 1; }
+
+LC_ALL=C awk -v kind="$kind" -v lp="$open" -v rp="$close" \
+             -v c1="$c1" -v c2="$c2" -v n="$n" '
+kind=="line" && NR==1 { match($0, /^[ \t]*/); ind = substr($0, 1, RLENGTH); print ind lp }
+kind=="line"          { print; if (NR == n) print ind rp; next }
+# charwise: splice open before COL1, close after COL2 (both inclusive byte cols)
+NR==1 && n==1 { print substr($0,1,c1-1) lp substr($0,c1,c2-c1+1) rp substr($0,c2+1); next }
+NR==1         { print substr($0,1,c1-1) lp substr($0,c1); next }
+NR==n         { print substr($0,1,c2) rp substr($0,c2+1); next }
+              { print }
+' "$orig" > "$new" || { trace "transform failed"; exit 1; }
+
+# One atomic filter call replaces LINE1..LINE2 with the wrapped text (cat ignores
+# the piped-in original and emits the rewrite) -- one undo step, byte-exact, and
+# it copes with the linewise case adding two lines. Same seam lvi-incr rides.
+"$LVI" -w "$w" -- "${l1},${l2}!cat '$new'" || { trace "splice failed"; exit 1; }

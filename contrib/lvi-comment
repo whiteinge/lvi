@@ -1,0 +1,137 @@
+#!/bin/sh
+# lvi-comment [STYLE]  --  toggle line comments over the span of a g@ motion.
+# The comment-out reflex ("gcc" / "gc{motion}" in the plugins) rebuilt on the g@
+# operator: `:set operatorfunc=lvi-comment` arms it and g@{motion} comments (or
+# un-comments) the lines the motion spans. Toggling is per-span -- if every
+# non-blank line in the span is already commented, it strips the comment;
+# otherwise it adds one. So the same key comments and un-comments.
+#
+# A SPAWN-flavor operator (fired detached by g@, like :bg): it reads the span
+# from $LVI_LINE1/$LVI_LINE2 and edits back over the socket. Commenting is
+# line-wise by nature, so $LVI_KIND/$LVI_COL* are ignored -- a charwise motion
+# still comments the whole lines it touches.
+#
+# STYLE picks the comment syntax. Give it explicitly, or omit it to guess from
+# the file's extension ($LVI_FILE). Shell-safe aliases are provided because the
+# operatorfunc value runs through sh (os.execute), where a bare # or <!-- would
+# be mangled -- so prefer the alias, or quote the literal:
+#     //   or  c            // line comment          C, JS, Go, Rust, ...
+#     '#'  or  hash          # line comment          shell, Python, YAML, ...
+#     :    or  colon         : line comment          (some assembler / config)
+#     cblock                /* ... */ block          C, CSS
+#     html                  <!-- ... --> block       HTML, XML, Markdown
+# A line style prefixes each line (at its own indent); a block style wraps the
+# span's first non-blank line's content in OPEN and its last in CLOSE.
+#
+# SYNOPSIS
+#   :set operatorfunc=lvi-comment         arm it (auto-detect the style), then:
+#   g@ip                                  toggle comments on the paragraph
+#   g@@                                   ... the current line (3g@@ for three)
+#   g@G                                   ... to end of file
+#   :set operatorfunc=lvi-comment hash    force '#' regardless of the file
+#
+# Bindings (lvirc) -- set operatorfunc, then g@ (the plain-key stand-in for
+# vim's <expr> map), plus a doubled-key one-liner for the current line:
+#   map gc :set operatorfunc=lvi-comment<CR>g@
+#   map gcc :set operatorfunc=lvi-comment<CR>g@@
+# Now `gcip` toggles a paragraph and `gcc` toggles the line, as the plugins do.
+#
+# Operates on bytes (LC_ALL=C). Debug: LVI_COMMENT_DEBUG=1 traces to stderr (g@
+# discards a spawn's stderr, so trace by invoking the script directly).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+LVI=${LVI:-lvi}
+dbg=${LVI_COMMENT_DEBUG:-}
+trace() { [ -n "$dbg" ] && echo "lvi-comment: $*" >&2; return 0; }
+
+style=${1:-}
+if [ -z "$style" ]; then                        # guess from the file's extension
+  case "${LVI_FILE##*.}" in
+    c|h|cpp|cc|cxx|hpp|hh|js|jsx|ts|tsx|go|rs|java|kt|swift|scala|php|dart|zig) style=// ;;
+    sh|bash|zsh|py|rb|pl|pm|r|yaml|yml|toml|conf|cfg|ini|mk|make|dockerfile)    style='#' ;;
+    css|scss|less)                                                             style=cblock ;;
+    html|htm|xml|svg|md|markdown|vue|xhtml)                                    style=html ;;
+    *) case "${LVI_FILE##*/}" in
+         Makefile|makefile|Dockerfile|*.env|.*) style='#' ;;
+         *) style='#' ;;                          # a sane default for unknowns
+       esac ;;
+  esac
+  trace "auto style for '$LVI_FILE' -> $style"
+fi
+
+case "$style" in
+  //|c)                mode=line; mark='//' ;;
+  '#'|hash)            mode=line; mark='#' ;;
+  :|colon)             mode=line; mark=':' ;;
+  '/* */'|'/*'|cblock) mode=block; open='/*' close='*/' ;;
+  '<!-- -->'|'<!--'|html|xml) mode=block; open='<!--' close='-->' ;;
+  *) echo "lvi-comment: unknown style: $style" >&2; exit 2 ;;
+esac
+
+w=${LVI_WID:?"lvi-comment: no LVI_WID -- run it as a g@ operatorfunc inside lvi"}
+l1=${LVI_LINE1:?"lvi-comment: no LVI_LINE1 -- arm with :set operatorfunc= then g@ motion"}
+l2=${LVI_LINE2:-$l1}
+trace "mode=$mode mark=$mark${open:+ block=$open $close} lines=$l1-$l2"
+
+tmp=${TMPDIR:-/tmp}/lvi-comment.$$
+orig=$tmp.orig; new=$tmp.new
+trap 'rm -f "$orig" "$new"' EXIT
+
+"$LVI" -w "$w" -- "${l1},${l2}p" > "$orig" || { trace "read failed"; exit 1; }
+
+LC_ALL=C awk -v mode="$mode" -v mark="$mark" -v lp="$open" -v rp="$close" '
+{ L[NR] = $0 }
+END {
+  if (mode == "line") {
+    # Comment unless the whole (non-blank) span is already commented.
+    allc = 1; any = 0
+    for (i = 1; i <= NR; i++) {
+      s = L[i]; if (s ~ /^[ \t]*$/) continue; any = 1
+      t = s; sub(/^[ \t]*/, "", t)
+      if (substr(t, 1, length(mark)) != mark) allc = 0
+    }
+    if (!any) allc = 0
+    for (i = 1; i <= NR; i++) {
+      s = L[i]
+      if (s ~ /^[ \t]*$/) { print s; continue }         # leave blank lines be
+      match(s, /^[ \t]*/); ind = substr(s, 1, RLENGTH); body = substr(s, RLENGTH + 1)
+      if (allc) {                                        # un-comment
+        b = substr(body, length(mark) + 1)
+        if (substr(b, 1, 1) == " ") b = substr(b, 2)     # and the one space we added
+        print ind b
+      } else print ind mark " " body                     # comment
+    }
+    exit
+  }
+  # block style: wrap the first and last non-blank lines of the span.
+  fi = 0; li = 0
+  for (i = 1; i <= NR; i++) if (L[i] !~ /^[ \t]*$/) { if (!fi) fi = i; li = i }
+  if (!fi) { for (i = 1; i <= NR; i++) print L[i]; exit }   # all blank: no-op
+  f = L[fi]; sub(/^[ \t]*/, "", f)
+  l = L[li]; sub(/[ \t]*$/, "", l)
+  commented = (substr(f, 1, length(lp)) == lp) &&
+              (length(l) >= length(rp) && substr(l, length(l) - length(rp) + 1) == rp)
+  for (i = 1; i <= NR; i++) {
+    s = L[i]
+    if (i == fi) {
+      match(s, /^[ \t]*/); ind = substr(s, 1, RLENGTH); body = substr(s, RLENGTH + 1)
+      if (commented) {
+        body = substr(body, length(lp) + 1); if (substr(body, 1, 1) == " ") body = substr(body, 2)
+        s = ind body
+      } else s = ind lp " " body
+    }
+    if (i == li) {                                        # may be the same line as fi
+      if (commented) {
+        sub(/[ \t]*$/, "", s); s = substr(s, 1, length(s) - length(rp)); sub(/[ \t]*$/, "", s)
+      } else s = s " " rp
+    }
+    print s
+  }
+}
+' "$orig" > "$new" || { trace "transform failed"; exit 1; }
+
+# One atomic filter call swaps LINE1..LINE2 for the toggled text (cat emits the
+# rewrite, ignoring the piped-in original) -- one undo step, byte-exact.
+"$LVI" -w "$w" -- "${l1},${l2}!cat '$new'" || { trace "splice failed"; exit 1; }

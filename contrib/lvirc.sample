@@ -212,3 +212,16 @@ textobj t lvi-textobj-tag       " dit/cit/dat/yat on the enclosing tag
 " !ip lvi-incr -b 1 (renumber a list).
 map <C-a> :.!lvi-incr<CR>            " increment the number on this line
 map <C-x> :.!lvi-incr -s -1<CR>      " decrement it
+
+" ---- surround & comment (g@ operators) ---------------------------------------
+" g@{motion} runs the `operatorfunc` command over the span (like :bg, but driven
+" by a motion). Each map sets operatorfunc, then presses g@, so it waits for a
+" motion -- vim's <expr>-map trick as a plain key sequence. surround takes a pair
+" (a shell-safe alias, or a quoted literal); comment auto-detects the syntax from
+" the file, or takes one (//, hash, colon, cblock, html).
+map s( :set opfunc=lvi-surround paren<CR>g@    " s(iw -> (word), s($ to line end
+map s{ :set opfunc=lvi-surround brace<CR>g@
+map s" :set opfunc=lvi-surround dquote<CR>g@
+map s* :set opfunc=lvi-surround star<CR>g@     " s*iw -> *word* (Markdown)
+map gc :set opfunc=lvi-comment<CR>g@           " gcip toggles a paragraph
+map gcc :set opfunc=lvi-comment<CR>g@@         " gcc toggles the current line
