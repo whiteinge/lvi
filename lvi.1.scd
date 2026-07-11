@@ -337,8 +337,11 @@ _contrib/lvi-shell.sh_ do).
 	bare *:w* is special (the buffer is otherwise ordinary), so *:w* _file_ still
 	writes the list to disk. Also reachable with *Ctrl-F* at the *:* prompt.
 
-*d*, *p*
-	Delete, print the addressed lines.
+*d* [_buffer_], *p*
+	Delete or print the addressed lines. *d* saves the deleted lines to a
+	register, like the *d* operator: the unnamed register (") always, plus
+	_buffer_ when a single-letter name follows. (A mark or search address makes
+	the line fall through to the system ex, whose registers lvi cannot see.)
 
 *r* {_file_|*!*_cmd_}
 	Read a file, or the output of a shell _cmd_, after the addressed line.

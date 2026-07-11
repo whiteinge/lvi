@@ -158,15 +158,7 @@ end
 -- -- but the core learns nothing about clipboards: which command is pure config,
 -- and any register name can be backed. The shell-out is injected (ed.reg_read /
 -- ed.reg_write, absent headless), so this module stays pure/testable.
-local function set_reg(ed, name, text, linewise)
-  local r = { text = text, linewise = linewise }
-  if name then
-    ed.regs[name] = r
-    local be = ed.reg_backends[name]
-    if be and be.write and ed.reg_write then ed.reg_write(be.write, text) end
-  end
-  ed.regs['"'] = r
-end
+local set_reg = ex.set_reg   -- one implementation, shared with ex.lua's :d (M.set_reg there)
 
 -- Turn a backend's raw stdout into a register value. A clipboard is just bytes
 -- with no linewise flag, so we infer: text carrying any newline is treated as

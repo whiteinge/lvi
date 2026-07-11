@@ -37,6 +37,22 @@ function M.record_history(ed, cmd)
   if #h > CMDHIST_MAX then table.remove(h, 1) end
 end
 
+-- Write a register value. A register is { text, linewise }. `name` (nil = the
+-- unnamed register only) sets the named register; the unnamed '"' ALWAYS
+-- mirrors the last yank/delete. A command-backed named register (:register)
+-- also pipes its text to `write` (the clipboard seam). Shared by the ex line
+-- commands (:d) and normal.lua's operators so a yank/delete means the same
+-- thing on every surface -- normal.lua binds its `set_reg` to this.
+function M.set_reg(ed, name, text, linewise)
+  local r = { text = text, linewise = linewise }
+  if name then
+    ed.regs[name] = r
+    local be = ed.reg_backends[name]
+    if be and be.write and ed.reg_write then ed.reg_write(be.write, text) end
+  end
+  ed.regs['"'] = r
+end
+
 -- Parse an optional leading address or a,b range. Returns a, b, rest (with a
 -- and b nil when no address is present). Atoms supported: N, '.', '$', and '%'
 -- as shorthand for 1,$.
@@ -615,8 +631,17 @@ def("wq x", function(ed, c)
   return "", "ok"
 end)
 
+-- :[range]d[elete] [buffer] -- delete the lines, saving them to a register just
+-- like the normal-mode `d` operator: always the unnamed '"', plus a named
+-- register when a single-letter buffer is given (POSIX ex's optional buffer
+-- arg). The text is linewise (trailing '\n'), matching a linewise yank/dd, so a
+-- following :put / p pastes whole lines. (Mark/search addresses like :'a,'bd
+-- still fall through to the system ex, whose registers lvi can't see -- see the
+-- addressing note at the top of this file.)
 def("d delete", function(ed, c)
   local from, to = line_range(ed, c.a, c.b)
+  local reg = c.args:match("^(%a)%s*$")           -- optional single-letter buffer
+  M.set_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
   ed.buf:delete(from, to)
   ed.cy = clampline(ed, from)
   ed.cx = 1
