@@ -1753,6 +1753,42 @@ local function apply_lines_filter(ed, opkey, total, interactive)
   end
 end
 
+-- g@{motion}: hand the motion's span to the external `operatorfunc` command,
+-- spawned detached like `:[range]bg` (the same mechanism, driven from a motion
+-- instead of an ex address). This is the non-mutating/async-mutating sibling of
+-- `!`/gq: those pipe the LINES through a filter synchronously and splice stdout
+-- back; g@ exports the span as env ($LVI_LINE1/2, plus $LVI_COL1/2 and $LVI_KIND
+-- for a charwise motion) and lets the tool act over the socket -- so it reaches
+-- part of a line, and plugs into the :hl / hooks substrate. g@@ (doubled) is the
+-- current line(s) + count, matching guu/gqq/!!. `.` repeats it (changed=true).
+local function apply_opfunc(ed, total)
+  local cmd = ed.opts.operatorfunc
+  if not cmd or cmd == "" then return end        -- unarmed: a clean no-op
+  if not ed.spawn_bg then return end
+  local sl, sc, tl, tc, kind, inc = read_gtarget(ed, b("@"), total)
+  if not sl then return end                      -- no such target: clean no-op
+  if kind == "line" then
+    ed.spawn_bg(cmd, nil, math.min(sl, tl), math.max(sl, tl), nil, nil, "line")
+    ed.changed = true
+    return
+  end
+  -- Deliver an inclusive low..high char span in byte columns -- the same contract
+  -- :textobj returns (char L1 C1 L2 C2, both ends inclusive). Order the cursor and
+  -- target, then, for an exclusive motion, drop the high end (step back a column,
+  -- crossing to the prior line's end if it falls off the start). A text object has
+  -- no inc flag (nil) and is inclusive like d/c/y's apply_textobj; a motion always
+  -- carries an explicit true/false.
+  if inc == nil then inc = true end
+  local l1, c1, l2, c2 = sl, sc, tl, tc
+  if l1 > l2 or (l1 == l2 and c1 > c2) then l1, c1, l2, c2 = tl, tc, sl, sc end
+  if not inc then
+    c2 = c2 - 1
+    if c2 < 1 and l2 > l1 then l2 = l2 - 1; c2 = math.max(1, #line(ed, l2)) end
+  end
+  ed.spawn_bg(cmd, nil, l1, l2, c1, c2, "char")
+  ed.changed = true
+end
+
 local operators = { [b("d")] = "d", [b("c")] = "c", [b("y")] = "y",
                     [b(">")] = "shift_r", [b("<")] = "shift_l" }
 
@@ -1800,6 +1836,7 @@ local function command(ed)
     local k2 = getkey(ed)
     if GCASE[k2] then apply_gcase(ed, k2, count1)
     elseif k2 == b("q") then apply_lines_filter(ed, b("q"), count1, false)
+    elseif k2 == b("@") then apply_opfunc(ed, count1)
     else do_motion(ed, { kind = "line", move = function(e, c) return g_motion_move(e, k2, c) end }, count1) end
   elseif motions[k] then
     do_motion(ed, motions[k], count1)

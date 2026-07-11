@@ -94,6 +94,10 @@ local function do_set(ed, args)
   -- so a trailing `" note` never reaches here.)
   local sname, sval = args:match("^(%a+)=(.*)$")
   if sname == "fmtprg" or sname == "fp" then ed.opts.fmtprg = sval; return nil, "ok" end
+  -- operatorfunc: the shell command g@{motion} spawns over the motion's span (see
+  -- normal.lua). A string value bearing spaces, so it needs its own :set line like
+  -- fmtprg. Empty (`:set opfunc=`) disarms g@ back to a no-op.
+  if sname == "operatorfunc" or sname == "opfunc" then ed.opts.operatorfunc = sval; return nil, "ok" end
   for opt in args:gmatch("%S+") do
     local name, val = opt:match("^(%a+)=(.+)$")
     if name then
@@ -115,6 +119,7 @@ local function do_set(ed, args)
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
       elseif n == "fmtprg" or n == "fp" then out[#out + 1] = "fmtprg=" .. ed.opts.fmtprg
+      elseif n == "operatorfunc" or n == "opfunc" then out[#out + 1] = "operatorfunc=" .. ed.opts.operatorfunc
       elseif n == "expandtab" or n == "et" then out[#out + 1] = ed.opts.expandtab and "expandtab" or "noexpandtab"
       elseif n == "autoindent" or n == "ai" then out[#out + 1] = ed.opts.autoindent and "autoindent" or "noautoindent"
       elseif n == "modified" or n == "mod" then out[#out + 1] = ed.buf.modified and "modified" or "nomodified"

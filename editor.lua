@@ -78,7 +78,7 @@ function M.new_ed()
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
-             fmtprg = os.getenv("LVI_FMT") or "fmt" },
+             fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
     hlpri = {},               -- :hi group -> z-order
 
@@ -482,8 +482,15 @@ function M.run(opts)
     -- Range bounds default to empty here (the no-range state every spawn surface
     -- re-establishes); only a ranged `:bg` overwrites them, right after this runs,
     -- so a prior ranged spawn can't leak its L1/L2 into a later rangeless child.
+    -- COL1/COL2/KIND are the g@ (operatorfunc) extension: a motion-scoped span
+    -- carries byte columns and a char/line kind on top of the line pair, so a
+    -- charwise operator can act on part of a line. Blank for a plain :bg range
+    -- (which is line-granular) and for the rangeless case, same discipline.
     sys.setenv("LVI_LINE1", "")
     sys.setenv("LVI_LINE2", "")
+    sys.setenv("LVI_COL1", "")
+    sys.setenv("LVI_COL2", "")
+    sys.setenv("LVI_KIND", "")
   end
   -- Spawn a shell command detached and non-blocking, with its output discarded
   -- (a hook must not write to the tty or block the poll loop). Used to fire
@@ -491,9 +498,13 @@ function M.run(opts)
   -- ranged `:bg` supplies line1/line2, they're exported as $LVI_LINE1/$LVI_LINE2
   -- so a tool can act on a user-typed line range (the read-only sibling of `:!`);
   -- absent, the child sees them empty (cleared by export_context above).
-  ed.spawn_bg = function(cmd, buf, line1, line2)
+  ed.spawn_bg = function(cmd, buf, line1, line2, col1, col2, kind)
     ed.export_context(buf)
     if line1 then sys.setenv("LVI_LINE1", line1); sys.setenv("LVI_LINE2", line2 or line1) end
+    if kind then                                    -- g@: a motion-scoped span
+      sys.setenv("LVI_KIND", kind)
+      if col1 then sys.setenv("LVI_COL1", col1); sys.setenv("LVI_COL2", col2 or col1) end
+    end
     os.execute("(" .. cmd .. ") >/dev/null 2>&1 &")
   end
   -- Command-backed registers (`:register`): a yank/delete into the register pipes
