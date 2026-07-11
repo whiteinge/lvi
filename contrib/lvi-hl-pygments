@@ -41,7 +41,7 @@
 #                        emits no color at any depth.
 import os
 import sys
-from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, guess_lexer, get_lexer_by_name
+from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, get_lexer_by_name
 from pygments.util import ClassNotFound
 from pygments.token import Token
 
@@ -181,6 +181,44 @@ def emit_theme():
     sys.stdout.write("\n".join(out) + "\n")
 
 
+# Interpreter basename -> Pygments lexer name, for shebangs whose basename
+# isn't already a Pygments alias. get_lexer_by_name resolves python/bash/perl/
+# ruby/lua/awk/php/... directly; only these need a hand-mapping.
+SHEBANG_ALIAS = {"node": "javascript", "nodejs": "javascript",
+                 "tclsh": "tcl", "wish": "tcl"}
+
+
+def lexer_from_shebang(text):
+    # A shebang explicitly declares the interpreter, so mapping it to a lexer is
+    # an exact signal -- unlike guess_lexer(text), which never declines and lights
+    # prose as code. Parse the interpreter name ourselves rather than trusting
+    # guess_lexer's shebang scoring: newer lexers' analyse_text hijack it (a
+    # `#!.../python3` file guesses as "Mojo", `node` as "GDScript").
+    if not text.startswith("#!"):
+        return None
+    first = text.split("\n", 1)[0]
+    parts = first[2:].split()
+    if not parts:
+        return None
+    interp = os.path.basename(parts[0])
+    if interp == "env":             # `env [VAR=val ...] [-opts] INTERP`
+        interp = ""
+        for p in parts[1:]:
+            if "=" in p or p.startswith("-"):
+                continue
+            interp = os.path.basename(p)
+            break
+    if not interp:
+        return None
+    name = SHEBANG_ALIAS.get(interp, interp)
+    for cand in (name, name.rstrip("0123456789.")):   # python3.11 -> python
+        try:
+            return get_lexer_by_name(cand)
+        except ClassNotFound:
+            pass
+    return None
+
+
 def pick_lexer(text, fname, lang=""):
     if lang:
         try:
@@ -195,12 +233,17 @@ def pick_lexer(text, fname, lang=""):
                 return guess_lexer_for_filename(fname, text)
             except ClassNotFound:
                 pass
+    # A shebang is an explicit interpreter declaration, so an extension-less
+    # script (or unnamed buffer) still resolves precisely.
+    lx = lexer_from_shebang(text)
+    if lx is not None:
+        return lx
     # Deliberately NO bare guess_lexer(text) last resort: it never declines --
     # it always returns *some* programming lexer, so a plain-text file with no
     # extension (or an unnamed buffer) gets prose painted as code (ordinary
     # words like "class"/"for"/"return" lit as keywords, numbers as Number).
-    # No confident filename/lang match means no highlighting, same as most
-    # editors with an unknown filetype. A .txt resolves to TextLexer above,
+    # No confident filename/lang/shebang match means no highlighting, same as
+    # most editors with an unknown filetype. A .txt resolves to TextLexer above,
     # which tiles as plain Token.Text and so emits no spans anyway.
     return None
 
