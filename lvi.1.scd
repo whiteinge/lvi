@@ -736,55 +736,161 @@ See *contrib/README.md* and *contrib/lvirc.sample*.
 Much of what feels built into other editors is, in *lvi*, a small external
 program that drives the view over the socket -- so it lives *outside* the core
 and you switch it on from the rc file. No language engine, search engine, or
-quickfix machinery lives in *lvi* itself. The tools that ship in _contrib_, with
-the happy-path rc line or map that turns each on:
+quickfix machinery lives in *lvi* itself. Each tool that ships in _contrib_ is
+below, with the happy-path rc lines that turn it on:
 
-- *lvi-highlight* -- syntax highlighting via an external highlighter (Pygments or
-  bat). Turn on with *on change lvi-highlight* (pair with *on bufenter
-  lvi-highlight*); toggle at runtime with *lvi-highlight off*/*on*, or force the
-  language with *lvi-highlight lang* _name_ when detection guesses wrong.
-- *lvi-search* + *lvi-list* -- grep the live (unsaved) buffer into a steppable
-  list; any number of lists coexist, one is _focused_, and the bare step keys
-  act on it. Turn on with *map / :silent !lvi-search<CR>*, *map n :bg lvi-list
-  next<CR>*, *map N :bg lvi-list prev<CR>*, and *on bufenter lvi-list paint*.
-- *lvi-gitchanges* -- step the current file's *git diff* hunks. Turn on with
-  *map \\g :bg lvi-gitchanges<CR>*.
-- *lvi-lint* -- lint the live buffer into a steppable list (ruff, shellcheck,
-  *deno lint* ship; one small adapter per tool). Turn on with *on write
-  lvi-lint* and *map \\e :bg lvi-lint --focus<CR>*.
-- *lvi-spell* -- toggleable spell check: misspelled words marked in place and
-  steppable, with a *z=* suggestion picker and *zg* dictionary add. Turn on with
-  *map \\s :bg lvi-spell<CR>* (and *]s*/*[s* to step).
-- *lvi-fmt* -- run the file's formatter over the live buffer and splice back only
-  the changed window (cursor stays put, one undo reverts, already-formatted is a
-  no-op). Turn on with *map \\= :bg lvi-fmt<CR>*.
-- *lvi-open* -- fuzzy-pick a file and open it in the running view. Turn on with
-  *map \\f :silent !lvi-open<CR>*.
-- *lvi-shell.sh* -- functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the
-  running view from *sh* or any terminal with your shell's own path completion.
-  Source it from your shell's rc, not lvi's.
-- *lvi-tags* -- fuzzy-pick / outline the current file's ctags tags and jump. Turn
-  on with *map \\t :wbuf<CR>:silent !lvi-tags<CR>*.
-- *lvi-fold* -- fold the buffer by structure (*marker* or *indent*); the core
-  ships the fold mechanism (*zf*/*zo*/*zc*/*zR*), this pushes the ranges. Turn on
-  with *map zi :bg lvi-fold<CR>* (marker), *map zI :bg lvi-fold indent<CR>*, or
-  *on bufenter lvi-fold* to auto-fold on open.
-- *lvi-complete* -- insert-mode word completion from the open buffers. Turn on
-  with *on complete lvi-complete*.
-- *lvi-pos* -- remember your position in each file across sessions (viminfo's
-  *`"*). Turn on with *on change lvi-pos save* (also *write*/*bufleave*) and
-  *on ready lvi-pos restore* (also *bufenter*).
-- *lvi-diff* / *lvi-stagediff* -- a two-way vimdiff of two panes (highlight,
-  scrollbind, move hunks with *\\p*/*\\o*, jump with *]c*/*[c*) and, atop it,
-  *git add -p* as a side-by-side diff you stage from with *\\s*. Launch
-  *lvi-diff* (two live panes) or *lvi-diff* _old_ _new_ (two files);
-  *lvi-stagediff* _file_ to stage.
-- *lvi-textobj-tag* -- an HTML/XML tag text object (*it*/*at*) via *textobj*, so
-  *cit*/*dat* work without any HTML parser in the core. Turn on with *textobj t
-  lvi-textobj-tag*.
-- *lvi-incr* -- increment, decrement, or renumber through the *!* filter,
-  recovering Ctrl-A / g-Ctrl-A with no built-in. Turn on with
-  *map <C-a> :.!lvi-incr<CR>* and *map <C-x> :.!lvi-incr -s -1<CR>*.
+*lvi-highlight* -- syntax highlighting
+	An external highlighter (Pygments or bat) repaints the live buffer, unsaved
+	content and all, through the *:hl* overlay. Repaint as you type and on each
+	buffer switch:
+
+	```
+	on change   lvi-highlight
+	on bufenter lvi-highlight
+	```
+
+	Color the token groups with *hi* lines, or seed them from a Pygments style:
+
+	```
+	on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme
+	```
+
+	Toggle at runtime with its *off*/*on*/*toggle* subcommands (a *:syntax off*),
+	or force the language with *lang* _name_ when detection guesses wrong.
+
+*lvi-search* + *lvi-list* -- search and quickfix
+	*lvi-search* greps the live (unsaved) buffer into a *lvi-list* list; every
+	list (search, grep, lint, git hunks) shares one pair of step keys, acting on
+	whichever is _focused_:
+
+	```
+	map / :silent !lvi-search<CR>
+	map * :bg lvi-search "$LVI_CWORD"<CR>
+	map n :bg lvi-list next<CR>
+	map N :bg lvi-list prev<CR>
+	on bufenter lvi-list paint
+	```
+
+*lvi-gitchanges* -- step your git diff
+	Turn *git diff* for the current file into a steppable list of hunks:
+
+	```
+	map \\g :bg lvi-gitchanges<CR>
+	```
+
+*lvi-lint* -- any linter, as a list
+	Lint the live buffer (ruff, shellcheck, *deno lint* ship; one small adapter
+	per tool) into a steppable list; the status counter doubles as the pass/fail
+	glance:
+
+	```
+	on write lvi-lint
+	map \\e :bg lvi-lint --focus<CR>
+	map ]e :bg lvi-list next lint<CR>
+	map [e :bg lvi-list prev lint<CR>
+	```
+
+*lvi-spell* -- spell check, as a toggle
+	Toggle spell check; while on, misspellings are marked in place and stepped,
+	with a suggestion picker and a dictionary add:
+
+	```
+	map \\s :bg lvi-spell<CR>
+	map ]s :bg lvi-list next spell<CR>
+	map [s :bg lvi-list prev spell<CR>
+	map z= :silent !lvi-spell fix<CR>
+	map zg :bg lvi-spell add<CR>
+	```
+
+*lvi-fmt* -- format the buffer
+	Run the file's formatter over the live buffer and splice back only the changed
+	window (cursor stays put, one undo reverts, already-formatted is a no-op):
+
+	```
+	map \\= :bg lvi-fmt<CR>
+	```
+
+*lvi-open* -- open a file
+	Fuzzy-pick a file and open it in the running view:
+
+	```
+	map \\f :silent !lvi-open<CR>
+	```
+
+*lvi-shell.sh* -- drive lvi from your shell
+	Shell functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the running view
+	from *sh* or any terminal, with your shell's own path completion. Source it
+	from your shell's rc, not lvi's:
+
+	```
+	. lvi-shell.sh
+	```
+
+*lvi-tags* -- jump to / outline symbols
+	Fuzzy-pick the current file's ctags tags -- a jump-to-symbol and a file
+	outline in one key. *:wbuf* snapshots the live buffer for the picker to read:
+
+	```
+	map \\t :wbuf<CR>:silent !lvi-tags<CR>
+	```
+
+*lvi-fold* -- fold by structure
+	The core ships the fold mechanism (*zf*/*zo*/*zc*/*zR*); *lvi-fold* supplies
+	the policy, folding by *marker* or *indent*:
+
+	```
+	map zi :bg lvi-fold<CR>
+	map zI :bg lvi-fold indent<CR>
+	on bufenter lvi-fold
+	```
+
+*lvi-complete* -- insert-mode completion
+	Complete the word before the cursor from every open buffer, on insert-mode
+	*Ctrl-N*/*Ctrl-P*:
+
+	```
+	on complete lvi-complete
+	```
+
+*lvi-pos* -- position memory
+	Remember where you were in each file across sessions (viminfo's *`"*), in a
+	plain-text store:
+
+	```
+	on change   lvi-pos save
+	on write    lvi-pos save
+	on bufleave lvi-pos save
+	on ready    lvi-pos restore
+	on bufenter lvi-pos restore
+	```
+
+*lvi-diff* / *lvi-stagediff* -- diff and staging
+	A two-way vimdiff of two panes: highlighted, scrollbound, hunks moved with
+	*\\p*/*\\o* and jumped with *]c*/*[c*. *lvi-stagediff* layers *git add -p* on
+	top. These are commands, not rc lines:
+
+	```
+	lvi-diff                 " the sole pair of live panes
+	lvi-diff old new         " two files, in a new tmux window
+	lvi-stagediff file       " git add -p, side by side
+	```
+
+*lvi-textobj-tag* -- HTML/XML tag object
+	Add Vim's tag object (*it*/*at*) so *cit*/*dat*/*yat* act on the enclosing
+	element, with no HTML parser in the core:
+
+	```
+	textobj t lvi-textobj-tag
+	```
+
+*lvi-incr* -- increment / renumber
+	Rewrite the first number on each piped line through the *!* filter (recovering
+	Ctrl-A / g-Ctrl-A, which the core has no built-in for):
+
+	```
+	map <C-a> :.!lvi-incr<CR>
+	map <C-x> :.!lvi-incr -s -1<CR>
+	```
 
 The lines above are the happy path. *contrib/lvirc.sample* has the full annotated
 set -- every binding, theme, and variant -- and each tool's *-h* (or
