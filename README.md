@@ -57,6 +57,11 @@ Linux, macOS, BSD, and WSL.
   window manager. The socket allows cross-view coordination via scripts
   (see [`contrib/lvi-diff`](contrib/)). (Multiple buffers *within* a view
   are supported; on-screen splits are not.)
+- **No gutter.** No line-number column, sign column, or fold margin: the
+  renderer draws buffer text from the left edge, so every screen column is real
+  content and the highlight overlay stays a recolor, not a layout. `:set number`
+  is the POSIX-vi feature this drops; `Ctrl-G` (or `:.=`) reports the current
+  line and the ruler carries line:column instead.
 - **UNIX only.** POSIX environment and standard CLI tools assumed; Windows
   outside WSL is out of scope.
 

@@ -396,7 +396,9 @@ _contrib/lvi-shell.sh_ do).
 
 	*wrap*, *nowrap*
 		Soft-wrap long lines onto the next screen row, or truncate them at the
-		right edge.
+		right edge. Either way *lvi* draws buffer text from the left edge with
+		no gutter: no line-number, sign, or fold column. *Ctrl-G* (or *:.=*)
+		reports the current line, and the ruler carries line:column.
 	*linebreak*, *nolinebreak* (*lbr*, *nolbr*)
 		When wrapping, break at the last whitespace that fits instead of
 		mid-word; a single word wider than the screen still breaks mid-word.
