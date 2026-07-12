@@ -246,6 +246,57 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  -- POSIX's lone operator-specific region: `c` over w/W stops at the end of the
+  -- word and keeps the trailing blanks, where dw/yw eat them. See normal.lua's
+  -- change_word_target. cw is NOT `ce`: they diverge on the last char of a word.
+  describe("cw / cW keep the trailing blanks (POSIX c-command carve-out)", function()
+    it("cw on a word start changes the word only, leaving the space", function()
+      local ed = make("foo bar")
+      feed(ed, "cwX" .. ESC)
+      expect(ed.buf:line(1)).to.equal("X bar")       -- space before 'bar' preserved
+      expect(ed.regs['"'].text).to.equal("foo")      -- no trailing space (contrast dw's "foo ")
+    end)
+    it("cw mid-word changes to the end of the word", function()
+      local ed = make("foo bar")
+      feed(ed, "lcw" .. ESC)                          -- cursor on the 2nd 'o'
+      expect(ed.buf:line(1)).to.equal("f bar")
+      expect(ed.regs['"'].text).to.equal("oo")
+    end)
+    it("cw on the last char of a word changes just that char (cw != ce)", function()
+      local ed = make("foo bar")
+      feed(ed, "llcw" .. ESC)                         -- cursor on the final 'o' of 'foo'
+      expect(ed.buf:line(1)).to.equal("fo bar")       -- ce here would run into 'bar'
+      expect(ed.regs['"'].text).to.equal("o")
+    end)
+    it("cw on a blank changes only that blank (POSIX rule 1)", function()
+      local ed = make("a b")
+      feed(ed, "l")                                   -- onto the single space
+      feed(ed, "cwX" .. ESC)
+      expect(ed.buf:line(1)).to.equal("aXb")          -- just the blank replaced
+      expect(ed.regs['"'].text).to.equal(" ")
+    end)
+    it("c2w keeps the blank before the count-th word", function()
+      local ed = make("foo bar baz")
+      feed(ed, "c2wX" .. ESC)
+      expect(ed.buf:line(1)).to.equal("X baz")
+      expect(ed.regs['"'].text).to.equal("foo bar")
+    end)
+    it("cw stops at punctuation but cW spans the whole bigword", function()
+      local ed = make("foo.bar baz")
+      feed(ed, "cwX" .. ESC)
+      expect(ed.buf:line(1)).to.equal("X.bar baz")
+      local ed2 = make("foo.bar baz")
+      feed(ed2, "cWX" .. ESC)
+      expect(ed2.buf:line(1)).to.equal("X baz")       -- bigword eats the dot
+    end)
+    it("dw still eats the trailing blank (operator-agnostic motion unchanged)", function()
+      local ed = make("foo bar")
+      feed(ed, "dw")
+      expect(ed.buf:line(1)).to.equal("bar")
+      expect(ed.regs['"'].text).to.equal("foo ")
+    end)
+  end)
+
   describe("text objects", function()
     it("diw deletes the word under the cursor (from within)", function()
       local ed = make("foo bar baz")

@@ -533,6 +533,41 @@ local function word_end(ed, count, big)
   return l, math.max(1, c)
 end
 
+-- The cw/cW special case. POSIX makes the w/W motion's region depend on which
+-- operator is pending (MANPAGE-vi.txt "Move to Beginning of Bigword", rules
+-- 1/3/4): a *change* stops at the end of the word, leaving the trailing blanks,
+-- while d/y eat them -- so `cw` clears just the word and drops you in front of
+-- the gap (the classic "cw a rebase todo's `pick`" case). This is the ONE place
+-- POSIX keys a region off the operator; every other motion is operator-agnostic
+-- (see apply_operator), so it lives as an opt-in hook on the two motion entries
+-- rather than a branch in the generic operator path -- mirroring POSIX, which
+-- documents the carve-out inside the motion, not the c command.
+--
+-- NB: NOT a clean alias for `ce`. On the last char of a word, `cw` changes only
+-- that char while `ce` runs to the next word's end. The faithful transform is
+-- word_forward's landing (the start of the next word) backed up over the blanks
+-- to the last non-blank -- the end of the word the change should stop at.
+local function change_word_target(ed, count, big)
+  local s = line(ed, ed.cy)
+  local onc = (ed.cx <= #s) and s:sub(ed.cx, ed.cx) or ""
+  if (count or 1) == 1 and (onc == "" or wclass(onc, big) == "blank") then
+    return ed.cy, ed.cx, true          -- rule 1: change just the char under the cursor
+  end
+  local tl, tc = word_forward(ed, count, big)
+  local pl, pc = tl, tc - 1             -- one char back from the next word's start
+  while pl > ed.cy or (pl == ed.cy and pc > ed.cx) do
+    if pc < 1 then
+      pl = pl - 1; pc = #line(ed, pl)   -- landing was at column 1: step to prior line's end
+    elseif wclass(line(ed, pl):sub(pc, pc), big) == "blank" then
+      pc = pc - 1                       -- skip back over the separating blanks
+    else
+      break                             -- sitting on the word's last non-blank
+    end
+  end
+  if pl < ed.cy or (pl == ed.cy and pc < ed.cx) then pl, pc = ed.cy, ed.cx end
+  return pl, math.max(1, pc), true
+end
+
 -- Last occurrence of ch that STARTS at a byte < bound (nil if none). ch may be
 -- multibyte; matches stay char-aligned because a UTF-8 lead byte never appears
 -- mid-character, so a plain byte find can only land on a char boundary.
@@ -584,10 +619,14 @@ local flip = { f = "F", F = "f", t = "T", T = "t" }
 -- Paragraph ({ }) and section ([[ ]]) motions. Pragmatic subset of POSIX: a
 -- SECTION boundary is a line starting with '{' or <form-feed>, or the first/last
 -- line; a PARAGRAPH boundary is a section boundary or an empty line. We skip the
--- nroff `sections`/`paragraphs` macro options (lvi has none) and POSIX's rule
--- that switches these between line/char mode as operator targets -- they are
--- plain charwise-exclusive motions landing on the boundary line's first column
--- (the common vim behavior; see MANPAGE-vi.txt "section/paragraph boundary").
+-- nroff `sections`/`paragraphs` macro options (lvi has none). The cursor lands on
+-- the boundary line's first column, which matches vim. We also skip POSIX's rule
+-- (MANPAGE-vi.txt "section/paragraph boundary") that promotes these to line mode
+-- when they're an operator target at a line boundary: they stay plain charwise-
+-- exclusive, so `d}` deletes to the boundary where vi/vim would take whole lines.
+-- Unlike cw's carve-out (change_word_target), this promotion is operator-agnostic
+-- and needs per-cursor line/char negotiation, so it's a deliberate divergence,
+-- not a wart worth teaching every operator -- documented on `d c y` in the manpage.
 local function is_boundary(ed, l, section_only)
   local s = line(ed, l)
   local c = s:sub(1, 1)
@@ -851,10 +890,12 @@ local motions = {
   [b("0")] = { kind = "char", move = function(ed) return ed.cy, 1 end },
   [b("^")] = { kind = "char", move = function(ed) return ed.cy, first_nonblank(line(ed, ed.cy)) end },
   [b("$")] = { kind = "char", inclusive = true, move = function(ed) return ed.cy, math.max(1, #line(ed, ed.cy)) end },
-  [b("w")] = { kind = "char", move = word_forward },
+  [b("w")] = { kind = "char", move = word_forward,
+               c_target = function(ed, n) return change_word_target(ed, n, false) end },
   [b("b")] = { kind = "char", move = word_back },
   [b("e")] = { kind = "char", inclusive = true, move = word_end },
-  [b("W")] = { kind = "char", move = function(ed, n) return word_forward(ed, n, true) end },
+  [b("W")] = { kind = "char", move = function(ed, n) return word_forward(ed, n, true) end,
+               c_target = function(ed, n) return change_word_target(ed, n, true) end },
   [b("B")] = { kind = "char", move = function(ed, n) return word_back(ed, n, true) end },
   [b("E")] = { kind = "char", inclusive = true, move = function(ed, n) return word_end(ed, n, true) end },
   [b("%")] = { kind = "char", inclusive = true, jump = true, move = match_bracket },
@@ -1001,6 +1042,13 @@ end
 local SHIFT = { shift_r = true, shift_l = true }
 
 local function apply_operator(ed, op, m, count, reg)
+  -- The lone operator-specific region in POSIX vi: `c` over w/W stops at the end
+  -- of the word instead of eating the trailing blanks (see change_word_target).
+  if op == "c" and m.c_target then
+    local tl, tc, inc = m.c_target(ed, count)
+    op_chars_range(ed, op, ed.cy, ed.cx, tl, tc, inc, reg)
+    return
+  end
   local tl, tc, inc = m.move(ed, count)
   if inc == nil then inc = m.inclusive end
   if m.kind == "line" or SHIFT[op] then

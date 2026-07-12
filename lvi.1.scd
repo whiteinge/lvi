@@ -67,7 +67,10 @@ leading count, e.g. *3dw*.
 	First column, first non-blank, end of line.
 
 *w* *b* *e*
-	Next word, previous word, end of word (cross line boundaries).
+	Next word, previous word, end of word (cross line boundaries). As an
+	operator target, *cw*/*cW* stop at the end of the word and keep the
+	trailing blanks (so *cw* over a rebase todo's *pick* leaves the space),
+	while *dw*/*yw* take them.
 
 *f*_x_ *t*_x_ *F*_x_ *T*_x_ *;* *,*
 	Find _x_ forward/backward on the line; *;* and *,* repeat it.
@@ -98,7 +101,9 @@ leading count, e.g. *3dw*.
 
 *d* *c* *y*
 	Delete, change, yank over a motion (e.g. *dw*, *c$*, *y`a*). Doubled
-	(*dd* *cc* *yy*) they act on whole lines.
+	(*dd* *cc* *yy*) they act on whole lines. Over the paragraph and section
+	motions (*{* *}* *[[* *]]*) an operator stays charwise, so *d}* deletes to
+	the boundary rather than promoting to whole lines the way POSIX vi can.
 
 _operator_*i*_object_, _operator_*a*_object_
 	Text objects: in place of a motion an operator may take an _object_ around
