@@ -355,6 +355,23 @@ hook can't set that mark safely — `on change` can fire mid-insert, where
 the keystrokes would land as text — so the core stamps it directly;
 the tool owns only the cross-session `` `" ``.)
 
+### `lvi-gmark` — global (cross-file) marks, `A`–`Z`
+
+vi's uppercase marks remember a *file* as well as a position, so `` `A `` jumps
+to that file from any buffer or any later session — where lowercase `a`–`z` are
+local to one buffer. lvi's core marks are all per-buffer `(line, col)` with no
+path; `lvi-gmark` adds the global layer as a **plain-text store** (one
+`mark⇥path⇥line⇥col` line under `$XDG_STATE_HOME`, naturally capped at one slot
+per letter, so nothing to prune) plus two `:on` hooks.
+
+The seam is in the core; the storage isn't. Pressing `m<A-Z>` fires a `markset`
+event and `` `<A-Z> ``/`'<A-Z>` fires `markjump`, each handing the letter to the
+hook in `$LVI_MARK`. `set` (on `markset`) records the file and position; `go` (on
+`markjump`) opens that file and moves there over the socket. The jump is
+asynchronous, which is why the core leaves the cursor put and adds no jumplist
+entry for it. With the hooks unset, uppercase marks stay ordinary buffer-local
+marks, so turning this on is purely additive.
+
 ### `lvi-yankring` — cycle through yank/delete history at paste time
 
 vim's YankRing / yanky.nvim: every yank and delete is remembered, and after a

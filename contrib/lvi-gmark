@@ -1,0 +1,118 @@
+#!/bin/sh
+# lvi-gmark [-w auto|WID] set [MARK] | go [MARK] | list | del MARK
+#
+# Global (uppercase) marks -- vi/vim's file marks `A`-`Z`, which unlike the
+# per-buffer lowercase marks remember a FILE as well as a position, so `` `A ``
+# takes you to that file from any buffer or any later session. lvi keeps them out
+# of the core (its marks are per-buffer (line, col) with no path); this tool is
+# the store and the two `:on` hooks that back them.
+#
+# It plugs into the core's global-mark seam: pressing *m<A-Z>* fires the `markset`
+# event and *`<A-Z>* / *'<A-Z>* fires `markjump`, each handing the mark letter to
+# the hook in $LVI_MARK (with $LVI_FILE/$LVI_LINE/$LVI_COL for set). So the whole
+# feature is this script plus two rc lines -- no key mappings. Wire it up (see
+# lvirc.sample):
+#
+#     on markset  lvi-gmark set
+#     on markjump lvi-gmark go
+#
+# With those hooks absent, uppercase marks stay ordinary buffer-local marks (the
+# core's graceful fallback), so turning this on is purely additive.
+#
+# Subcommands:
+#   set [MARK]   persist $LVI_FILE:$LVI_LINE:$LVI_COL under MARK (default
+#                $LVI_MARK, set by the markset hook). Overwrites MARK's slot.
+#   go  [MARK]   look MARK up and jump there: opens its file (unless already
+#                current) and moves the cursor, over the socket. Unset -> a message,
+#                no move. The jump is ASYNChronous (a detached client sends the
+#                open + move back), which is why the core leaves the cursor put and
+#                records no jumplist entry for a `<A-Z>.
+#   list         print every mark as MARK<TAB>FILE<TAB>LINE<TAB>COL (bind to a key,
+#                e.g. `map <Space>m :!lvi-gmark list<CR>`, or run from a shell).
+#   del MARK     forget MARK.
+#
+# THE STORE is a tab-delimited text file, one line per mark, grep-able and
+# hand-editable:
+#     MARK<TAB>/abs/path<TAB>LINE<TAB>COL
+# It is naturally bounded -- one slot per letter, ~26 lines -- so unlike lvi-pos
+# there is no size cap to tune. It lives under $XDG_STATE_HOME (machine-written
+# state, persisting across reboots -- NOT the ephemeral socket dir); override the
+# whole path with LVI_GMARK_FILE. Paths are absolutised against $PWD (the hook
+# inherits the editor's launch directory) so the same file keys the same slot no
+# matter where lvi was started.
+#
+# Config: LVI (client, default `lvi`), LVI_GMARK_FILE (store path, default
+# $XDG_STATE_HOME/lvi/marks). Run from inside lvi ($LVI_WID/$LVI_MARK/$LVI_FILE...
+# exported by the hook); from elsewhere pass -w, name the MARK, and cd to the tree
+# so relative paths resolve alike.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+store=${LVI_GMARK_FILE:-${XDG_STATE_HOME:-$HOME/.local/state}/lvi/marks}
+
+want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+sub=${1:-}; [ -n "$sub" ] && shift
+target=${want_wid:-${LVI_WID:-auto}}
+send() { $LVI -w "$target" --detach -- "$@"; }
+
+# Absolutise a path against the editor's launch dir, so a slot keys the same file
+# regardless of where the client is invoked from (matches lvi-pos).
+abspath() { case "$1" in /*) printf '%s' "$1" ;; *) printf '%s' "$PWD/$1" ;; esac; }
+
+case "$sub" in
+set)
+  mark=${1:-$LVI_MARK}
+  case "$mark" in [A-Z0-9]) ;; *) echo "lvi-gmark: MARK must be one of A-Z 0-9" >&2; exit 2 ;; esac
+  file=$LVI_FILE
+  case "$file" in ""|"[No File]"|"[No Name]") exit 0 ;; esac    # unnamed buffer: nothing to key on
+  file=$(abspath "$file")
+  line=${LVI_LINE:-1}; col=${LVI_COL:-1}
+  case "$line" in ''|*[!0-9]*) line=1 ;; esac
+  case "$col"  in ''|*[!0-9]*) col=1  ;; esac
+  mkdir -p "$(dirname "$store")" 2>/dev/null || exit 0
+  tmp=$(mktemp "$store.XXXXXX") || exit 0
+  trap 'rm -f "$tmp"' EXIT INT TERM
+  # Drop any old row for this mark, append the fresh one. awk keys on field 1
+  # (the single letter), so tabs alone separate columns and a path with spaces or
+  # colons is safe. mv makes the replacement atomic.
+  { awk -F'\t' -v m="$mark" '$1 != m' "$store" 2>/dev/null
+    printf '%s\t%s\t%s\t%s\n' "$mark" "$file" "$line" "$col"
+  } >"$tmp" && mv "$tmp" "$store"
+  ;;
+go)
+  mark=${1:-$LVI_MARK}
+  case "$mark" in [A-Z0-9]) ;; *) echo "lvi-gmark: MARK must be one of A-Z 0-9" >&2; exit 2 ;; esac
+  # Read the slot. awk emits "FILE<TAB>LINE<TAB>COL" for the row, or nothing.
+  row=$(awk -F'\t' -v m="$mark" '$1 == m { print $2 "\t" $3 "\t" $4; exit }' "$store" 2>/dev/null)
+  [ -n "$row" ] || { send "msge global mark $mark not set"; exit 0; }
+  file=$(printf '%s' "$row" | cut -f1)
+  line=$(printf '%s' "$row" | cut -f2); col=$(printf '%s' "$row" | cut -f3)
+  case "$line" in ''|*[!0-9]*) line=1 ;; esac
+  case "$col"  in ''|*[!0-9]*) col=1  ;; esac
+  # Open the file only when it isn't already current, then move. :pos is the
+  # byte-exact setter (a plain NG lands on the first non-blank) and clamps a stale
+  # line/col into the buffer if the file shrank since we marked it.
+  cur=; [ -n "${LVI_FILE:-}" ] && cur=$(abspath "$LVI_FILE")
+  if [ "$file" = "$cur" ]; then
+    send "pos $line $col"
+  else
+    send "e \"$file\"" "pos $line $col"
+  fi
+  ;;
+list)
+  [ -s "$store" ] && cat "$store" || echo "no global marks"
+  ;;
+del)
+  mark=${1:-}
+  case "$mark" in [A-Z0-9]) ;; *) echo "usage: lvi-gmark del MARK" >&2; exit 2 ;; esac
+  [ -f "$store" ] || exit 0
+  tmp=$(mktemp "$store.XXXXXX") || exit 0
+  trap 'rm -f "$tmp"' EXIT INT TERM
+  awk -F'\t' -v m="$mark" '$1 != m' "$store" >"$tmp" && mv "$tmp" "$store"
+  ;;
+*)
+  echo "usage: lvi-gmark [-w auto|WID] set [MARK] | go [MARK] | list | del MARK" >&2
+  exit 2
+  ;;
+esac

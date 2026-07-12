@@ -181,6 +181,51 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  describe("global-mark seam (markset / markjump)", function()
+    -- Stub the event surface: record (event, $LVI_MARK-at-fire-time) per fire.
+    local function with_hooks(ed)
+      ed.hooks = { markset = { "lvi-gmark set" }, markjump = { "lvi-gmark go" } }
+      local fired = {}
+      ed.fire_event = function(ev) fired[#fired + 1] = { ev, ed.event_mark } end
+      return fired
+    end
+    it("m<A-Z> fires markset with the mark char and does NOT store a core mark", function()
+      local ed = make("hello\nworld")
+      local fired = with_hooks(ed)
+      feed(ed, "jmA")                          -- global mark A on line 2
+      expect(#fired).to.equal(1)
+      expect(fired[1][1]).to.equal("markset")
+      expect(fired[1][2]).to.equal("A")        -- event_mark set during the fire
+      expect(ed.marks["A"]).to_not.exist()     -- uppercase bypasses ed.marks
+      expect(ed.event_mark).to.equal(false)    -- cleared afterward
+    end)
+    it("`<A-Z> fires markjump and leaves the cursor put (the tool moves async)", function()
+      local ed = make("a\nb\nc\nd")
+      local fired = with_hooks(ed)
+      feed(ed, "3G")                           -- cursor to line 3 (no event)
+      feed(ed, "`A")
+      expect(#fired).to.equal(1)
+      expect(fired[1][1]).to.equal("markjump")
+      expect(fired[1][2]).to.equal("A")
+      expect(ed.cy).to.equal(3)                -- unmoved by lvi itself
+    end)
+    it("lowercase marks stay core and never fire an event", function()
+      local ed = make("a\nb\nc")
+      local fired = with_hooks(ed)
+      feed(ed, "jma")                          -- local mark a on line 2
+      expect(#fired).to.equal(0)
+      expect(ed.marks["a"]).to.exist()
+      feed(ed, "G`a"); expect(ed.cy).to.equal(2)  -- jumps locally, still no event
+      expect(#fired).to.equal(0)
+    end)
+    it("uppercase degrades to a buffer-local mark when no hook is registered", function()
+      local ed = make("a\nb\nc")               -- fire_event nil, hooks {}
+      feed(ed, "jmA")
+      expect(ed.marks["A"]).to.exist()         -- stored locally as the fallback
+      feed(ed, "G`A"); expect(ed.cy).to.equal(2)
+    end)
+  end)
+
   describe("UTF-8", function()
     local E = "\195\169" -- 'é', 2 bytes, 1 cell
     it("h and l move by character across multibyte", function()

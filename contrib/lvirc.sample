@@ -233,6 +233,18 @@ on ready    lvi-pos restore     " restore the file(s) opened at startup
 " of a buffer you're revisiting.
 on bufenter lvi-pos restore
 
+" ---- global marks (vi's uppercase file marks A-Z) ----------------------------
+" Lowercase marks a-z are per-buffer and built in; uppercase A-Z remember a FILE
+" too, so `A jumps to that file from anywhere. lvi-gmark stores them (one
+" mark/path/line/col line under $XDG_STATE_HOME, LVI_GMARK_FILE to move it). The
+" core fires markset when you press m<A-Z> and markjump on `<A-Z>/'<A-Z>, handing
+" the letter to the hook; with these two lines gone, uppercase marks fall back to
+" ordinary buffer-local ones.
+on markset  lvi-gmark set
+on markjump lvi-gmark go
+" List them any time (or bind a key): !lvi-gmark list
+map <Space>m :!lvi-gmark list<CR>
+
 " ---- custom text objects ------------------------------------------------------
 " Builtin objects (iw, i(, i", ip, ...) are in the core; language-aware ones are
 " a `:textobj KEY CMD` filter -- lvi shells CMD out synchronously and applies the

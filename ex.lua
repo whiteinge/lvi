@@ -21,7 +21,8 @@ local M = {}
 -- buf* events fire on buffer switches (editor.lua/bufs.lua).
 local EVENTS = { change = true, write = true, ready = true,
                  bufenter = true, bufleave = true, bufdelete = true,
-                 complete = true, scroll = true }
+                 complete = true, scroll = true,
+                 markset = true, markjump = true }
 
 -- Command-line history. The ':' prompt (Ctrl-P/N) and the :cmdwin buffer both
 -- append here via record_history and read ed.cmdhist directly. A rolling recent

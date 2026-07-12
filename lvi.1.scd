@@ -171,7 +171,11 @@ _operator_*i*_object_, _operator_*a*_object_
 	line below/above.
 
 *m*_m_
-	Set mark _m_ at the cursor. Marks are per-buffer; *:marks* lists them.
+	Set mark _m_ at the cursor. Lowercase marks are per-buffer; *:marks* lists
+	them. Uppercase marks _A_-_Z_ are the seam for global, cross-file marks: with
+	*contrib/lvi-gmark* wired up (*on markset* / *on markjump*) they remember a
+	file as well as a position, so *`*_A_ jumps to that file from anywhere; with
+	no such hook they fall back to ordinary buffer-local marks.
 
 *u* *Ctrl-R*
 	Undo, redo (multi-level).
@@ -523,7 +527,10 @@ _contrib/lvi-shell.sh_ do).
 	and rc loaded -- the analog of vim's *VimEnter*, e.g. to load a *-q* list), or
 	*bufenter*/*bufleave*/*bufdelete* (buffer switches, with that buffer's path in
 	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
-	*contrib/lvi-list*). *complete* is special: not auto-fired but run
+	*contrib/lvi-list*), or *markset*/*markjump* (an uppercase mark *m*_A-Z_ was
+	set, or *`*_A-Z_ / *'*_A-Z_ jumped to, with the letter in *LVI_MARK* -- the
+	seam *contrib/lvi-gmark* uses for global, cross-file marks). *complete* is
+	special: not auto-fired but run
 	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and is a single
 	completer that replaces on re-register instead of composing. Socket-driven
 	changes never fire *change*/*scroll* (only keyboard input does), so a hook's
@@ -574,10 +581,13 @@ _contrib/lvi-shell.sh_ do).
 	marked line with leading blanks stripped; _col_ is the 1-based byte column,
 	as *pos* reports). No argument lists every set mark -- _a_-_z_, then the
 	automatic *.* (last change) and any others (*m* accepts any character); give
-	mark names to restrict it (*marks a .*). Marks are PER-BUFFER (bufs swaps
-	them with the rest of the view state), so this lists the current buffer's
-	set: lvi has no global or file marks, and even *mA* is buffer-local, so there
-	is no file column. Multi-line output pages like *%p* at the prompt.
+	mark names to restrict it (*marks a .*). These marks are PER-BUFFER (bufs
+	swaps them with the rest of the view state), so this lists the current
+	buffer's set, and there is no file column. The core has no global or file
+	marks of its own; uppercase _A_-_Z_ are delegated to a tool when one is wired
+	up (see *m* and *on markset*), and it owns their listing, so they do not
+	appear here unless left as the buffer-local fallback. Multi-line output pages
+	like *%p* at the prompt.
 
 *jumps*, *changes*
 	List the jumplist (*Ctrl-O* / *Ctrl-I*) or changelist (*g;* / *g,*), oldest

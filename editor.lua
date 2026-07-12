@@ -75,6 +75,7 @@ function M.new_ed()
     hooks = {},               -- :on event -> { cmd, ... }
     textobj_cmds = {},        -- :textobj KEY -> CMD (custom objects; see ex.textobj_range)
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
+    event_mark = false,       -- transient: the A-Z char while a markset/markjump hook fires (-> $LVI_MARK)
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
@@ -486,6 +487,10 @@ function M.run(opts)
     sys.setenv("LVI_COL", ed.cx)
     sys.setenv("LVI_TOP", ed.top)          -- viewport top line, for `on scroll`
     sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
+    -- The A-Z char behind a `markset`/`markjump` fire (the global-mark seam);
+    -- empty for every other spawn, so no child sees a stale mark. Set transiently
+    -- by normal.lua right around the fire, same discipline as the range vars below.
+    sys.setenv("LVI_MARK", ed.event_mark or "")
     -- Range bounds default to empty here (the no-range state every spawn surface
     -- re-establishes); only a ranged `:bg` overwrites them, right after this runs,
     -- so a prior ranged spawn can't leak its L1/L2 into a later rangeless child.

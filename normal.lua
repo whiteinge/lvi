@@ -876,6 +876,26 @@ local function g_motion_move(ed, k2, count)
   return l, disp.byteat(line(ed, l), W, ts, sub, ccol, lb)
 end
 
+-- The global-mark seam. Uppercase marks A-Z are delegated to an external tool
+-- (contrib/lvi-gmark) rather than lvi's per-buffer ed.marks: `m{A-Z}` fires the
+-- `markset` event and `` `{A-Z} `` / '{A-Z} fires `markjump`, each handing the
+-- char to the hook via $LVI_MARK. The tool owns the (cross-session, file-aware)
+-- storage -- on set it persists file+line+col, on jump it opens the file and
+-- moves over the socket -- so the core keeps no path-bearing marks and no
+-- shared-file format. Fired only when the matching hook is registered; with none
+-- (the tool not wired up), uppercase degrades to an ordinary buffer-local mark,
+-- so it never silently no-ops. jump returns the cursor unmoved (the tool moves
+-- asynchronously), so do_motion records no jumplist entry for it. Returns true
+-- when the event was fired (the caller then does nothing more).
+local function mark_event(ed, event, ch)
+  local hooks = ed.hooks and ed.hooks[event]
+  if not (ed.fire_event and hooks and #hooks > 0) then return false end
+  ed.event_mark = ch
+  ed.fire_event(event)          -- synchronous: spawns detached children with $LVI_MARK set
+  ed.event_mark = false
+  return true
+end
+
 local motions = {
   [b("h")] = { kind = "char", move = function(ed, n)
     local s, c = line(ed, ed.cy), ed.cx
@@ -916,12 +936,16 @@ local motions = {
   -- (which may instead be gU/gq/...) is handled in command().
   [b("g")] = { kind = "line", move = function(ed, count) return g_motion_move(ed, getkey(ed), count) end },
   [96] = { kind = "char", jump = true, move = function(ed) -- `{mark}: exact position
-    local m = ed.marks[string.char(getkey(ed))]
+    local ch = string.char(getkey(ed))
+    if ch:match("%u") and mark_event(ed, "markjump", ch) then return ed.cy, ed.cx end
+    local m = ed.marks[ch]
     if not m then return ed.cy, ed.cx end
     return m[1], m[2]
   end },
   [39] = { kind = "line", jump = true, move = function(ed) -- '{mark}: mark's line
-    local m = ed.marks[string.char(getkey(ed))]
+    local ch = string.char(getkey(ed))
+    if ch:match("%u") and mark_event(ed, "markjump", ch) then return ed.cy, ed.cx end
+    local m = ed.marks[ch]
     if not m then return ed.cy, ed.cx end
     local l = math.max(1, math.min(m[1], ed.buf:nlines()))
     return l, first_nonblank(line(ed, l))
@@ -1494,7 +1518,10 @@ actions = {
   [b("p")] = function(ed, _, reg) do_put(ed, true, reg) end,
   [b("P")] = function(ed, _, reg) do_put(ed, false, reg) end,
   [b("m")] = function(ed) -- m{mark}: set a mark at the cursor
-    ed.marks[string.char(getkey(ed))] = { ed.cy, ed.cx }
+    local ch = string.char(getkey(ed))
+    if not (ch:match("%u") and mark_event(ed, "markset", ch)) then
+      ed.marks[ch] = { ed.cy, ed.cx }
+    end
   end,
   [26] = function(ed) if ed.suspend_self then ed.suspend_self() end end, -- Ctrl-Z: suspend
   -- Ctrl-L: force a full redraw (classic vi). The driver clears the screen
