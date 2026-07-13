@@ -27,8 +27,11 @@ It runs on LuaJIT alone: no compiler, no build step, and no C dependency to
 install, on Linux, macOS, BSD, and WSL.
 
 Invoked with file arguments (or none), *lvi* starts the interactive editor; the
-first file becomes the current buffer. Invoked with *-w* it is instead a client
-that sends ex commands to an already-running view (see *THE CONTROL SOCKET*).
+first file becomes the current buffer. A _file_ of *-* reads that buffer from
+standard input (*printf 'x\\n' | lvi -*); *lvi* still opens on the terminal for
+editing. That buffer is unnamed, so *:w* needs a target. Invoked with *-w* it is
+instead a client that sends ex commands to an already-running view (see *THE
+CONTROL SOCKET*).
 
 # OPTIONS
 

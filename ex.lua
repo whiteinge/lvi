@@ -712,7 +712,9 @@ def("p print", function(ed, c)
 end)
 
 def("f file", function(ed)
-  return ('"%s" %d lines'):format(ed.buf.path or "[No File]", ed.buf:nlines()), "ok"
+  -- Match the status line (render): a pathless buffer reports its display name
+  -- ([stdin], [Command Line], ...) if it has one, else the generic label.
+  return ('"%s" %d lines'):format(ed.buf.path or ed.buf.name or "[No File]", ed.buf:nlines()), "ok"
 end)
 
 def("u undo", function(ed)

@@ -64,6 +64,8 @@ typedef void (*lvi_sighandler)(int);
 lvi_sighandler signal(int signum, lvi_sighandler handler);
 int   raise(int sig);
 int   close(int fd);
+int   open(const char *pathname, int flags);
+int   dup2(int oldfd, int newfd);
 long  read(int fd, void *buf, unsigned long count);        /* ssize_t/size_t */
 long  write(int fd, const void *buf, unsigned long count);
 int   unlink(const char *pathname);
@@ -301,6 +303,34 @@ function M.write(fd, s)
 end
 
 function M.close(fd) return C.close(fd) == 0 end
+
+--- Read fd to EOF and return all its bytes (blocking). Used to slurp piped
+--- stdin for `lvi -` before fd 0 is repurposed as the keyboard. Since nothing
+--- has touched Lua's stdio for this fd, raw reads see the whole stream.
+function M.slurp(fd)
+  local parts = {}
+  while true do
+    local chunk = M.read(fd)         -- nil at EOF; "" only on EAGAIN (blocking here)
+    if not chunk then break end
+    if chunk ~= "" then parts[#parts + 1] = chunk end
+  end
+  return table.concat(parts)
+end
+
+--- Point fd 0 at the controlling terminal (/dev/tty). The keyboard path is
+--- hardwired to fd 0 -- isatty(0), poll(0), read(0), and stty (which inherits
+--- fd 0) -- so after stdin was consumed as a pipe (`lvi -`), swapping the tty
+--- back onto fd 0 makes all of that work unchanged, no fd threading downstream.
+--- Returns true on success; false when there is no controlling terminal (e.g.
+--- `lvi - >out` in a pipeline, or a detached session), leaving fd 0 as-is so the
+--- caller falls through to headless mode. O_RDWR is 0x2 on every target.
+function M.reopen_stdin_from_tty()
+  local fd = C.open("/dev/tty", 2)
+  if fd < 0 then return false end
+  local ok = C.dup2(fd, 0) >= 0
+  C.close(fd)
+  return ok
+end
 
 --- Raw mode via stty -- no termios struct in our tree. Save the current
 --- settings (stty -g returns an opaque, restorable blob), then drop canonical

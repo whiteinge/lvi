@@ -49,6 +49,23 @@ end
 
 -- Editor mode. Positional args open as buffers (first one current); -q parks an
 -- errorfile path in $LVI_QUICKFIX for a `ready` hook (it is not itself a buffer).
+--
+-- A "-" arg means "read the buffer from standard input" (POSIX vi). Our own
+-- stdin is then the pipe, not the keyboard, so we drain it here and reconnect
+-- fd 0 to the controlling terminal -- after which the editor's keyboard path
+-- (all hardwired to fd 0) works untouched. The drained text seeds the buffer.
+-- With no controlling terminal (`printf ... | lvi - >out`) the reopen fails and
+-- the editor falls through to headless mode on the drained fd.
+local stdin_text
+for _, f in ipairs(a.args) do
+  if f == "-" then
+    local sys = require("sys")
+    stdin_text = sys.slurp(0)
+    sys.reopen_stdin_from_tty()
+    break
+  end
+end
+
 local editor = require("editor")
-local ed = editor.run({ files = a.args, quickfix = a.quickfix })
+local ed = editor.run({ files = a.args, quickfix = a.quickfix, stdin_text = stdin_text })
 os.exit(ed.exit_code or 0)

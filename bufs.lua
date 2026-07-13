@@ -91,6 +91,16 @@ function M.open(ed, path)
   load(ed, #ed.buffers)
 end
 
+-- Append an already-built buffer OBJECT (not a path) and switch to it. Used for
+-- the stdin ("-") buffer, whose text came off a pipe and has no disk file to
+-- open. Unlike scratch() this is a normal, modifiable, dirtiable buffer.
+function M.add(ed, buf)
+  save(ed)
+  if ed.stamp then ed.stamp(buf) end        -- no-op for a pathless buffer
+  ed.buffers[#ed.buffers + 1] = fresh(buf)
+  load(ed, #ed.buffers)
+end
+
 -- Open a fresh scratch buffer (no path, never dirty) named `name`, switch to
 -- it, and return it. Used for ephemeral, editor-backed UIs like the command
 -- window: the buffer IS a real editable buffer, so all of vi drives it.

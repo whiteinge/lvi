@@ -550,8 +550,17 @@ function M.run(opts)
   -- is set up here and swapped by bufs on :e / buffer switch. Positional files
   -- open as buffers; the first is current.
   local files = opts.files or (opts.filename and { opts.filename }) or {}
-  bufs.init(ed, files[1] and buffer.open(files[1]) or buffer.new(""))
-  for i = 2, #files do bufs.open(ed, files[i]) end
+  -- A "-" filename is the buffer read from stdin (POSIX vi): unnamed, so :w
+  -- needs a target, seeded with the text the entry point drained off the pipe
+  -- before reconnecting fd 0 to the terminal (see `lvi` / sys.reopen_stdin_*).
+  local function mkbuf(f)
+    if f ~= "-" then return buffer.open(f) end
+    local b = buffer.new(opts.stdin_text or ""); b.name = "[stdin]"; return b
+  end
+  bufs.init(ed, files[1] and mkbuf(files[1]) or buffer.new(""))
+  for i = 2, #files do
+    if files[i] == "-" then bufs.add(ed, mkbuf(files[i])) else bufs.open(ed, files[i]) end
+  end
   if #ed.buffers > 1 then bufs.switch(ed, 1) end
   sys.ignore_sigpipe() -- a disconnected client (e.g. --detach) must not kill us
   ed.wid = opts.wid or tostring(sys.getpid())

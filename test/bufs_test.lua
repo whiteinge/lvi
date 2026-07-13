@@ -50,6 +50,18 @@ describe("bufs", function()
     os.remove(p)
   end)
 
+  it("adds a pre-built pathless buffer object (e.g. the stdin buffer)", function()
+    local ed = make_ed(); bufs.init(ed, buffer.new("start"))
+    local b = buffer.new("piped one\npiped two"); b.name = "[stdin]"
+    bufs.add(ed, b)
+    expect(#ed.buffers).to.equal(2)
+    expect(ed.bufidx).to.equal(2)         -- switched to the added buffer
+    expect(ed.buf).to.equal(b)
+    expect(ed.buf.path).to.equal(nil)     -- unnamed: :w needs a target
+    expect(ed.buf.name).to.equal("[stdin]")
+    expect(ed.buf:line(2)).to.equal("piped two")
+  end)
+
   it("re-opening a resident path switches instead of duplicating", function()
     local ed = make_ed(); bufs.init(ed, buffer.new(""))
     local p = tmpfile("x"); bufs.open(ed, p)
