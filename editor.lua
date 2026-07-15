@@ -562,6 +562,11 @@ function M.run(opts)
     if files[i] == "-" then bufs.add(ed, mkbuf(files[i])) else bufs.open(ed, files[i]) end
   end
   if #ed.buffers > 1 then bufs.switch(ed, 1) end
+  -- `lvi -R`: open the named files read-only (POSIX). Per-buffer, so it guards
+  -- the files given on the command line; :set noreadonly clears it in-session.
+  if opts.readonly then
+    for _, rec in ipairs(ed.buffers) do rec.buf.readonly = true end
+  end
   sys.ignore_sigpipe() -- a disconnected client (e.g. --detach) must not kill us
   ed.wid = opts.wid or tostring(sys.getpid())
   ed.sock_path = path.socket(ed.wid)

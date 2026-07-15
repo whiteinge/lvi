@@ -214,6 +214,29 @@ describe("ex.dispatch", function()
       expect(s).to.equal("ok")
       os.remove(tmp); os.remove(other)
     end)
+
+    it("readonly blocks :w to the buffer's own file unless forced", function()
+      local tmp = os.tmpname()
+      local ed = ed_with("a\n")
+      ed.buf.path = tmp
+      ex.dispatch(ed, "set readonly")
+      local p, s = ex.dispatch(ed, "w")              -- own path: refused
+      expect(s).to.equal("err")
+      expect(p:find("readonly", 1, true)).to.exist()
+      local _, s2 = ex.dispatch(ed, "w!")            -- forced: writes anyway
+      expect(s2).to.equal("ok")
+      os.remove(tmp)
+    end)
+
+    it("readonly still allows a save-as to a different path", function()
+      local tmp, other = os.tmpname(), os.tmpname()
+      local ed = ed_with("a\n")
+      ed.buf.path = tmp
+      ex.dispatch(ed, "set readonly")
+      local _, s = ex.dispatch(ed, "w " .. other)    -- different target: allowed
+      expect(s).to.equal("ok")
+      os.remove(tmp); os.remove(other)
+    end)
   end)
 
   -- File arguments are shell-expanded per POSIX (expand_file in ex.lua): an
@@ -487,6 +510,15 @@ describe("ex.dispatch", function()
       expect((ex.dispatch(ed, "set scratch?"))).to.equal("scratch")
       ex.dispatch(ed, "set scratch!")                 -- toggle back off
       expect((ex.dispatch(ed, "set scratch?"))).to.equal("noscratch")
+    end)
+    it("marks a buffer readonly, querying and toggling it (ro/noro aliases)", function()
+      local ed = ed_with("abc")
+      expect((ex.dispatch(ed, "set readonly?"))).to.equal("noreadonly")
+      ex.dispatch(ed, "set ro")                        -- alias sets it
+      expect(ed.buf.readonly).to.be(true)
+      expect((ex.dispatch(ed, "set ro?"))).to.equal("readonly")
+      ex.dispatch(ed, "set readonly!")                 -- toggle back off
+      expect((ex.dispatch(ed, "set readonly?"))).to.equal("noreadonly")
     end)
     it("scratch clears modified immediately, and noscratch restores it", function()
       local ed = ed_with("abc")

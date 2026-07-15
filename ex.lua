@@ -197,6 +197,7 @@ local function do_set(ed, args)
       elseif n == "autoindent" or n == "ai" then out[#out + 1] = ed.opts.autoindent and "autoindent" or "noautoindent"
       elseif n == "modified" or n == "mod" then out[#out + 1] = ed.buf.modified and "modified" or "nomodified"
       elseif n == "scratch" then out[#out + 1] = ed.buf.scratch and "scratch" or "noscratch"
+      elseif n == "readonly" or n == "ro" then out[#out + 1] = ed.buf.readonly and "readonly" or "noreadonly"
       else return "unknown option: " .. n, "err" end
     elseif opt:sub(-1) == "!" then                      -- toggle a boolean (vim `set wrap!`)
       local n = opt:sub(1, -2)
@@ -212,6 +213,7 @@ local function do_set(ed, args)
         -- update_modified only fires on the next edit otherwise.
         ed.buf.scratch = not ed.buf.scratch
         ed.buf.modified = (not ed.buf.scratch) and (ed.buf._undo.now ~= ed.buf._undo.saved)
+      elseif n == "readonly" or n == "ro" then ed.buf.readonly = not ed.buf.readonly
       else return "not a boolean option: " .. n, "err" end
     elseif opt == "wrap" then ed.opts.wrap = true
     elseif opt == "nowrap" then ed.opts.wrap = false
@@ -226,6 +228,8 @@ local function do_set(ed, args)
     elseif opt == "scratch" then ed.buf.scratch = true; ed.buf.modified = false
     elseif opt == "noscratch" then
       ed.buf.scratch = false; ed.buf.modified = ed.buf._undo.now ~= ed.buf._undo.saved
+    elseif opt == "readonly" or opt == "ro" then ed.buf.readonly = true
+    elseif opt == "noreadonly" or opt == "noro" then ed.buf.readonly = false
     else return "unknown option: " .. opt, "err" end
   end
   return table.concat(out, "\n"), "ok"
@@ -548,6 +552,13 @@ local function write_conflict(ed, buf, p)
   return p == buf.path and ed.file_changed ~= nil and ed.file_changed(buf)
 end
 
+-- POSIX `readonly`: a write to the buffer's OWN file fails unless forced (`w!`),
+-- guarding an accidental overwrite. Writing elsewhere (`:w other`) is allowed,
+-- matching vi/vim; `!` overrides, as does `:set noreadonly`.
+local function readonly_block(buf, p, force)
+  return buf.readonly and not force and p == buf.path
+end
+
 -- Write every modified buffer to its own path (the :wa/:xa engine). Iterates
 -- ed.buffers -- each rec.buf is the live object (ed.buf IS the current slot's
 -- buf by reference, so its unsaved edits are seen without a save()); falls back
@@ -562,6 +573,9 @@ local function write_all(ed, force)
     local buf = rec.buf
     if buf.modified then
       if not buf.path then return nil, "No file name for a buffer" end
+      if readonly_block(buf, buf.path, force) then
+        return nil, ("'readonly' option is set: %s (add ! to override)"):format(buf.path)
+      end
       if not force and write_conflict(ed, buf, buf.path) then
         return nil, ("File changed since last read: %s (add ! to override)"):format(buf.path)
       end
@@ -635,6 +649,9 @@ def("w write", function(ed, c)
   if xerr then return xerr, "err" end
   p = p or ed.buf.path
   if not p then return "No file name", "err" end
+  if readonly_block(ed.buf, p, c.bang) then
+    return "'readonly' option is set (add ! to override)", "err"
+  end
   if not c.bang and write_conflict(ed, ed.buf, p) then
     return "File changed since last read (add ! to override)", "err"
   end
@@ -677,6 +694,9 @@ def("wq x", function(ed, c)
   if xerr then return xerr, "err" end
   p = p or ed.buf.path
   if not p then return "No file name", "err" end
+  if readonly_block(ed.buf, p, c.bang) then
+    return "'readonly' option is set (add ! to override)", "err"
+  end
   if not c.bang and write_conflict(ed, ed.buf, p) then
     return "File changed since last read (add ! to override)", "err"
   end
@@ -891,7 +911,8 @@ end)
 
 -- Write all changed buffers, then quit -- :wa + :qa. Changed-only (see
 -- write_all), so like :x it leaves clean buffers' files untouched; xa and
--- wqa are aliases here (lvi has no readonly notion for wqa to force past).
+-- wqa are aliases here. A `readonly` buffer stops the run unless forced (the !
+-- write_all threads through), matching :w's guard.
 def("xa xall wqa wqall", function(ed, c)
   local _, err = write_all(ed, c.bang)
   if err then return err, "err" end

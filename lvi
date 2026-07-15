@@ -20,6 +20,7 @@ parser:option("-w --wid", "send ex commands to this view's socket ('auto' = sole
 parser:flag("-d --detach", "client mode: send without waiting for replies (fire-and-forget)")
 parser:flag("-l --list", "list running views and exit")
 parser:option("-q --quickfix", "set $LVI_QUICKFIX to FILE and fire the `ready` hook (wire it up in the rc; see lvirc.sample)")
+parser:flag("-R --readonly", "open the file(s) read-only: :w fails without ! (POSIX)")
 
 local a = parser:parse()
 
@@ -67,5 +68,6 @@ for _, f in ipairs(a.args) do
 end
 
 local editor = require("editor")
-local ed = editor.run({ files = a.args, quickfix = a.quickfix, stdin_text = stdin_text })
+local ed = editor.run({ files = a.args, quickfix = a.quickfix, stdin_text = stdin_text,
+                        readonly = a.readonly })
 os.exit(ed.exit_code or 0)

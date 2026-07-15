@@ -11,7 +11,7 @@ lvi - a minimal, POSIX-vi-style modal editor with a control socket
 
 # SYNOPSIS
 
-*lvi* [*-q* _errorfile_] [_file_...]++
+*lvi* [*-R*] [*-q* _errorfile_] [_file_...]++
 *lvi* *-w* _wid_ [*-d*] *--* _command_...++
 *lvi* *-l*
 
@@ -55,6 +55,11 @@ CONTROL SOCKET*).
 	in *contrib/lvirc.sample* runs *lvi-list load "$LVI_QUICKFIX" quickfix* when
 	*LVI_QUICKFIX* is set (see *contrib/lvi-list*). _errorfile_ is not opened as a
 	buffer.
+
+*-R*, *--readonly*
+	Editor mode: open the _file_ arguments read-only. A *:w* to a file's own path
+	then fails unless forced with *:w!*; writing elsewhere is allowed. It is
+	per-buffer and clearable in-session with *:set noreadonly*. (POSIX vi's *-R*.)
 
 # NORMAL MODE
 
@@ -486,6 +491,10 @@ _contrib/lvi-shell.sh_ do).
 		Mark the current buffer ephemeral: it never counts as modified, so
 		*q*/*bd* never nag, *wa* skips it, and a crash does not preserve it.
 		Per-buffer, unlike the others (like a command window's buffer).
+	*readonly*, *noreadonly* (*ro*, *noro*)
+		Guard the current buffer's file: *:w* to its own path fails unless forced
+		with *:w!*; writing to a different name is allowed. Per-buffer; *lvi -R* at
+		startup sets it for the named files. (POSIX vi's *readonly*.)
 
 *map* _lhs_ _rhs_, *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*

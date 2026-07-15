@@ -49,7 +49,9 @@ function M.new(text)
     -- scratch: an ephemeral buffer (a command window, a picker) that never
     -- counts as modified, so :bd/:q/:qa never nag and a crash won't preserve
     -- it. name: a display label shown in place of a path ("[Command Line]").
-    scratch = false, name = nil,
+    -- readonly: POSIX `readonly`/`ro` -- a write to this buffer's own file
+    -- fails unless forced (`w!`), guarding against an accidental overwrite.
+    scratch = false, name = nil, readonly = false,
     _undo = { done = {}, undone = {}, group = nil, sink = nil,
               seq = 0, now = 0, saved = 0 } }, Buffer)
   if text == "" then
