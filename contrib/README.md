@@ -47,7 +47,8 @@ a compiler) light up per file.
   next<CR>`). It's the same spawn `:on` hooks use. A leading address range
   (`:L1,L2bg CMD`) arrives as `$LVI_LINE1`/`$LVI_LINE2`, the non-mutating
   counterpart to a `[range]!` filter, so a tool can act on a typed line span
-  without a bespoke command (`lvi-stagediff` uses it for partial staging). The
+  without a bespoke command (`lvi-diff` moves a partial hunk this way, and
+`lvi-stagediff` stages one). The
   `g@` operator is the same spawn driven from a *motion*: `:set operatorfunc=CMD`
   then `g@{motion}` fires `CMD` over the span, adding `$LVI_COL1`/`$LVI_COL2` and
   `$LVI_KIND` so a charwise operator can reach part of a line (`lvi-surround`,
@@ -323,9 +324,12 @@ No core support: it composes existing seams under a dedicated rc (`lvirc-man`,
 loaded through `$LVIRC` so none of your normal hooks fire on a throwaway page).
 `set scratch` makes `:q` painless — the page came off a pipe, so there's no file
 to protect and read-only would buy nothing. `on ready lvi-fold man` folds each
-section body under its heading into a table of contents you step with `zj`/`zk`,
-and `on ready lvi-highlight lang man` colors it through the bat backend. Set
-`MANROFFOPT=-c` so groff's overstrike stays clean for `col`.
+section body under its heading into a table of contents you step with `zj`/`zk`
+(NAME and SYNOPSIS stay open, via `$LVI_FOLD_MANKEEP`), and `on ready
+lvi-highlight lang man` colors it through the bat backend. lvi has no built-in
+search, so the rc maps `/` (and `*`) to `lvi-search`, opening folds first so a
+match is never stranded in a closed one. Set `MANROFFOPT=-c` so groff's
+overstrike stays clean for `col`.
 
 Caveats: bat's manpage grammar is coarse (headings, options, some emphasis), and
 it's a full editor per page — the cost your `$MANPAGER` already pays under vim.
@@ -460,19 +464,25 @@ for lvi. That file mode is also what makes it a git mergetool (below).
 
 ### `lvi-stagediff` — `git add -p`, as a diff you edit
 
-`git add -p` reimagined as a side-by-side diff (concept borrowed from Fugitive).
-It opens a split: **left is the git index** (`git show :file`), **right is the
-working tree**, so the diff between them is exactly your *unstaged* changes. `\s`
-stages the hunk under the cursor — it moves into the index pane and the index
-updates at once. Two changes with no unchanged line between them are one hunk, so
-`\s` takes both; `:L1,L2bg lvi-stagediff --stage-range` stages just the working
-lines you name, and `g@{motion}` (armed as an operatorfunc — `g@ip`, `3g@@`) does
-the same by motion, which is how you split them. And because the index pane's text
-simply **is** the staged content, you can hand-edit it — or `u`-undo a stage — and
-`:w` to commit that exact state; that is how unstaging works. It reblobs the whole buffer (`git hash-object
--w` + `git update-index`), so there's no partial-patch fuzz to misapply. Built on
-`lvi-diff`, so the highlighting, scrollbind, and `]c`/`[c` come free. Run
-`lvi-stagediff FILE` inside a new tmux window.
+A side-by-side `git add -p` (concept borrowed from Fugitive). It opens a split:
+**left is the git index** (`git show :file`), **right is the working tree**, so the
+diff between them is exactly your *unstaged* changes. It's `lvi-diff` plus two git
+pieces, so the highlighting, scrollbind, and hunk maps come free.
+
+The mental model: **the index pane's text is the staged content.** Move a hunk
+onto it with `\p`, pull one back off with `\o`, move a motion's span with
+`g@{motion}` (or `:L1,L2bg lvi-stagediff --xfer-range …`) to split two changes
+`diff` merged into one hunk. Those are ordinary buffer edits: `u` backs a move out,
+and nothing touches git yet. **`:w` on the index pane is what stages** — it hashes
+the pane into a blob and points the index at it (`git hash-object -w` + `git
+update-index`), the whole buffer at once, so there's no partial-patch fuzz to
+misapply. Shuffle and edit until the pane reads the way you want it staged, then
+write.
+
+So each pane's `:w` consummates its own side: the index pane stages, the working
+pane saves the file. To restore a working-tree hunk from the index, `\o` it back.
+Unstaging to HEAD isn't a keystroke yet: edit the index pane to the version you
+want and `:w`, or `git reset`. Run `lvi-stagediff FILE` inside a new tmux window.
 
 ### Git mergetool
 

@@ -25,7 +25,10 @@
 #   * HUNK NAV (]c / [c) jumps to the next/prev hunk and top-anchors BOTH panes
 #     (a socket :top wouldn't fire the peer's scroll hook, so we set both here).
 #   * HUNK MOVING (diffput/diffget): \p puts the hunk under the cursor onto the
-#     other view, \o obtains the other's hunk here -- a delete+read splice.
+#     other view, \o obtains the other's hunk here -- a delete+read splice that
+#     re-diffs and repaints as it lands (the move is a socket edit, so the overlay
+#     wouldn't refresh on its own). An armed g@ operatorfunc moves just a motion's
+#     line span -- the partial-hunk sibling (lvi-stagediff wires it for staging).
 #   * FOLD UNCHANGED (zx) collapses the matched regions between hunks to a summary
 #     row (keeping LVI_DIFF_FOLDCTX context lines each side), leaving only the
 #     changes and their surroundings -- vimdiff's `foldmethod=diff`. It rides
@@ -253,12 +256,16 @@ scrollsync() {
 }
 
 # One-shot hunk transfer -- diffput/diffget. Fired by \p/\o with $LVI_WID/$LVI_LINE.
-#   xfer put PEER   -- push the hunk under the cursor from THIS view onto PEER
-#   xfer get PEER   -- pull PEER's version of the hunk under the cursor into THIS view
+#   xfer put PEER A B   -- push the hunk under the cursor from THIS view onto PEER
+#   xfer get PEER A B   -- pull PEER's version of the hunk under the cursor into THIS
+# A and B are the pair's canonical (old, new) ids, baked into the map. The move is a
+# SOCKET edit to the destination, which does NOT fire `on change` (keyboard-gated),
+# so the overlay would go stale until the next keystroke -- we re-diff and repaint
+# here, in the original A/B order so DiffDelete/DiffAdd stay on their proper sides.
 xfer() {
-  dir=$1; peer=$2; self=${3:-$LVI_WID}; cl=${4:-$LVI_LINE}
+  dir=$1; peer=$2; a=$3; b=$4; self=${5:-$LVI_WID}; cl=${6:-$LVI_LINE}
   { [ -n "$dir" ] && [ -n "$peer" ] && [ -n "$self" ] && [ -n "$cl" ]; } || {
-    echo "lvi-diff --xfer: need DIR PEER (+ \$LVI_WID/\$LVI_LINE)" >&2; return 1; }
+    echo "lvi-diff --xfer: need DIR PEER A B (+ \$LVI_WID/\$LVI_LINE)" >&2; return 1; }
   sf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.self.XXXXXX") || return 1
   pf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.peer.XXXXXX") || return 1
   trap 'rm -f "$sf" "$pf"' EXIT
@@ -283,22 +290,27 @@ xfer() {
   [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d"
   [ "$ss" -le "$se" ] && set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$srcf'"
   [ $# -gt 0 ] && "$LVI" -w "$dstw" -- "$@"
+  [ -n "$a" ] && [ -n "$b" ] && build "$a" "$b"   # repaint (socket edit skipped on change)
 }
 
 # Partial-hunk put -- move an EXPLICIT self line span [L1,L2] onto PEER, not the
-# whole hunk under the cursor. This is what lets a caller peel two changes that
-# `diff` coalesced into one hunk (no unchanged line between them). Used by
-# lvi-stagediff's :[range]bg staging; direction is put-only (source=self=SELF).
-#   xfer-range PEER SELF L1 L2
-# The span is clamped to the enclosing hunk. An equal-count change block maps its
-# sub-range to PEER positionally (source line as+k <-> peer line bs+k); a run of
-# self-only lines (`d`) inserts just the selected ones; any other shape (an
-# unequal change, a peer-only `a`) has no clean per-line map, so it falls back to
-# moving the whole hunk rather than misplacing lines.
+# whole hunk under the cursor. This is what peels two changes that `diff` coalesced
+# into one hunk (no unchanged line between them). It is also the g@ operatorfunc
+# target: armed as `set operatorfunc=lvi-diff --xfer-range PEER A B`, g@{motion}
+# exports the span as $LVI_LINE1/2 and the view as $LVI_WID -- which SELF/L1/L2
+# default to -- so nothing is baked but the peer and the canonical pair. Reachable
+# either way: a typed `:L1,L2bg lvi-diff --xfer-range PEER A B` or a motion.
+#   xfer-range PEER A B [SELF L1 L2]     (SELF/L1/L2 default to $LVI_WID/$LVI_LINE1/2)
+# Direction is put-only (source = self). A and B are the pair's canonical (old, new)
+# ids, carried for the repaint tail (see xfer). The span is clamped to the enclosing
+# hunk. An equal-count change block maps its sub-range to PEER positionally (source
+# line as+k <-> peer line bs+k); a run of self-only lines (`d`) inserts just the
+# selected ones; any other shape (an unequal change, a peer-only `a`) has no clean
+# per-line map, so it falls back to moving the whole hunk rather than misplacing lines.
 xferrange() {
-  peer=$1; self=$2; l1=$3; l2=$4
+  peer=$1; a=$2; b=$3; self=${4:-$LVI_WID}; l1=${5:-$LVI_LINE1}; l2=${6:-$LVI_LINE2}
   { [ -n "$peer" ] && [ -n "$self" ] && [ -n "$l1" ] && [ -n "$l2" ]; } || {
-    echo "lvi-diff --xfer-range: need PEER SELF L1 L2" >&2; return 1; }
+    echo "lvi-diff --xfer-range: run as ':L1,L2bg ... PEER A B' or a g@ operatorfunc" >&2; return 1; }
   sf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.rs.XXXXXX") || return 1
   pf=$(mktemp "${TMPDIR:-/tmp}/lvi-diff.rp.XXXXXX") || return 1
   trap 'rm -f "$sf" "$pf"' EXIT
@@ -325,6 +337,7 @@ xferrange() {
   [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d"
   [ "$ss" -le "$se" ] && set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$sf'"
   [ $# -gt 0 ] && "$LVI" -w "$peer" -- "$@"
+  [ -n "$a" ] && [ -n "$b" ] && build "$a" "$b"   # repaint (socket edit skipped on change)
 }
 
 # One-shot hunk navigation -- ]c / [c. Jump SELF to the next/prev hunk, top-anchor
@@ -448,7 +461,7 @@ for pair in "$A $B" "$B $A"; do
     "on change LVI=$LVI $SELF --refresh $A $B" \
     "on scroll LVI=$LVI $SELF --scrollsync $peer" >/dev/null 2>&1
   [ -z "$LVI_DIFF_NOMAP" ] && "$LVI" -w "$self" -- \
-    "map \\p :bg LVI=$LVI $SELF --xfer put $peer<CR>" \
-    "map \\o :bg LVI=$LVI $SELF --xfer get $peer<CR>" >/dev/null 2>&1
+    "map \\p :bg LVI=$LVI $SELF --xfer put $peer $A $B<CR>" \
+    "map \\o :bg LVI=$LVI $SELF --xfer get $peer $A $B<CR>" >/dev/null 2>&1
 done
 exit 0   # a completed setup succeeds regardless of that last conditional's status

@@ -964,8 +964,9 @@ below, with the happy-path rc lines that turn it on:
 
 *lvi-diff* / *lvi-stagediff* -- diff and staging
 	A two-way vimdiff of two panes: highlighted, scrollbound, hunks moved with
-	*\\p*/*\\o* and jumped with *]c*/*[c*. *lvi-stagediff* layers *git add -p* on
-	top. These are commands, not rc lines:
+	*\\p*/*\\o* and jumped with *]c*/*[c*. *lvi-stagediff* reuses all of it for
+	*git add -p*: index pane left, working tree right, and *:w* on the index pane
+	stages the text it holds. These are commands, not rc lines:
 
 	```
 	lvi-diff                 " the sole pair of live panes
