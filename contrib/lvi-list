@@ -15,6 +15,8 @@
 #                                              a list mid-walk, so `next` continues
 #                                              forward instead of restarting at 1)
 #   lvi-list next|prev|nfile|pfile [NAME]     step (NAME defaults to the focused list)
+#   lvi-list current [NAME]                    re-jump to the CURRENT entry, no step (vim :cc);
+#                                              recall after opening a fold n/N landed you on
 #   lvi-list here [NAME]                       jump to the first entry at/after the cursor
 #   lvi-list preview [NAME]                    print the current entry + its body to stdout
 #                                              (NAME defaults to the last-stepped list;
@@ -226,6 +228,16 @@ case "$sub" in
           /^[^:]*:[0-9]+(:|$)/ { n++; if ($1==f && ($2+0)>=(l+0)) { print n; exit } }' "$listdir/$name")
     [ -n "$i" ] || i=1
     setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; show_cur "$name" ;;
+
+  current|cc)
+    # Re-jump to the CURRENT entry without stepping (vim's :cc). The recall for
+    # "n landed me on a closed fold, I opened it (zo/zO), now put me on the match":
+    # the jump re-runs against the now-open fold, so the cursor lands on the line
+    # + column instead of snapping to the fold head. Also recovers from a
+    # cross-file re-fold (an `on bufenter lvi-fold` that re-closed the fold).
+    name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
+    cur=$(getcur "$name"); [ "$cur" -ge 1 ] || die "not stepped into $name yet"
+    jump "$(nth "$name" "$cur")"; paint "$name"; show_cur "$name" ;;
 
   preview)                                   # the full current entry (header + body) to stdout
     # Default to the LAST-STEPPED list, not the focused one: `]e` steps lint

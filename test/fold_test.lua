@@ -103,6 +103,16 @@ describe("fold commands (normal mode)", function()
     feed(ed, "za"); expect(ed.folds[1].open).to_not.be.truthy()
   end)
 
+  it("zO opens every fold covering the cursor (all levels)", function()
+    local ed = make(TEXT)
+    ex.dispatch(ed, "fold 3,8 3,6")            -- two folds sharing the head line 3
+    feed(ed, "3G")
+    feed(ed, "zo"); expect(ed.folds[1].open and ed.folds[2].open).to_not.be.truthy() -- zo: one level
+    ex.dispatch(ed, "foldclose")               -- reclose both
+    feed(ed, "3GzO")
+    expect(ed.folds[1].open and ed.folds[2].open).to.be.truthy()                     -- zO: all levels
+  end)
+
   it("zR opens all and zM closes all", function()
     local ed = make(TEXT)
     feed(ed, "1Gzfj")     -- fold 1..2
@@ -203,6 +213,39 @@ describe(":fold ex command", function()
   end)
 end)
 
+describe("foldenable toggle (zi / :set)", function()
+  it("zi disables folding: interior navigable, folds kept intact", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")                        -- fold 3..6, cursor on head 3
+    feed(ed, "zi")                            -- stop honoring folds
+    expect(ed.opts.foldenable).to_not.be.truthy()
+    feed(ed, "j"); expect(ed.cy).to.equal(4)  -- former interior is now navigable
+    expect(#ed.folds).to.equal(1)             -- the fold itself is untouched
+    expect(ed.folds[1].open).to_not.be.truthy()
+  end)
+
+  it("re-enabling with zi snaps the cursor off a now-hidden line", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")
+    feed(ed, "zi"); feed(ed, "5G")            -- disable, park deep in the (closed) range
+    expect(ed.cy).to.equal(5)
+    feed(ed, "zi")                            -- honor folds again
+    expect(ed.opts.foldenable).to.be.truthy()
+    expect(ed.cy).to.equal(3)                 -- clamp snaps back onto the visible head
+  end)
+
+  it(":set nofoldenable makes j ignore the fold; :set fen? reports state", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")
+    ex.dispatch(ed, "set nofoldenable")
+    feed(ed, "3Gj"); expect(ed.cy).to.equal(4)
+    local rep = ex.dispatch(ed, "set fen?")
+    expect(rep).to.equal("nofoldenable")
+    ex.dispatch(ed, "set foldenable")
+    expect(ex.dispatch(ed, "set fen?")).to.equal("foldenable")
+  end)
+end)
+
 -- ---- render -----------------------------------------------------------------
 local function render_ed(text, wrap)
   local ed = editor.new_ed()
@@ -239,6 +282,16 @@ describe("render collapses closed folds", function()
     local f = render.frame(ed)
     expect(f:find("l4", 1, true)).to.exist()
     expect(f:find("lines:", 1, true)).to_not.exist()
+  end)
+
+  it("nofoldenable renders every line even with a closed fold present", function()
+    local ed = render_ed(TEXT, false)
+    ed.folds = { { s = 3, e = 6, open = false } }
+    ed.opts.foldenable = false
+    local f = render.frame(ed)
+    expect(f:find("lines:", 1, true)).to_not.exist()  -- no summary row
+    expect(f:find("l4", 1, true)).to.exist()          -- interior shown
+    expect(f:find("l5", 1, true)).to.exist()
   end)
 
   it("themes the marker via the Folded group (:hi Folded ...)", function()

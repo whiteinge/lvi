@@ -108,7 +108,7 @@ function M.clamp(ed)
   -- fold's (visible) head. This is the one place that invariant lives, so every
   -- motion that lands in a fold -- G, marks, gg, a mistyped count -- collapses
   -- onto the fold line, and render's crow can always be found on a visible row.
-  if ed.folds and ed.folds[1] and fold.hidden(ed.folds, ed.cy) then
+  if ed.opts.foldenable and ed.folds and ed.folds[1] and fold.hidden(ed.folds, ed.cy) then
     ed.cy = fold.innermost_closed(ed.folds, ed.cy).s
   end
   local s = line(ed, ed.cy)
@@ -793,7 +793,7 @@ local function textrows(ed) return ed.rows - 1 end
 -- the single point where this module bends the buffer-line <-> screen-row
 -- mapping away from affine -- the same bend wrap already made (one line -> many
 -- rows); folding is its inverse (many lines -> one row).
-local function has_folds(ed) return ed.folds and ed.folds[1] ~= nil end
+local function has_folds(ed) return ed.opts.foldenable and ed.folds and ed.folds[1] ~= nil end
 local function nextv(ed, l)
   if has_folds(ed) then return fold.next_vline(ed.folds, l, ed.buf:nlines()) end
   return (l < ed.buf:nlines()) and l + 1 or nil
@@ -1425,12 +1425,16 @@ actions = {
     -- falls through to the window-positioning spellings below.
     if k == b("f") then return fold_create_motion(ed, count)
     elseif k == b("o") then return fold_open(ed)
+    elseif k == b("O") then                       -- open every fold covering the cursor (all levels)
+      for _, f in ipairs(ed.folds) do if ed.cy >= f.s and ed.cy <= f.e then f.open = true end end
+      return
     elseif k == b("c") then return fold_close(ed)
     elseif k == b("a") then return fold_toggle(ed)
     elseif k == b("d") then return fold_delete(ed)
     elseif k == b("R") then for _, f in ipairs(ed.folds) do f.open = true end; return
     elseif k == b("M") then for _, f in ipairs(ed.folds) do f.open = false end; return clamp(ed)
     elseif k == b("E") then ed.folds = {}; return
+    elseif k == b("i") then ed.opts.foldenable = not ed.opts.foldenable; return clamp(ed)  -- zi: honor folds or not
     elseif k == b("j") then                       -- to the start of the next fold
       local best
       for _, f in ipairs(ed.folds) do if f.s > ed.cy and (not best or f.s < best) then best = f.s end end

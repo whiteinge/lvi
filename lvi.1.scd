@@ -256,13 +256,22 @@ external search feeds *:hl* -- see *contrib/lvi-fold* (by marker or by indent).
 	*zf}*). Also available as *:fold* (see *EX COMMANDS*).
 
 *zo* *zc* *za*
-	Open, close, or toggle the innermost fold at the cursor.
+	Open, close, or toggle the innermost fold at the cursor. *zO* opens every
+	fold covering the cursor at once (all nesting levels), so a line buried in
+	nested folds is revealed in one keystroke.
 
 *zd*
 	Delete (remove) the fold at the cursor, leaving its lines unfolded.
 
 *zR* *zM* *zE*
 	Open all folds, close all folds, or eliminate every fold in the view.
+
+*zi*
+	Toggle whether folds are honored at all (the *foldenable* option). While
+	off, every line shows and the cursor moves freely, but the folds are kept
+	untouched -- so a tool that re-pushes them (an *on bufenter* fold hook) has
+	no visible effect until you turn folding back on. Also settable as
+	*:set foldenable* / *nofoldenable*.
 
 *zj* *zk*
 	Move to the start of the next fold, or the end of the previous fold.
@@ -462,6 +471,11 @@ _contrib/lvi-shell.sh_ do).
 	*linebreak*, *nolinebreak* (*lbr*, *nolbr*)
 		When wrapping, break at the last whitespace that fits instead of
 		mid-word; a single word wider than the screen still breaks mid-word.
+	*foldenable*, *nofoldenable* (*fen*, *nofen*)
+		Whether folds are honored. Off shows every line and lets the cursor
+		move freely while keeping the folds intact, so a tool that re-pushes
+		folds has no visible effect until you re-enable. The *zi* key toggles it
+		(see *Folding*).
 	*tabstop*=_N_ (*ts*)
 		How many columns a literal tab renders as.
 	*shiftwidth*=_N_ (*sw*)

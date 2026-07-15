@@ -79,7 +79,7 @@ function M.new_ed()
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
-             fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
+             foldenable = true, fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
     hlpri = {},               -- :hi group -> z-order
 
@@ -370,7 +370,7 @@ end
 -- plain l+/-1 and nsegs, so the fold-free paths below stay byte-for-byte the
 -- same. Kept local (editor and normal are separate modules); both defer the
 -- fold semantics to fold.lua so "what is visible" has one definition.
-local function ed_hasfolds(ed) return ed.folds and ed.folds[1] ~= nil end
+local function ed_hasfolds(ed) return ed.opts.foldenable and ed.folds and ed.folds[1] ~= nil end
 local function ed_nextv(ed, l, nl)
   if ed_hasfolds(ed) then return fold.next_vline(ed.folds, l, nl) end
   return (l < nl) and l + 1 or nil

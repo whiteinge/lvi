@@ -104,7 +104,7 @@ function M.frame(ed)
   local wrap = ed.opts.wrap
   local lb = ed.opts.linebreak
   local folds = ed.folds or {}
-  local hasfolds = folds[1] ~= nil
+  local hasfolds = ed.opts.foldenable and folds[1] ~= nil
   local foldsgr = ed.hlstyles and ed.hlstyles["Folded"]   -- :hi Folded ... (optional theme)
   local nl = buf:nlines()
   local hidx = hl_index(ed)
