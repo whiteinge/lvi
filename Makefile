@@ -28,9 +28,12 @@ TESTS   = $(wildcard test/*_test.lua)
 
 all: man
 
-man: lvi.1
+# The manpage lands under man1/ (gitignored) so the repo root can go straight on
+# MANPATH -- man searches each MANPATH entry for a manN/ subdir, finds man1/lvi.1.
+man: man1/lvi.1
 
-lvi.1: lvi.1.scd
+man1/lvi.1: lvi.1.scd
+	$(INSTALL) -d man1
 	$(SCDOC) < lvi.1.scd > $@
 
 test:
@@ -57,7 +60,7 @@ sloc:
 	   done; } | column -t -s,
 
 clean:
-	rm -f lvi.1
+	rm -rf man1
 
 install: man
 	# Runtime tree: the script, its modules, and just the vendored argparse
@@ -75,7 +78,7 @@ install: man
 	$(INSTALL) -m 0755 $(CONTRIB) $(DESTDIR)$(BINDIR)/
 	# Manpage.
 	$(INSTALL) -d $(DESTDIR)$(MANDIR)/man1
-	$(INSTALL) -m 0644 lvi.1 $(DESTDIR)$(MANDIR)/man1/lvi.1
+	$(INSTALL) -m 0644 man1/lvi.1 $(DESTDIR)$(MANDIR)/man1/lvi.1
 
 uninstall:
 	rm -rf $(DESTDIR)$(APPDIR)
