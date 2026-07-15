@@ -16,3 +16,11 @@ on ready lvi-fold man
 " force the language; pin the bat backend so this works regardless of the
 " user's $LVI_HL_BACKEND default.
 on ready LVI_HL_BACKEND=bat lvi-highlight lang man
+
+" Search with `/` (contrib lvi-search, since lvi has no built-in search): grep
+" the page, jump to the first match, step with n/N. `*` searches the word under
+" the cursor -- handy for chasing an option through a page.
+map / :silent !LVI_SEARCH_CASE=smart lvi-search<CR>
+map * :bg lvi-search "$LVI_CWORD"<CR>
+map n :bg lvi-list next<CR>
+map N :bg lvi-list prev<CR>

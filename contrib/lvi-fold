@@ -16,9 +16,11 @@
 #   indent  -- fold each run of lines indented deeper than the line above it
 #              (whitespace-block folding); blank lines don't break a block.
 #   man     -- fold each rendered-manpage section body under its flush-left
-#              ALL-CAPS heading (NAME, SYNOPSIS, ...) for a navigable TOC. The
-#              heading pattern is $LVI_FOLD_MANHEAD (default all-caps + spaces);
-#              feed it man output with overstrike stripped (see contrib/lvi-man).
+#              ALL-CAPS heading for a navigable TOC. The heading pattern is
+#              $LVI_FOLD_MANHEAD (default all-caps + spaces); headings matching
+#              $LVI_FOLD_MANKEEP (default NAME/SYNOPSIS) stay unfolded so the
+#              orientation sections read on open. Feed it man output with
+#              overstrike stripped (see contrib/lvi-man).
 #
 # It replaces the view's folds each run (foldclear, then one `:fold` carrying
 # every range), so re-running after an edit re-folds cleanly. Folds arrive
@@ -39,6 +41,7 @@
 # Config (env): LVI (client, default `lvi`), LVI_FOLD_MARKER (open,close pair,
 # default "{{{,}}}"), LVI_FOLD_MINLINES (skip folds smaller than this many lines,
 # default 2), LVI_FOLD_MANHEAD (man-mode heading regex, default "^[A-Z][A-Z ]*$"),
+# LVI_FOLD_MANKEEP (man-mode headings to leave unfolded, default NAME/SYNOPSIS),
 # LVI_FOLD_DEBUG (a file to capture the worker's stderr).
 
 # -h/--help: print this script's header comment (its full reference), then exit.
@@ -47,6 +50,7 @@ LVI=${LVI:-lvi}
 MARKER=${LVI_FOLD_MARKER:-'{{{,}}}'}
 MINLINES=${LVI_FOLD_MINLINES:-2}
 MANHEAD=${LVI_FOLD_MANHEAD:-'^[A-Z][A-Z ]*$'}
+MANKEEP=${LVI_FOLD_MANKEEP:-'^(NAME|SYNOPSIS) *$'}
 
 worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
 want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
@@ -94,11 +98,13 @@ ranges=$(
     man)
       # man mode: each flush-left heading opens a section; fold its body (the
       # lines up to the next heading) so the page collapses to a heading TOC.
-      awk -v re="$MANHEAD" '
-        $0 ~ re { hdr[++h] = NR; next }
+      # Headings matching $LVI_FOLD_MANKEEP (NAME, SYNOPSIS) stay unfolded.
+      awk -v re="$MANHEAD" -v keep="$MANKEEP" '
+        $0 ~ re { hdr[++h] = NR; htext[h] = $0; next }
         END {
           hdr[h + 1] = NR + 1                       # sentinel past the last line
           for (i = 1; i <= h; i++) {
+            if (keep != "" && htext[i] ~ keep) continue   # leave this section open
             s = hdr[i] + 1; e = hdr[i + 1] - 1       # body: heading+1 .. next-1
             if (e >= s) print s, e
           }

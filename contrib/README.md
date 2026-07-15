@@ -327,9 +327,8 @@ to protect and read-only would buy nothing. `on ready lvi-fold man` folds each
 section body under its heading into a table of contents you step with `zj`/`zk`
 (NAME and SYNOPSIS stay open, via `$LVI_FOLD_MANKEEP`), and `on ready
 lvi-highlight lang man` colors it through the bat backend. lvi has no built-in
-search, so the rc maps `/` (and `*`) to `lvi-search`, opening folds first so a
-match is never stranded in a closed one. Set `MANROFFOPT=-c` so groff's
-overstrike stays clean for `col`.
+search, so the rc maps `/` (and `*`) to `lvi-search`. Set `MANROFFOPT=-c` so
+groff's overstrike stays clean for `col`.
 
 Caveats: bat's manpage grammar is coarse (headings, options, some emphasis), and
 it's a full editor per page — the cost your `$MANPAGER` already pays under vim.
