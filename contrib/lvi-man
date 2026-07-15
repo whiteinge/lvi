@@ -1,0 +1,35 @@
+#!/bin/sh
+# lvi-man -- use lvi as a MANPAGER: browse manpages with section folds and bat
+# syntax highlighting, and all of vi's motions/search to move around.
+#
+# Wire it up (in your shell rc), then use `man` normally:
+#
+#     export MANPAGER=lvi-man
+#     export MANROFFOPT=-c      " groff emits plain overstrike col can clean up
+#
+# How it works: man pipes its formatted page to us on stdin. We strip the
+# backspace-overstrike bold/underline (col -bx -- lvi is not a terminal-escape
+# pager, so raw ^H sequences would show as garbage), then open the result in lvi
+# reading standard input ("-"). A dedicated rc ($LVIRC -> contrib/lvirc-man)
+# marks the buffer scratch (so :q never nags -- a man page is a throwaway view,
+# not a file), folds it by section (lvi-fold man), and highlights it as a
+# manpage (lvi-highlight lang man, bat backend). None of your ~/.lvirc hooks
+# fire here -- see contrib/lvirc-man to customize the pager environment.
+#
+# Inside: zj/zk jump heading to heading, zo/zR open folds, / searches, :q quits.
+#
+# The same pipeline works for any roff/overstrike text, e.g.:
+#     mycmd --help | lvi-man            (no sections to fold, still highlighted)
+#
+# Config (env): LVI (editor, default `lvi`), LVI_MAN_RC (the pager rc to load,
+# default contrib/lvirc-man beside this script).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+RC=${LVI_MAN_RC:-$DIR/lvirc-man}
+
+# Strip overstrike (and expand tabs) so lvi sees clean text, then hand the page
+# to lvi via stdin with the pager rc. lvi drains stdin and reconnects the tty.
+col -bx | LVIRC="$RC" "$LVI" -

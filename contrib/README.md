@@ -300,9 +300,10 @@ summary row and `j`/`k`/scroll skip over it (`zf`/`zo`/`zc`/`zR`; see the
 manpage) — but no fold policy. `lvi-fold` is the policy half. It reads
 the live buffer over the socket and pushes the ranges back as `:fold`,
 the same read-compute-paint loop `lvi-highlight` runs against `:hl`. We
-ship with two fold methods (contributions welcome): `marker` (vim's `{{{
-… }}}`, nested by a stack; the pair is `$LVI_FOLD_MARKER`) and `indent`
-(each block indented under its parent). It replaces the view's folds each
+ship with three fold methods (contributions welcome): `marker` (vim's `{{{
+… }}}`, nested by a stack; the pair is `$LVI_FOLD_MARKER`), `indent`
+(each block indented under its parent), and `man` (each rendered-manpage
+section under its heading — see `lvi-man`). It replaces the view's folds each
 run, so re-running it (by marker or `indent` mode, or `on bufenter` to auto-fold
 on open) re-folds after edits.
 
@@ -310,6 +311,25 @@ It reads the buffer, so it self-backgrounds (or bind it with `:bg`) for the same
 reason `lvi-highlight`/`lvi-search` do — see **Self-backgrounding** above. Any
 other fold policy (by syntax, by diff hunk, by `git` conflict markers) is the
 same shape: emit `L1,L2` pairs, hand them to `:fold`.
+
+### `lvi-man` — read manpages in lvi
+
+Set `MANPAGER=lvi-man` and `man` opens the page in a running lvi, with section
+folds, syntax highlighting, and vi motions to move around. man pipes its
+formatted output in; `lvi-man` strips the overstrike bold/underline with `col
+-bx` (lvi is not a terminal-escape pager) and opens the result via `lvi -`.
+
+No core support: it composes existing seams under a dedicated rc (`lvirc-man`,
+loaded through `$LVIRC` so none of your normal hooks fire on a throwaway page).
+`set scratch` makes `:q` painless — the page came off a pipe, so there's no file
+to protect and read-only would buy nothing. `on ready lvi-fold man` folds each
+section body under its heading into a table of contents you step with `zj`/`zk`,
+and `on ready lvi-highlight lang man` colors it through the bat backend. Set
+`MANROFFOPT=-c` so groff's overstrike stays clean for `col`.
+
+Caveats: bat's manpage grammar is coarse (headings, options, some emphasis), and
+it's a full editor per page — the cost your `$MANPAGER` already pays under vim.
+Copy `lvirc-man` and point `$LVI_MAN_RC` at it to tune the pager environment.
 
 ### `lvi-complete` — insert-mode word completion
 

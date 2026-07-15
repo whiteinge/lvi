@@ -1,0 +1,18 @@
+" lvi as a man pager -- loaded via $LVIRC by contrib/lvi-man, NOT your ~/.lvirc.
+" A deliberately minimal, throwaway environment: none of your normal hooks
+" (mirror, lint, cursor-save, gitchanges, ...) fire on a man page, which is not
+" a file you are editing. Copy this file and point $LVI_MAN_RC at it to tweak.
+
+set scratch          " never dirty -> :q never nags; nothing to preserve on crash
+set wrap linebreak   " wrap long lines (e.g. a wide SYNOPSIS) at word boundaries
+
+" Section folds: collapse each manpage section body under its heading into a
+" navigable table of contents. Folds arrive closed; zj/zk step heading to
+" heading, zo opens one, zR opens all. Fires once the socket is live.
+hi Folded fg=cyan italic
+on ready lvi-fold man
+
+" Highlight as a rendered manpage. The stdin buffer has no real filename, so
+" force the language; pin the bat backend so this works regardless of the
+" user's $LVI_HL_BACKEND default.
+on ready LVI_HL_BACKEND=bat lvi-highlight lang man

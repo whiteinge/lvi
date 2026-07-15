@@ -923,6 +923,16 @@ below, with the happy-path rc lines that turn it on:
 	on bufenter lvi-fold
 	```
 
+*lvi-man* -- read manpages in lvi
+	Use lvi as your *MANPAGER*: browse a page with section folds, syntax
+	highlighting, and vi motions. It loads its own throwaway pager rc, so none of
+	the hooks above fire on it. Set it in your *shell* rc, not lvi's:
+
+	```
+	export MANPAGER=lvi-man
+	export MANROFFOPT=-c
+	```
+
 *lvi-complete* -- insert-mode completion
 	Complete the word before the cursor from every open buffer, on insert-mode
 	*Ctrl-N*/*Ctrl-P*:
