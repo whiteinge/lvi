@@ -615,6 +615,20 @@ _contrib/lvi-shell.sh_ do).
 	appear here unless left as the buffer-local fallback. Multi-line output pages
 	like *%p* at the prompt.
 
+*mark* _char_ [_line_ [_col_]], *k* _char_
+	Set mark _char_ WITHOUT moving the cursor: the ex-side setter POSIX calls
+	*k* / *mark*, which normal-mode *m* cannot do (*m* marks only the cursor).
+	An explicit _line_ [_col_] places it there byte-exactly, as *pos* sets the
+	cursor; a leading address (*$mark a*) places it on that line at column 1; with
+	neither it takes the cursor. Positions clamp into the buffer like *pos*. So an
+	external tool can drop a mark at a spot it is not on: *contrib/lvi-pos* sets
+	*"* on restore with no cursor move. Uppercase _A_-_Z_ mirror *m*, firing
+	*markset* at the cursor for a global-mark tool (see *on markset*), so an
+	uppercase mark accepts no explicit _line_/_col_ and is refused one. One
+	deviation: lvi reads the whole leading letter run as the command word, so the
+	mark character needs a space (*mark a*, *k a*); a run-together *ka* is not this
+	command and falls through to the system *ex*.
+
 *jumps*, *changes*
 	List the jumplist (*Ctrl-O* / *Ctrl-I*) or changelist (*g;* / *g,*), oldest
 	first, one line each as _line_ _col_ _text_; a *>* marks the current

@@ -1123,6 +1123,62 @@ local function do_marks(ed, args)
 end
 def("marks", function(ed, c) return do_marks(ed, c.args) end)
 
+-- Mirror of normal.lua's mark_event (ex must NOT require normal -- normal
+-- requires ex, so that dependency runs one way only). Fires the global-mark seam
+-- for an uppercase mark; returns true when a hook consumed it, false to fall back
+-- to a buffer-local mark. Kept in sync with normal.lua's copy by hand.
+local function fire_mark_event(ed, event, ch)
+  local hooks = ed.hooks and ed.hooks[event]
+  if not (ed.fire_event and hooks and #hooks > 0) then return false end
+  ed.event_mark = ch
+  ed.fire_event(event)
+  ed.event_mark = false
+  return true
+end
+
+-- :mark {char} [LINE [COL]]  (POSIX :[addr]k / :[addr]mark) -- set a mark WITHOUT
+-- moving the cursor. normal-mode `m` can only mark where the cursor already sits;
+-- this is the ex-side setter POSIX calls :k/:mark, the piece lvi long lacked. It
+-- is what lets an external tool stamp a mark at a spot it is NOT on -- e.g.
+-- contrib/lvi-pos sets `" byte-exactly on restore with no visit-and-return cursor
+-- dance, so a restore-on-bufenter can't fight a list jump for the cursor.
+-- Position precedence: an explicit LINE [COL] wins (byte-exact, mirroring :pos);
+-- else a leading ex address supplies the line (POSIX's line-granular form, col 1);
+-- else the cursor. Clamped into the buffer like :pos, so a stale saved spot lands
+-- as near as it can.
+--
+-- DEVIATION from POSIX: lvi's dispatch takes the whole leading letter-run as the
+-- command word, so the no-space spelling `:ka` parses as command `ka` (which then
+-- falls through to the system ex). A space is required -- `:k a`, `:mark a`.
+--
+-- Uppercase A-Z mirror normal-mode m{A-Z}: they fire the `markset` global-mark
+-- seam (contrib/lvi-gmark) AT THE CURSOR, degrading to a buffer-local mark when no
+-- hook is wired. That seam carries only the cursor (via $LVI_LINE/$LVI_COL), so an
+-- uppercase mark with an explicit LINE/COL can't ride it and is refused rather
+-- than silently recording the cursor in place of the asked-for spot.
+def("mark k", function(ed, c)
+  local ch, rest = c.args:match("^(%S)%s*(.-)%s*$")
+  if not ch then return "usage: mark {char} [LINE [COL]]", "err" end
+  local ls, cs = rest:match("^(%d+)%s+(%d+)$")
+  ls = ls or rest:match("^(%d+)$")
+  if rest ~= "" and not ls then return "usage: mark {char} [LINE [COL]]", "err" end
+  if ch:match("%u") then                                    -- global mark: cursor only
+    if ls or c.a then return "mark " .. ch .. ": a global mark records the cursor; no line/col", "err" end
+    if fire_mark_event(ed, "markset", ch) then return "", "ok" end
+    ed.marks[ch] = { ed.cy, ed.cx }                         -- no gmark hook: degrade to buffer-local
+    return "", "ok"
+  end
+  local line, col
+  if ls then line, col = tonumber(ls), (cs and tonumber(cs) or 1)
+  elseif c.a then line, col = c.b, 1
+  else line, col = ed.cy, ed.cx end
+  line = clampline(ed, line)
+  local len = #(ed.buf:line(line) or "")
+  col = math.max(1, math.min(col, math.max(1, len)))
+  ed.marks[ch] = { line, col }
+  return "", "ok"
+end)
+
 -- :jumps / :changes (Vim's) -- list a per-buffer position store ({list, idx}),
 -- oldest first, one line each as "line col text" (col is a 1-based byte column,
 -- as :pos/:marks report). A ">" flags the current position -- the entry idx sits

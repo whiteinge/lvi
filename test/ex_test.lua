@@ -937,6 +937,65 @@ describe("ex.dispatch", function()
         ">")
     end)
   end)
+
+  describe(":mark / :k (set a mark without moving the cursor)", function()
+    it("sets a lowercase mark byte-exactly at an explicit LINE COL", function()
+      local ed = ed_with("aaaa\nbbbb\ncccc"); ed.cy, ed.cx = 1, 2
+      expect(ex.dispatch(ed, "mark a 3 4")).to.equal("")   -- ok payload is empty
+      expect(ed.marks["a"]).to.exist()
+      expect(ed.marks["a"][1]).to.equal(3)
+      expect(ed.marks["a"][2]).to.equal(4)
+      expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(2) -- cursor unmoved
+    end)
+    it("sets the `\" mark (lvi-pos's use), not just a-z", function()
+      local ed = ed_with("a\nbb\nccc")
+      ex.dispatch(ed, 'mark " 2 2')
+      expect(ed.marks['"'][1]).to.equal(2); expect(ed.marks['"'][2]).to.equal(2)
+    end)
+    it("defaults to the cursor with no LINE/COL", function()
+      local ed = ed_with("a\nbb\nccc"); ed.cy, ed.cx = 3, 2
+      ex.dispatch(ed, "mark z")
+      expect(ed.marks["z"][1]).to.equal(3); expect(ed.marks["z"][2]).to.equal(2)
+    end)
+    it("takes the line from a leading ex address (POSIX form), col 1", function()
+      local ed = ed_with("a\nbb\nccc\ndddd"); ed.cy = 1
+      ex.dispatch(ed, "3k m")                                -- :3k m
+      expect(ed.marks["m"][1]).to.equal(3); expect(ed.marks["m"][2]).to.equal(1)
+      expect(ed.cy).to.equal(1)                             -- cursor unmoved
+    end)
+    it("clamps a stale LINE/COL into the buffer, like :pos", function()
+      local ed = ed_with("a\nbb")
+      ex.dispatch(ed, "mark a 99 99")
+      expect(ed.marks["a"][1]).to.equal(2)                  -- last line
+      expect(ed.marks["a"][2]).to.equal(2)                  -- last col of "bb"
+    end)
+    it("routes an uppercase mark through the markset seam at the cursor", function()
+      local ed = ed_with("a\nbb\nccc"); ed.cy, ed.cx = 2, 1
+      local fired, seen_mark = {}, nil
+      ed.hooks.markset = { "lvi-gmark" }
+      ed.fire_event = function(ev) fired[#fired + 1] = ev; seen_mark = ed.event_mark end
+      expect(select(2, ex.dispatch(ed, "mark A"))).to.equal("ok")
+      expect(#fired).to.equal(1); expect(fired[1]).to.equal("markset")
+      expect(seen_mark).to.equal("A")                       -- LVI_MARK would carry it
+      expect(ed.marks["A"]).to_not.exist()                  -- delegated, not buffer-local
+    end)
+    it("degrades an uppercase mark to buffer-local with no gmark hook", function()
+      local ed = ed_with("a\nbb\nccc"); ed.cy, ed.cx = 2, 1
+      ex.dispatch(ed, "mark A")                              -- no markset hook registered
+      expect(ed.marks["A"][1]).to.equal(2); expect(ed.marks["A"][2]).to.equal(1)
+    end)
+    it("refuses an uppercase mark with an explicit line/col (seam carries the cursor)", function()
+      local ed = ed_with("a\nbb\nccc")
+      local _, s = ex.dispatch(ed, "mark A 3 1")
+      expect(s).to.equal("err")
+      expect(ed.marks["A"]).to_not.exist()
+    end)
+    it("rejects a malformed argument", function()
+      local ed = ed_with("a\nbb")
+      expect(select(2, ex.dispatch(ed, "mark"))).to.equal("err")     -- no char
+      expect(select(2, ex.dispatch(ed, "mark a bogus"))).to.equal("err")
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)
