@@ -51,9 +51,9 @@
 # message line via :msg -- ephemeral, persist-until-next-key, so your next motion
 # clears it. The FULL entry (header + body) is `lvi-list preview` on stdout, meant
 # to be bound to a tmux popup for the multi-line diagnostics:
-#   map \m :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
+#   map \lp :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
 # With no name, `preview` targets the LAST-STEPPED list, not the focused one: `]e`
-# steps `lint` without stealing n/N's focus, yet one \m should still show the lint
+# steps `lint` without stealing n/N's focus, yet one \lp should still show the lint
 # entry you just navigated to. (Falls back through focus if nothing's been stepped.)
 # Two gotchas the -E command must dodge (both bit the obvious version): the popup
 # runs under the tmux SERVER, which does NOT inherit lvi's exported $LVI_SOCK /
@@ -93,7 +93,7 @@ else
 fi
 listdir="$sock.lists"
 focusfile="$sock.focus"
-lastfile="$sock.last"                         # the list you most recently STEPPED (\m preview target)
+lastfile="$sock.last"                         # the list you most recently STEPPED (\lp preview target)
 
 # ---- small helpers ----------------------------------------------------------
 send()      { $LVI -w "$target" --detach -- "$@"; }         # fire-and-forget (see header)
@@ -241,7 +241,7 @@ case "$sub" in
 
   preview)                                   # the full current entry (header + body) to stdout
     # Default to the LAST-STEPPED list, not the focused one: `]e` steps lint
-    # without stealing n/N's focus, yet \m should still show the lint entry you
+    # without stealing n/N's focus, yet \lp should still show the lint entry you
     # just navigated to. Fall back through focus when nothing's been stepped.
     name=${1:-$(last_get)}; [ -n "$name" ] || name=$(focus_get)
     [ -n "$name" ] || die "no list stepped yet (step one, or name it)"

@@ -35,9 +35,9 @@
 #
 # Bind it with :bg -- git is non-interactive so it needs no tty, and :bg avoids
 # the alt-screen flash that :silent ! causes:
-#     map \g :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
-#     map \G :bg lvi-gitchanges --staged<CR>    " same, for STAGED changes
-#     map ]c :bg lvi-list next gitchanges<CR>   " or step it without stealing focus
+#     map \gg :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
+#     map \gs :bg lvi-gitchanges --staged<CR>    " same, for STAGED changes
+#     map ]c :bg lvi-list next gitchanges<CR>    " or step it without stealing focus
 #     map [c :bg lvi-list prev gitchanges<CR>
 # Theme the marks in your rc (un-themed = invisible; see lvi-list); give the two
 # lists distinct colors so staged vs unstaged read apart at a glance:

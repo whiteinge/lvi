@@ -879,7 +879,7 @@ below, with the happy-path rc lines that turn it on:
 	Turn *git diff* for the current file into a steppable list of hunks:
 
 	```
-	map \\g :bg lvi-gitchanges<CR>
+	map \\gg :bg lvi-gitchanges<CR>
 	```
 
 *lvi-lint* -- any linter, as a list
@@ -980,7 +980,7 @@ below, with the happy-path rc lines that turn it on:
 
 *lvi-diff* / *lvi-stagediff* -- diff and staging
 	A two-way vimdiff of two panes: highlighted, scrollbound, hunks moved with
-	*\\p*/*\\o* and jumped with *]c*/*[c*. *lvi-stagediff* reuses all of it for
+	*\\dp*/*\\do* and jumped with *]c*/*[c*. *lvi-stagediff* reuses all of it for
 	*git add -p*: index pane left, working tree right, and *:w* on the index pane
 	stages the text it holds. These are commands, not rc lines:
 

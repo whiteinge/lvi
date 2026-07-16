@@ -410,8 +410,8 @@ No core support beyond one seam: backing the unnamed register's *write* (see
 above) hands the script every yank and delete, so it needs no key remapping to
 capture. A second register (`~`) is `read`-backed with the ring's current entry,
 and each cycle key is one `:bg` map that steps the cursor and sends `u"~p` (undo
-the paste, put the stepped entry), replacing the pasted text in place. `\p`/`\P`
-walk older/newer, `\y` picks any entry through `$LVI_PICKER`. The ring is
+the paste, put the stepped entry), replacing the pasted text in place. `\yp`/`\yn`
+walk older/newer, `\yy` picks any entry through `$LVI_PICKER`. The ring is
 per-view beside the socket (point `LVI_YANKRING_DIR` at a shared path to carry
 one across views); it rides the unnamed register, so it replaces neither the
 numbered registers nor the `+` clipboard.
@@ -444,7 +444,8 @@ connection between.
 This diffs the buffers, paints DiffChange/DiffAdd/DiffDelete through `:hl`, writes a
 line-map cache, and installs the maps and hooks — then exits. What happens after
 is lvi firing those hooks. `]c`/`[c` jump to the next/prev hunk (top-anchoring
-*both* panes); `\p`/`\o` put/obtain the hunk under the cursor.
+*both* panes); `\dp`/`\do` put/obtain the hunk under the cursor (vim's diff-mode
+`dp`/`do`, on the `\` leader so they don't shadow `d`).
 
 Note, hunk navigation is *not* an `lvi-list` because a list jump moves one
 view's cursor, but a diff jump must move both panes in step (a socket-driven
@@ -472,7 +473,7 @@ diff between them is exactly your *unstaged* changes. It's `lvi-diff` plus two g
 pieces, so the highlighting, scrollbind, and hunk maps come free.
 
 The mental model: **the index pane's text is the staged content.** Move a hunk
-onto it with `\p`, pull one back off with `\o`, move a motion's span with
+onto it with `\dp`, pull one back off with `\do`, move a motion's span with
 `g@{motion}` (or `:L1,L2bg lvi-stagediff --xfer-range …`) to split two changes
 `diff` merged into one hunk. Those are ordinary buffer edits: `u` backs a move out,
 and nothing touches git yet. **`:w` on the index pane is what stages** — it hashes
@@ -482,7 +483,7 @@ misapply. Shuffle and edit until the pane reads the way you want it staged, then
 write.
 
 So each pane's `:w` consummates its own side: the index pane stages, the working
-pane saves the file. To restore a working-tree hunk from the index, `\o` it back.
+pane saves the file. To restore a working-tree hunk from the index, `\do` it back.
 Unstaging to HEAD isn't a keystroke yet: edit the index pane to the version you
 want and `:w`, or `git reset`. Run `lvi-stagediff FILE` inside a new tmux window.
 
@@ -492,7 +493,7 @@ want and `:w`, or `git reset`. Run `lvi-stagediff FILE` inside a new tmux window
 **`hideResolved`**, it's a genuinely pleasant conflict resolver. `hideResolved`
 pre-resolves everything both sides agree on and rewrites LOCAL/REMOTE so only the
 *real* conflicts differ, markers gone — so the two-way diff shows exactly the
-hunks you must decide. You resolve them the way you'd move any hunk (`\o` to take
+hunks you must decide. You resolve them the way you'd move any hunk (`\do` to take
 theirs into the left pane, or hand-edit), then `:x` to accept or `:cq` to abort.
 In `~/.gitconfig`:
 

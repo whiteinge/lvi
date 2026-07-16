@@ -17,7 +17,7 @@
 #     hi Type     fg=cyan
 #     on change   lvi-highlight           " re-highlight a beat after you stop typing
 #     on bufenter lvi-highlight           " ...and when you switch/open a buffer
-#     map \h :silent !lvi-highlight<CR>   " ...and/or force it on a key
+#     map \hh :silent !lvi-highlight<CR>  " ...and/or force it on a key (\h menu)
 #
 # The `hi` block above is optional: `lvi-highlight --theme` seeds the group
 # colors from a Pygments built-in style (via $LVI_PYGMENTS_STYLE) in one shot,
@@ -44,7 +44,7 @@
 # (e.g. `lang xml` for an .html buffer that is really XML) and a bare `lang`
 # clears the override. State is per-view (for now), kept beside the socket
 # ($LVI_SOCK.hl-off, $LVI_SOCK.hl-lang), so run these from inside lvi:
-#     map \H :bg lvi-highlight toggle<CR>       " :syntax off / on
+#     map \ht :bg lvi-highlight toggle<CR>      " :syntax off / on (\h menu)
 #     " force a language from a :sh under lvi:  lvi-highlight lang xml
 
 # -h/--help: print this script's header comment (its full reference), then exit.

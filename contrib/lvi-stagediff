@@ -7,7 +7,7 @@
 #
 # It stands on lvi-diff (which must sit beside this script), and stands on ALL of
 # it: highlighting, scrollbind, hunk nav (]c/[c), fold-unchanged (zx), and hunk
-# MOVING (\p/\o, g@) are lvi-diff's, unchanged. This script adds only the two
+# MOVING (\dp/\do, g@) are lvi-diff's, unchanged. This script adds only the two
 # git-specific pieces, both daemonless (one-shot setup + one `on write` hook):
 #
 #   * SEED -- the left ("index") pane is a scratch buffer filled from
@@ -17,8 +17,8 @@
 #     the index pane hashes its file into a git blob and points the index at it
 #     (`git hash-object -w` + `git update-index`). That `on write` hook is the
 #     ONE staging path. Everything else is just editing a buffer:
-#       - \p (working pane) moves the hunk under the cursor onto the index pane;
-#         \o pulls the index's version back onto the working pane. g@{motion} (or
+#       - \dp (working pane) moves the hunk under the cursor onto the index pane;
+#         \do pulls the index's version back onto the working pane. g@{motion} (or
 #         :L1,L2bg lvi-stagediff --xfer-range ...) moves just a motion's span.
 #       - These are ordinary, undoable buffer edits -- nothing touches git. Shuffle
 #         hunks, `u` to back a move out, hand-edit the index -- then :w to stage
@@ -32,14 +32,14 @@
 # misapply (no fuzz), composes trivially (stage another hunk = reblob again), and
 # falls straight out of "the index pane's text IS the staged state."
 #
-# PARTIAL / ADJACENT HUNKS. \p moves a whole diff-hunk, and `diff` coalesces two
-# changes with no unchanged line between them into ONE hunk -- so \p can't split
+# PARTIAL / ADJACENT HUNKS. \dp moves a whole diff-hunk, and `diff` coalesces two
+# changes with no unchanged line between them into ONE hunk -- so \dp can't split
 # them (neither can `git add -p`; that's what its `e` is for). Two outs:
 #   * g@{motion} / :L1,L2bg -- move just the lines you name onto the index pane.
 #     g@ is armed as an operatorfunc (g@ip, g@}, 3g@@); the typed form rides ex's
 #     address grammar (:12,14bg lvi-stagediff --xfer-range ...). Both are lvi-diff's
 #     --xfer-range; then :w on the index stages what you moved.
-#   * Hand-edit -- the index pane is a live buffer: move the merged hunk with \p,
+#   * Hand-edit -- the index pane is a live buffer: move the merged hunk with \dp,
 #     delete back (or edit) the part you didn't mean, and :w. The blob is whatever
 #     you leave, so any state you can type is a state you can stage.
 #
@@ -51,8 +51,8 @@
 # SYNOPSIS
 #   lvi-stagediff FILE        open the index|working split for FILE and wire it up
 #   lvi-stagediff             use $LVI_FILE (i.e. run it from a map inside lvi)
-#   \p      (working pane)    move the hunk under the cursor onto the index pane
-#   \o      (working pane)    pull the index's version of the hunk back into working
+#   \dp     (working pane)    move the hunk under the cursor onto the index pane
+#   \do     (working pane)    pull the index's version of the hunk back into working
 #   g@{motion} (working pane) move the motion's line span onto the index pane
 #   :w      (index pane)      STAGE the current index text (the consummation)
 #   :w      (working pane)    save the working file to disk (no staging)
@@ -65,8 +65,9 @@
 # g@ exports the motion's span as $LVI_LINE1/2 and the pane as $LVI_WID, which
 # --xfer-range defaults to, so nothing is baked but the destination and the pair.
 # To (re)bind it to a key, set operatorfunc and press g@ in one map (mind lvi's
-# no-timeout maps: pick a key that isn't a prefix clash):
-#     map \S :set operatorfunc=lvi-diff --xfer-range IDX IDX WORK<CR>g@
+# no-timeout maps: pick a key that isn't a prefix clash -- \dx keeps it in the
+# \d diff family, beside \dp/\do):
+#     map \dx :set operatorfunc=lvi-diff --xfer-range IDX IDX WORK<CR>g@
 #
 # Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH GITDIR
 # wires staging onto two open views; --reblob GITDIR TOP REPOPATH is the index pane's
@@ -123,15 +124,15 @@ attach() {
   idx=$1; work=$2; top=$3; rp=$4; gitdir=$5
   LVI="$LVI" "$DIFF" "$idx" "$work" || return 1
   # Staging is reblob-on-write: :w on the index pane stages its current text. So
-  # \p/\o (from lvi-diff) shuffle hunks as ordinary, undoable edits and nothing
+  # \dp/\do (from lvi-diff) shuffle hunks as ordinary, undoable edits and nothing
   # touches git until you :w -- edit, undo, restage first; the write consummates.
   "$LVI" -w "$idx"  -- "on write LVI=$LVI $SELF --reblob $gitdir $top $rp" >/dev/null 2>&1
   # Partial (sub-hunk) staging: arm g@ on the working pane as lvi-diff's env-aware
   # --xfer-range (dest=idx, canonical pair idx,work), for peeling two changes `diff`
   # merged into one hunk. Still just a buffer edit; :w on the index stages it.
   "$LVI" -w "$work" -- "set operatorfunc=LVI=$LVI $DIFF --xfer-range $idx $idx $work" >/dev/null 2>&1
-  "$LVI" -w "$idx"  -- 'status stage [index -- \p/\o shuffle, :w stages]' >/dev/null 2>&1
-  "$LVI" -w "$work" -- 'status stage [working -- \p stage a hunk, \o restore it]' >/dev/null 2>&1
+  "$LVI" -w "$idx"  -- 'status stage [index -- \dp/\do shuffle, :w stages]' >/dev/null 2>&1
+  "$LVI" -w "$work" -- 'status stage [working -- \dp stage a hunk, \do restore it]' >/dev/null 2>&1
 }
 
 # Sweep index seeds whose views are gone (no daemon to own their lifetime now).

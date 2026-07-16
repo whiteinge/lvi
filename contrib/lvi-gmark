@@ -28,7 +28,7 @@
 #                open + move back), which is why the core leaves the cursor put and
 #                records no jumplist entry for a `<A-Z>.
 #   list         print every mark as MARK<TAB>FILE<TAB>LINE<TAB>COL (bind to a key,
-#                e.g. `map <Space>m :!lvi-gmark list<CR>`, or run from a shell).
+#                e.g. `map \m :!lvi-gmark list<CR>`, or run from a shell).
 #   del MARK     forget MARK.
 #
 # THE STORE is a tab-delimited text file, one line per mark, grep-able and

@@ -24,8 +24,8 @@
 #     (keyboard-gated in the editor), so the two panes can't echo each other.
 #   * HUNK NAV (]c / [c) jumps to the next/prev hunk and top-anchors BOTH panes
 #     (a socket :top wouldn't fire the peer's scroll hook, so we set both here).
-#   * HUNK MOVING (diffput/diffget): \p puts the hunk under the cursor onto the
-#     other view, \o obtains the other's hunk here -- a delete+read splice that
+#   * HUNK MOVING (diffput/diffget): \dp puts the hunk under the cursor onto the
+#     other view, \do obtains the other's hunk here -- a delete+read splice that
 #     re-diffs and repaints as it lands (the move is a socket edit, so the overlay
 #     wouldn't refresh on its own). An armed g@ operatorfunc moves just a motion's
 #     line span -- the partial-hunk sibling (lvi-stagediff wires it for staging).
@@ -63,7 +63,7 @@
 #                             OUT -- the git mergetool form (see contrib/README.md)
 #   lvi-diff --stop           sweep stale map caches (there's no process to kill --
 #                             a session ends when you close a pane)
-#   (Installed in both views: ]c/[c jump hunks; \p/\o move a hunk across; zx
+#   (Installed in both views: ]c/[c jump hunks; \dp/\do move a hunk across; zx
 #    folds/unfolds the unchanged regions.)
 #
 # SUGGESTED BINDING (~/.lvirc, or run by hand). Launch it once per diff session.
@@ -75,7 +75,7 @@
 # Config (env): LVI (client, default `lvi`); LVI_DIFF_MAXBYTES (skip a buffer
 # larger than this; default 4194304 = 4 MiB -- over it, both views show a
 # "[lvi-diff off: ...]" status instead of silently doing nothing); LVI_DIFF_NOMAP=1
-# leaves the \p/\o move maps off (lvi-stagediff sets it); LVI_DIFF_NOSTYLE=1 keeps
+# leaves the \dp/\do move maps off (lvi-stagediff sets it); LVI_DIFF_NOSTYLE=1 keeps
 # your rc's colors; LVI_DIFF_FOLD=1 starts with the unchanged regions folded (zx
 # toggles it); LVI_DIFF_FOLDCTX sets the context lines kept around each hunk
 # (default 3).
@@ -255,7 +255,7 @@ scrollsync() {
   "$LVI" -w "$peer" -- "top $tgt" >/dev/null 2>&1
 }
 
-# One-shot hunk transfer -- diffput/diffget. Fired by \p/\o with $LVI_WID/$LVI_LINE.
+# One-shot hunk transfer -- diffput/diffget. Fired by \dp/\do with $LVI_WID/$LVI_LINE.
 #   xfer put PEER A B   -- push the hunk under the cursor from THIS view onto PEER
 #   xfer get PEER A B   -- pull PEER's version of the hunk under the cursor into THIS
 # A and B are the pair's canonical (old, new) ids, baked into the map. The move is a
@@ -448,7 +448,7 @@ if [ -z "$LVI_DIFF_NOSTYLE" ]; then
   "$LVI" -w "$B" -- 'hi DiffChange bg=yellow fg=black' 'hi DiffAdd bg=green fg=black'  >/dev/null 2>&1
 fi
 
-# Wire both views, then exit. ]c/[c (hunk nav) and -- unless NOMAP -- \p/\o (move)
+# Wire both views, then exit. ]c/[c (hunk nav) and -- unless NOMAP -- \dp/\do (move)
 # are maps; `on change` re-diffs (tracks edits) and `on scroll` scrollbinds. Each
 # bakes in the peer wid and our path. That's the whole session -- it lives inside
 # the views and ends when a pane closes; nothing runs in between.
@@ -461,7 +461,7 @@ for pair in "$A $B" "$B $A"; do
     "on change LVI=$LVI $SELF --refresh $A $B" \
     "on scroll LVI=$LVI $SELF --scrollsync $peer" >/dev/null 2>&1
   [ -z "$LVI_DIFF_NOMAP" ] && "$LVI" -w "$self" -- \
-    "map \\p :bg LVI=$LVI $SELF --xfer put $peer $A $B<CR>" \
-    "map \\o :bg LVI=$LVI $SELF --xfer get $peer $A $B<CR>" >/dev/null 2>&1
+    "map \\dp :bg LVI=$LVI $SELF --xfer put $peer $A $B<CR>" \
+    "map \\do :bg LVI=$LVI $SELF --xfer get $peer $A $B<CR>" >/dev/null 2>&1
 done
 exit 0   # a completed setup succeeds regardless of that last conditional's status

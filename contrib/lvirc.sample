@@ -2,6 +2,36 @@
 " Copy the parts you want into $XDG_CONFIG_HOME/lvi/lvirc or ~/.lvirc.
 " The rc file is just ex commands (see :hi / :map); " begins a comment.
 
+" ---- the keymap, and why it is shaped this way ------------------------------
+" Each contrib tool is a standalone concept, so its maps could each grab a
+" convenient letter and collide with the next tool's. Instead the maps below are
+" ONE coherent keymap -- copy the whole file and nothing steps on anything else.
+" Deviate as you like; these are the defaults the docs assume.
+"
+" \ is the only leader (vim's default). The mapper has NO timeout: a sequence
+" fires the instant it equals a complete map, even if a longer map also starts
+" with it (see `first_key` in normal.lua). So a two-key map \XY is reachable ONLY
+" if \X is not itself bound -- every leader letter is either a LEAF (one action)
+" or a MENU prefix (\X does nothing; the action is the second key), never both.
+" That single rule is the whole scheme:
+"
+"   * LEAF -- a tool with one action gets one letter, mnemonic where vim has an
+"     equivalent:  \= format (vim =), \f find/open, \t tags, \r registers,
+"     \m marks, \e errors/lint, \s spell.
+"   * MENU -- a tool with several actions gets a prefix, and its most-used action
+"     is that letter DOUBLED (a leaf-like two-key press for the common case):
+"       \g  git      \gg changes   \gs staged
+"       \l  lists     \ll switch    \lg goto   \lh hide   \lp preview
+"       \h  highlight \hh refresh   \ht toggle
+"       \y  yankring  \yy pick      \yp older  \yn newer
+"       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
+"
+" Motions/operators that mirror a vim key stay OFF the leader and on that key: /
+" and * (search), n/N (step the focused list), the ]x/[x pairs (step list x),
+" the z-prefix (folds, spell fix/add), <C-a>/<C-x> (increment), gc (comment),
+" s( s{ s" (surround). They shadow the builtin only where lvi left it free (lvi
+" has no search, so / n N * are yours; s only shadows the four surround follows).
+
 " ---- theme (Pygments backend) ------------------------------------------------
 " These :hi lines color the token groups the Pygments backend emits. They do
 " NOT apply to the bat backend, which brings its own theme (set BAT_THEME or
@@ -49,8 +79,9 @@ on change lvi-highlight
 " re-highlight whenever you land in a buffer.
 on bufenter lvi-highlight
 
-" ...and/or a key to force a refresh on demand:
-map \h :silent !lvi-highlight<CR>
+" highlight MENU (\h): \hh forces a refresh now, \ht toggles syntax off/on.
+map \hh :silent !lvi-highlight<CR>          " re-highlight on demand
+map \ht :bg lvi-highlight toggle<CR>        " :syntax off / on
 
 " ---- message line -----------------------------------------------------------
 " :msge (the error variant of :msg) styles its text with the `Error` group, so
@@ -61,21 +92,27 @@ hi Error fg=red bold
 
 " ---- search & lists (quickfix/location) --------------------------------------
 " lvi has no built-in search; lvi-search greps the live buffer into a `lvi-list`
-" list and lvi-list steps it. Every list works the same way, so one set of step
-" keys serves search, grep, lint, git hunks -- whichever list is *focused*.
-" `/` prompts and `\l` runs a picker, so they need the terminal (:silent !). The
+" list and lvi-list steps it. Every list works the same way, so ONE navigation
+" model serves search, grep, lint, spell, git hunks -- whichever list is *focused*:
+"   n / N       step the FOCUSED list forward / back (vim's search-repeat keys)
+"   ]x / [x     step a PINNED list x without changing focus (]e lint, ]s spell,
+"               ]c git -- see each section below; the letter is the list's initial)
+"   \l...       manage lists (switch focus, jump within, hide, preview)
+" / prompts and \lg/\ll run pickers, so they need the terminal (:silent !). The
 " rest touch no tty, so they use :bg -- a detached spawn with NO terminal
 " handover, which avoids the alt-screen flash that :! causes when you hold down n/N.
 map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus it
 map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
 map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
-map \/ :bg lvi-list hide<CR>                  " :nohl-style -- hide it; next n/N re-shows
-map \l :silent !lvi-list switch<CR>           " re-aim n/N: pick the focused list
-" Stepping (n/N) previews each entry's text on the message line; \m pops the FULL
-" entry (header + any multi-line body) in a tmux popup. Needs tmux. Pass -w: the
-" popup runs under the tmux server and does NOT inherit lvi's $LVI_WID env.
-map \m :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
+" list MENU (\l): switch focus / goto within / hide / preview.
+map \ll :silent !lvi-list switch<CR>          " re-aim n/N: pick the focused list
+map \lg :silent !lvi-list goto<CR>            " pick+jump to an entry in the focused list
+map \lh :bg lvi-list hide<CR>                 " :nohl-style -- hide it; next n/N re-shows
+" \lp pops the FULL entry (header + any multi-line body) in a tmux popup. Needs
+" tmux. Pass -w: the popup runs under the tmux server and does NOT inherit lvi's
+" $LVI_WID env.
+map \lp :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
 
 " Repaint the current buffer's matches when you switch into it (the glue that
 " makes cross-file lists -- project grep, a compiler -- highlight per file).
@@ -122,10 +159,11 @@ map \r :registers<CR>
 " p-cycling and pick put through. The maps below do nothing without both.
 register "" write lvi-yankring push
 register ~ read lvi-yankring get
-" Press these RIGHT AFTER a p/P -- the undo assumes the last change was a paste:
-map \p :bg lvi-yankring cycle prev<CR>     " ...replace it with the older entry
-map \P :bg lvi-yankring cycle next<CR>     " ...or the newer one
-map \y :silent !lvi-yankring pick<CR>      " or pick any entry through $LVI_PICKER
+" yankring MENU (\y). Press \yp/\yn RIGHT AFTER a p/P -- the undo assumes the
+" last change was a paste:
+map \yp :bg lvi-yankring cycle prev<CR>    " ...replace it with the older entry
+map \yn :bg lvi-yankring cycle next<CR>    " ...or the newer one
+map \yy :silent !lvi-yankring pick<CR>     " or pick any entry through $LVI_PICKER
 " The ring rides the unnamed register, so it sits alongside the numbered delete
 " registers ("1.."9, "-) and the "+ clipboard above -- it replaces neither. Point
 " LVI_YANKRING_DIR at a shared path to carry one ring across views.
@@ -140,16 +178,23 @@ map \y :silent !lvi-yankring pick<CR>      " or pick any entry through $LVI_PICK
 map \t :wbuf<CR>:silent !lvi-tags<CR>
 
 " ---- git changes -------------------------------------------------------------
-" lvi-gitchanges turns `git diff` for the current file into a `gitchanges` list
-" and jumps to the first hunk; n/N then step it like any other list. It reads the
-" file on disk, so it reflects your last :w. (git is non-interactive -> :bg.)
-map \g :bg lvi-gitchanges<CR>                  " load this file's changes + focus
-" Or give it its own step keys so it never steals focus from search:
-"   map ]c :bg lvi-list next gitchanges<CR>
-"   map [c :bg lvi-list prev gitchanges<CR>
+" git MENU (\g). lvi-gitchanges turns `git diff` for the current file into a
+" `gitchanges` list and jumps to the first hunk; n/N then step it like any other
+" list. It reads the file on disk, so it reflects your last :w. (git is
+" non-interactive -> :bg.) \gg is the common case (working-tree changes); \gs
+" does the same for what's already STAGED.
+map \gg :bg lvi-gitchanges<CR>                 " working-tree changes + focus
+map \gs :bg lvi-gitchanges --staged<CR>        " staged changes + focus
+" Or give the list its own step keys so it never steals focus from search:
+map ]c :bg lvi-list next gitchanges<CR>
+map [c :bg lvi-list prev gitchanges<CR>
 " A group with no style is invisible; lvi-search styles `search` itself, but you
 " can theme any list's group (and its -cur current-entry group), e.g.:
 "   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
+"
+" Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
+" lvi-diff and is launched, not a rc default; run it by hand or from a key:
+"   map \gp :silent !lvi-stagediff<CR>          " "git add -p" the current file
 
 " ---- linting ------------------------------------------------------------------
 " lvi-lint runs a linter over the LIVE buffer (unsaved edits included) into a
@@ -169,7 +214,8 @@ hi lint-cur bg=124 pri=11
 " lvi-spell is a toggle (vim's :set spell): while on, the buffer re-checks as
 " you type -- misspelled words get exact-extent `spellbad` marks plus a `spell`
 " list to step. The toggle installs its own change/bufenter hooks once per
-" view, so do NOT add them here; everything below is keys and theme.
+" view, so do NOT add them here; everything below is keys and theme. Fix/add
+" keep vim's native z-keys (z=, zg); the toggle is the one leader leaf (\s).
 map \s :bg lvi-spell<CR>               " toggle
 map ]s :bg lvi-list next spell<CR>     " step misspellings
 map [s :bg lvi-list prev spell<CR>
@@ -183,17 +229,17 @@ hi spellbad underline pri=20           " the word marks themselves
 " splices back only the changed window -- the cursor stays put, one undo
 " reverts the whole format, and an already-formatted buffer is untouched.
 " Format, then :w (an `on write` format would re-dirty the buffer after every
-" save, so there is deliberately no hook here).
+" save, so there is deliberately no hook here). \= mirrors vim's = operator.
 map \= :bg lvi-fmt<CR>
 "
 " That is CODE formatting. For PROSE, gq reflows a motion/text object through the
 " `fmtprg` option (default fmt(1)); gqip reflows a paragraph, gqq the line. fmtprg
 " seeds from $LVI_FMT but is live, so re-set it per file type -- 72 for an email,
 " 80 for Markdown -- from a key or a hook. It takes the rest of the line, so keep
-" it on its own :set:
+" it on its own :set. A \q menu (q for gq) makes the width switch a two-key press:
 "   set fmtprg=fmt -w 72                " a startup default width
-"   map \fe :set fmtprg=fmt -w 72<CR>   " switch to email width on demand
-"   map \fm :set fmtprg=fmt -w 80<CR>   " ...or Markdown width
+"   map \qe :set fmtprg=fmt -w 72<CR>   " switch to email width on demand
+"   map \qm :set fmtprg=fmt -w 80<CR>   " ...or Markdown width
 "
 " fmt(1) drops a list's hanging indent. lvi-reflow is a drop-in fmtprg that keeps
 " each item's marker and hangs the wrapped lines under its text (ordered, roman,
@@ -242,8 +288,8 @@ on bufenter lvi-pos restore
 " ordinary buffer-local ones.
 on markset  lvi-gmark set
 on markjump lvi-gmark go
-" List them any time (or bind a key): !lvi-gmark list
-map <Space>m :!lvi-gmark list<CR>
+" List them any time (\m -- the marks leaf); or from a shell: !lvi-gmark list
+map \m :!lvi-gmark list<CR>
 
 " ---- custom text objects ------------------------------------------------------
 " Builtin objects (iw, i(, i", ip, ...) are in the core; language-aware ones are
@@ -265,7 +311,8 @@ map <C-x> :.!lvi-incr -s -1<CR>      " decrement it
 " by a motion). Each map sets operatorfunc, then presses g@, so it waits for a
 " motion -- vim's <expr>-map trick as a plain key sequence. surround takes a pair
 " (a shell-safe alias, or a quoted literal); comment auto-detects the syntax from
-" the file, or takes one (//, hash, colon, cblock, html).
+" the file, or takes one (//, hash, colon, cblock, html). surround lives on the
+" s-prefix (mnemonic, and it only shadows the builtin `s` for these four follows).
 map s( :set opfunc=lvi-surround paren<CR>g@    " s(iw -> (word), s($ to line end
 map s{ :set opfunc=lvi-surround brace<CR>g@
 map s" :set opfunc=lvi-surround dquote<CR>g@
@@ -274,3 +321,12 @@ map gc :set opfunc=lvi-comment<CR>g@           " gcip toggles a paragraph, gcj 2
 map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 " (No map timeout in lvi: `gc` fires the instant it's typed, so a vim-style `gcc`
 " map is unreachable -- gC above, or `gc@`, comments the current line instead.)
+
+" ---- diff (lvi-diff / lvi-stagediff) -----------------------------------------
+" lvi-diff is launched by hand over two live views (lvi-diff WID_A WID_B) and
+" installs its own maps INTO those panes -- they are not rc defaults, but they
+" follow the same scheme so they read the same:
+"   ]c / [c   next / prev hunk (shared with git changes -- same concept)
+"   zx        toggle the fold over the surrounding unchanged region (z = folds)
+"   \d MENU   \dp put the hunk across to the peer, \do obtain it from the peer
+"             (vim's diff-mode dp / do, on the leader so they don't shadow d).
