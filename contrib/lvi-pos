@@ -4,7 +4,7 @@
 # Remember where you were in each file across sessions -- vi/vim's `` `" `` mark,
 # restored from viminfo -- but as a plain-text store and a couple of `:on` hooks
 # instead of an in-editor database. Two subcommands, wired to editor events in
-# your rc (see lvirc.sample):
+# your rc (see lvirc.sample.vim):
 #
 #   save     record the current file's cursor position to the store. Bind to the
 #            moments a position is worth keeping: `on change` (after an edit

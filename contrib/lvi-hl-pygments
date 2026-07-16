@@ -196,7 +196,7 @@ SHEBANG_ALIAS = {"node": "javascript", "nodejs": "javascript",
 # leading command names about right.
 FILENAME_MAP = {"COMMIT_EDITMSG": "diff", "MERGE_MSG": "diff",
                 "TAG_EDITMSG": "diff",
-                ".lvirc": "vim", "lvirc": "vim", "lvirc.sample": "vim"}
+                ".lvirc": "vim", "lvirc": "vim"}   # lvirc.sample.vim keys off its .vim extension
 
 
 def lexer_from_shebang(text):

@@ -59,7 +59,7 @@
 # LVI_YANKRING_MAX (entries kept, default 50), LVI_YANKRING_REG (the read-backed
 # register the maps put from, default `~` -- a name you will not yank into),
 # LVI_YANKRING_DIR (store path; default beside the socket).
-# See lvirc.sample for the register lines and key maps.
+# See lvirc.sample.vim for the register lines and key maps.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

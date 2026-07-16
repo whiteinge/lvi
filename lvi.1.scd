@@ -52,7 +52,7 @@ CONTROL SOCKET*).
 	Editor mode: export _errorfile_ as *LVI_QUICKFIX* and fire the *ready* event
 	at startup (see *on*). *lvi* itself does nothing more with it -- the core has
 	no list machinery. An rc hook turns it into a loaded quickfix list; the one
-	in *contrib/lvirc.sample* runs *lvi-list load "$LVI_QUICKFIX" quickfix* when
+	in *contrib/lvirc.sample.vim* runs *lvi-list load "$LVI_QUICKFIX" quickfix* when
 	*LVI_QUICKFIX* is set (see *contrib/lvi-list*). _errorfile_ is not opened as a
 	buffer.
 
@@ -833,7 +833,7 @@ exists is used:
 So *map* and *set* persist by putting them in the rc file; a color theme is a set
 of *hi* lines, live syntax highlighting is one *on change* line, and the system
 clipboard is one *register* line (e.g. *register + read wl-paste write wl-copy*).
-See *contrib/README.md* and *contrib/lvirc.sample*.
+See *contrib/README.md* and *contrib/lvirc.sample.vim*.
 
 # TURNING ON THE IDE
 
@@ -1049,7 +1049,7 @@ below, with the happy-path rc lines that turn it on:
 	on bufenter lvi-ftype
 	```
 
-The lines above are the happy path. *contrib/lvirc.sample* has the full annotated
+The lines above are the happy path. *contrib/lvirc.sample.vim* has the full annotated
 set -- every binding, theme, and variant -- and each tool's *-h* (or
 *contrib/README.md*) explains what it does and how it works.
 

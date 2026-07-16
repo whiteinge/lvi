@@ -11,7 +11,7 @@
 # event and *`<A-Z>* / *'<A-Z>* fires `markjump`, each handing the mark letter to
 # the hook in $LVI_MARK (with $LVI_FILE/$LVI_LINE/$LVI_COL for set). So the whole
 # feature is this script plus two rc lines -- no key mappings. Wire it up (see
-# lvirc.sample):
+# lvirc.sample.vim):
 #
 #     on markset  lvi-gmark set
 #     on markjump lvi-gmark go

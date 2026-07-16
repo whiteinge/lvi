@@ -12,7 +12,7 @@ Put this directory on your `PATH`. Then:
 - **To switch a feature on**, see *TURNING ON THE IDE* in the
   [manpage](../lvi.1.scd): it lists every tool with the rc line or map that
   enables it, and the themes and bindings to copy are in
-  [`lvirc.sample`](lvirc.sample).
+  [`lvirc.sample.vim`](lvirc.sample.vim).
 - **For a tool's full reference**, run `TOOL -h` — its header comment:
   invocation, every env knob, and bindings.
 
@@ -95,7 +95,7 @@ register to external commands: a yank or delete pipes the text out through
 *write*, a put reads fresh in through *read*. Backing `+` with the system
 clipboard is the idiom — `register + read wl-paste write wl-copy` (or
 `pbcopy`/`pbpaste`, `xclip`, a `tmux` buffer) — so `"+y` copies and `"+p`
-pastes. This is core config, not a script; [`lvirc.sample`](lvirc.sample) has
+pastes. This is core config, not a script; [`lvirc.sample.vim`](lvirc.sample.vim) has
 the per-platform lines. Backing the **unnamed** register (`register "" write
 CMD` — doubled, since a lone `"` in the rc is a comment) is special: since `"`
 mirrors every yank and delete, its *write* is the one point they all flow

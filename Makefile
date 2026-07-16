@@ -51,7 +51,7 @@ sloc:
 	@{ printf 'group,language,files,blank,comment,code\n'; \
 	   for g in \
 	     "CORE:$$(git ls-files -- '*.lua' lvi ':!:test' ':!:vendor')" \
-	     "CONTRIB:$$(git ls-files -- contrib ':!:*.md' ':!:*.sample')" \
+	     "CONTRIB:$$(git ls-files -- contrib ':!:*.md' ':!:*.sample' ':!:*.sample.vim')" \
 	     "TESTS:$$(git ls-files -- test)"; do \
 	       printf '%s\n' "$${g#*:}" | tr ' ' '\n' | \
 	         cloc --script-lang=Lua,luajit --quiet --hide-rate --csv --list-file=- | \
