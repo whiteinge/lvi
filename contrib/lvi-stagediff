@@ -68,9 +68,12 @@
 # no-timeout maps: pick a key that isn't a prefix clash):
 #     map \S :set operatorfunc=lvi-diff --xfer-range IDX IDX WORK<CR>g@
 #
-# Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH wires
-# staging onto two open views; --reblob TOP REPOPATH is the index pane's `on write`
-# hook (it hashes $LVI_FILE, the pane's just-written temp file).
+# Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH GITDIR
+# wires staging onto two open views; --reblob GITDIR TOP REPOPATH is the index pane's
+# `on write` hook (it hashes $LVI_FILE, the pane's just-written temp file). GITDIR is
+# resolved once by the launcher and threaded down so the hook -- which runs in a new
+# tmux window with a fresh env -- can reach a repo located only via env (bare repo +
+# detached work tree, e.g. a $GIT_DIR/$GIT_WORK_TREE dotfiles checkout).
 #
 # LIMITS (MVP): one file, no directory/index browser; unstaging to HEAD is hand-
 # edit + :w (see above) until a HEAD-vs-index mode lands. Conflicts are refused up
@@ -93,13 +96,20 @@ command -v git >/dev/null 2>&1 || { echo "lvi-stagediff: git not found" >&2; exi
 # backing temp file ($LVI_FILE) is fresh on disk and byte-exact -- lvi's :w round-
 # trips noeol/CRLF, so we hash THAT file rather than reconstructing from :%p (which
 # dropped the final newline and forced a trailing-newline assumption).
+#
+# GITDIR is passed in explicitly (resolved by the launcher, below) rather than left
+# to ambient discovery: this hook runs in a fresh tmux window whose env is whatever
+# tmux seeded, NOT the shell that launched us -- so a repo reachable only via env
+# (a bare repo + detached work tree, e.g. a $GIT_DIR/$GIT_WORK_TREE dotfiles setup)
+# is invisible here. --git-dir makes git find the object db and index regardless;
+# we still `cd "$top"` so the $rp pathspec stays relative to the work-tree root.
 reblob() {
-  idxf=$1; top=$2; rp=$3
+  gitdir=$1; idxf=$2; top=$3; rp=$4
   [ -n "$idxf" ] && [ -f "$idxf" ] || { echo "lvi-stagediff: index file not on disk: $idxf" >&2; return 1; }
-  mode=$(cd "$top" && git ls-files --stage -- "$rp" 2>/dev/null | awk '{print $1; exit}')
+  mode=$(cd "$top" && git --git-dir="$gitdir" ls-files --stage -- "$rp" 2>/dev/null | awk '{print $1; exit}')
   [ -n "$mode" ] || mode=100644
-  blob=$(cd "$top" && git hash-object -w -- "$idxf") || return 1
-  (cd "$top" && git update-index --cacheinfo "$mode,$blob,$rp") || {
+  blob=$(cd "$top" && git --git-dir="$gitdir" hash-object -w -- "$idxf") || return 1
+  (cd "$top" && git --git-dir="$gitdir" update-index --cacheinfo "$mode,$blob,$rp") || {
     echo "lvi-stagediff: update-index failed" >&2; return 1; }
   [ -n "$LVI_WID" ] && "$LVI" -w "$LVI_WID" -- "status stage [staged $rp]" >/dev/null 2>&1
   return 0
@@ -110,12 +120,12 @@ reblob() {
 # index pane and the g@ partial-stage operatorfunc on the working pane. A=idx=the
 # index, B=work=the working tree (the order we hand lvi-diff).
 attach() {
-  idx=$1; work=$2; top=$3; rp=$4
+  idx=$1; work=$2; top=$3; rp=$4; gitdir=$5
   LVI="$LVI" "$DIFF" "$idx" "$work" || return 1
   # Staging is reblob-on-write: :w on the index pane stages its current text. So
   # \p/\o (from lvi-diff) shuffle hunks as ordinary, undoable edits and nothing
   # touches git until you :w -- edit, undo, restage first; the write consummates.
-  "$LVI" -w "$idx"  -- "on write LVI=$LVI $SELF --reblob $top $rp" >/dev/null 2>&1
+  "$LVI" -w "$idx"  -- "on write LVI=$LVI $SELF --reblob $gitdir $top $rp" >/dev/null 2>&1
   # Partial (sub-hunk) staging: arm g@ on the working pane as lvi-diff's env-aware
   # --xfer-range (dest=idx, canonical pair idx,work), for peeling two changes `diff`
   # merged into one hunk. Still just a buffer edit; :w on the index stages it.
@@ -136,8 +146,8 @@ gc_seeds() {
 }
 
 case "$1" in
-  # --reblob TOP REPOPATH -- the index pane's `on write` hook; the index file is $LVI_FILE.
-  --reblob)  shift; reblob "$LVI_FILE" "$1" "$2"; exit $? ;;
+  # --reblob GITDIR TOP REPOPATH -- the index pane's `on write` hook; the index file is $LVI_FILE.
+  --reblob)  shift; reblob "$1" "$LVI_FILE" "$2" "$3"; exit $? ;;
   --attach)  shift; attach "$@"; exit $? ;;
 esac
 
@@ -149,6 +159,11 @@ file=${1:-$LVI_FILE}
 dir=$(dirname "$file")
 top=$(cd "$dir" && git rev-parse --show-toplevel 2>/dev/null) || {
   echo "lvi-stagediff: not inside a git repository" >&2; exit 1; }
+# Resolve the git dir HERE, in the launcher's env, and thread it down: the reblob
+# hook runs in a new tmux window that won't inherit an env-only repo location (bare
+# repo + detached work tree). Absolute so it survives the reblob hook's `cd "$top"`.
+gitdir=$(cd "$dir" && git rev-parse --absolute-git-dir 2>/dev/null) || {
+  echo "lvi-stagediff: cannot resolve git dir" >&2; exit 1; }
 rp=$(cd "$dir" && git ls-files --full-name -- "$(basename "$file")")
 [ -n "$rp" ] || { echo "lvi-stagediff: not tracked by git: $file" >&2; exit 1; }
 if [ -n "$(cd "$top" && git ls-files --unmerged -- "$rp")" ]; then
@@ -188,4 +203,4 @@ while [ $i -lt 50 ]; do
 done
 [ -n "$idx" ] && [ -n "$work" ] || { echo "lvi-stagediff: views did not come up" >&2; exit 1; }
 
-exec "$SELF" --attach "$idx" "$work" "$top" "$rp"
+exec "$SELF" --attach "$idx" "$work" "$top" "$rp" "$gitdir"
