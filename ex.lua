@@ -1218,11 +1218,13 @@ def("echo", function(ed, c) return c.args, "ok" end)
 -- the payload; the socket hands it back in the response frame): :msg targets the
 -- human at THIS view even when a socket tool is the caller -- a preview/notice
 -- channel for external tools (e.g. lvi-list surfacing the entry you stepped
--- onto). :msge is the error variant, styled by the `Error` group (:hi Error ...);
--- plain if unthemed -- the text is always legible, the theme only adds emphasis.
--- Newlines collapse (the status line is one row); the message clears on the next
--- normal-mode key, like every other message.
-def("msg", function(ed, c) ed.message = (c.args:gsub("\n", " ")); ed.message_hl = nil; return "", "ok" end)
+-- onto). Each variant tags the message with a theme group so the rc can set it
+-- apart from the path/name that normally fills that half: :msg -> `Message`,
+-- :msge -> `Error` (:hi Message reverse / :hi Error ...). Plain if unthemed -- the
+-- text is always legible, the theme only adds emphasis. Newlines collapse (the
+-- status line is one row); the message clears on the next normal-mode key, like
+-- every other message.
+def("msg", function(ed, c) ed.message = (c.args:gsub("\n", " ")); ed.message_hl = "Message"; return "", "ok" end)
 def("msge", function(ed, c) ed.message = (c.args:gsub("\n", " ")); ed.message_hl = "Error"; return "", "ok" end)
 
 -- Force a full-screen redraw on the next paint (the driver honors

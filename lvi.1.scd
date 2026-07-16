@@ -643,9 +643,11 @@ _contrib/lvi-shell.sh_ do).
 	Unlike *echo*, which returns text to the caller (the human at the *:* prompt,
 	or a socket tool in its response frame), *msg* always targets the human at
 	this view -- a preview/notice channel a socket tool drives (e.g. a list
-	surfacing the entry you stepped onto). *msge* is the error variant, styled by
-	the *Error* group (*hi Error ...*); plain if unthemed. Newlines collapse; the
-	message clears on the next normal-mode key.
+	surfacing the entry you stepped onto). Each variant tags the message with a
+	theme group so the rc can set it apart from the path/name that normally fills
+	that half: *msg* uses *Message*, *msge* uses *Error* (*hi Message reverse*,
+	*hi Error ...*); plain if unthemed. Newlines collapse; the message clears on
+	the next normal-mode key.
 
 *sysex* _ex-line_
 	Hand _ex-line_ to the system *ex*(1) verbatim, bypassing lvi's own command
