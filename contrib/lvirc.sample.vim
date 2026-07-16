@@ -204,6 +204,14 @@ map \yy :silent !lvi-yankring pick<CR>     " or pick any entry through $LVI_PICK
 " LVI_YANKRING_DIR at a shared path to carry one ring across views.
 
 " }}}
+" ---- open files -------------------------------------------------------- {{{
+
+" lvi-open fuzzy-picks a file ($LVI_PICKER, default fzf) and opens it with :e
+" over the socket. It needs the picker's tty (:silent !), which freezes lvi; the
+" chosen file lands when lvi resumes. \f = find (the open leaf).
+map \f :silent !lvi-open<CR>
+
+" }}}
 " ---- tags -------------------------------------------------------------- {{{
 
 " lvi-tags lists this file's ctags tags in file order through your picker and
