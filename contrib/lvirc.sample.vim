@@ -7,6 +7,7 @@
 " -- see the folding section below.)
 
 " ---- the keymap, and why it is shaped this way ------------------------ {{{
+
 " Each contrib tool is a standalone concept, so its maps could each grab a
 " convenient letter and collide with the next tool's. Instead the maps below are
 " ONE coherent keymap -- copy the whole file and nothing steps on anything else.
@@ -35,9 +36,10 @@
 " the z-prefix (folds, spell fix/add), <C-a>/<C-x> (increment), gc (comment),
 " s( s{ s" (surround). They shadow the builtin only where lvi left it free (lvi
 " has no search, so / n N * are yours; s only shadows the four surround follows).
-" }}}
 
+" }}}
 " ---- editor defaults --------------------------------------------------- {{{
+
 " Plain core options -- a starting point, tune to taste. If you enable lvi-ftype
 " (below) it re-projects sw/et/fmtprg per file type on every buffer switch, so
 " set your real per-language values there and treat these as the fallback.
@@ -46,9 +48,10 @@ set shiftwidth=4
 set autoindent
 set wrap linebreak                    " soft-wrap long lines at word boundaries
 map \w :set wrap!<CR>                  " toggle wrapping (the \w leaf)
-" }}}
 
+" }}}
 " ---- theme (Pygments backend) ------------------------------------------ {{{
+
 " These :hi lines color the token groups the Pygments backend emits. They do
 " NOT apply to the bat backend, which brings its own theme (set BAT_THEME or
 " `bat --theme`); with bat you can skip this whole section.
@@ -81,9 +84,10 @@ hi Deleted  fg=red
 " LVI_PYGMENTS_DEPTH constrains the seed's colors: truecolor (default), 256,
 " 16, or 8 (low depths follow your terminal palette). E.g. for a 256-color term:
 "   on ready LVI_PYGMENTS_STYLE=gruvbox-dark LVI_PYGMENTS_DEPTH=256 lvi-highlight --theme
-" }}}
 
+" }}}
 " ---- trigger ----------------------------------------------------------- {{{
+
 " Re-highlight automatically a moment after you stop typing. `on change` runs the
 " command (detached, output discarded) when a KEYBOARD edit settles -- a hook's
 " own socket edits never retrigger it, so no loops. Put lvi-highlight (and
@@ -99,9 +103,10 @@ on bufenter lvi-highlight
 " highlight MENU (\h): \hh forces a refresh now, \ht toggles syntax off/on.
 map \hh :silent !lvi-highlight<CR>          " re-highlight on demand
 map \ht :bg lvi-highlight toggle<CR>        " :syntax off / on
-" }}}
 
+" }}}
 " ---- message line ------------------------------------------------------ {{{
+
 " :msg writes the message line and tags its text with the `Message` group; :msge
 " (the error variant) uses `Error` instead, so a tool can flag a message as an
 " error and real ex errors (`:w` on a changed file, ...) show the same way.
@@ -109,9 +114,10 @@ map \ht :bg lvi-highlight toggle<CR>        " :syntax off / on
 " :msg to preview the entry you step onto.
 hi Message reverse
 hi Error   fg=red bold
-" }}}
 
+" }}}
 " ---- search & lists (quickfix/location) -------------------------------- {{{
+
 " lvi has no built-in search; lvi-search greps the live buffer into a `lvi-list`
 " list and lvi-list steps it. Every list works the same way, so ONE navigation
 " model serves search, grep, lint, spell, git hunks -- whichever list is *focused*:
@@ -147,18 +153,20 @@ on bufenter lvi-list paint
 " `lvi`, and only bites when -q was passed. Loads + paints (cursor stays put);
 " press n to step to the first entry. Drop `--focus` to keep your current focus.
 on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
-" }}}
 
+" }}}
 " ---- insert-mode completion -------------------------------------------- {{{
+
 " Ctrl-N/Ctrl-P in insert mode complete the word before the cursor from all open
 " buffers. `on complete` names the completer; core hands it the token + buffers
 " and splices its choice back. lvi-complete fuzzy-picks with $LVI_PICKER; set
 " LVI_COMPL_POPUP=1 (under tmux) to draw it in a popup over the editor.
 on complete lvi-complete
 "   on complete LVI_COMPL_POPUP=1 lvi-complete   " ...as a tmux popup instead
-" }}}
 
+" }}}
 " ---- system clipboard -------------------------------------------------- {{{
+
 " `register` backs a register with shell commands: a yank/delete into it pipes
 " the text out, a put reads fresh in. Wire `+` to your platform's clipboard and
 " "+y / "+p (and "+d, "+dd, "+yiw, ...) copy and paste through it. Pick ONE line:
@@ -172,9 +180,10 @@ register + read wl-paste write wl-copy              " Wayland (wl-clipboard)
 " :registers (alias :reg -- Vim's :reg) lists every register and its contents;
 " a command-backed register also shows its read/write spec. Map it for a glance:
 map \r :registers<CR>
-" }}}
 
+" }}}
 " ---- yank ring (YankRing / yanky.nvim-style history) ------------------- {{{
+
 " Backing the UNNAMED register's write fires on every yank and delete, so it is
 " the one capture point a history tool hangs off. lvi-yankring keeps a per-view
 " ring of them; you paste normally, then walk the paste back through older
@@ -193,9 +202,10 @@ map \yy :silent !lvi-yankring pick<CR>     " or pick any entry through $LVI_PICK
 " The ring rides the unnamed register, so it sits alongside the numbered delete
 " registers ("1.."9, "-) and the "+ clipboard above -- it replaces neither. Point
 " LVI_YANKRING_DIR at a shared path to carry one ring across views.
-" }}}
 
+" }}}
 " ---- tags -------------------------------------------------------------- {{{
+
 " lvi-tags lists this file's ctags tags in file order through your picker and
 " jumps to the one you choose -- a jump-to-symbol and a file outline in one key.
 " It tags the live buffer (your unsaved edits included) -- no `tags` file needed.
@@ -203,9 +213,10 @@ map \yy :silent !lvi-yankring pick<CR>     " or pick any entry through $LVI_PICK
 " buffer back over the socket -- :wbuf snapshots it to $LVI_BUFFER first, then
 " the frozen picker reads that. (See `Shelling out` in lvi.1.scd.)
 map \t :wbuf<CR>:silent !lvi-tags<CR>
-" }}}
 
+" }}}
 " ---- git changes ------------------------------------------------------- {{{
+
 " git MENU (\g). lvi-gitchanges turns `git diff` for the current file into a
 " `gitchanges` list and jumps to the first hunk; n/N then step it like any other
 " list. It reads the file on disk, so it reflects your last :w. (git is
@@ -223,9 +234,10 @@ map [c :bg lvi-list prev gitchanges<CR>
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
 " lvi-diff and is launched, not a rc default; run it by hand or from a key:
 "   map \gp :silent !lvi-stagediff<CR>          " "git add -p" the current file
-" }}}
 
+" }}}
 " ---- linting ----------------------------------------------------------- {{{
+
 " lvi-lint runs a linter over the LIVE buffer (unsaved edits included) into a
 " `lint` list; the backend is picked by the file's extension (ruff / shellcheck
 " / deno lint ship -- see lvi-lint's header for the tiny adapter contract).
@@ -238,9 +250,10 @@ map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
 map [e :bg lvi-list prev lint<CR>
 hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
 hi lint-cur bg=124 pri=11
-" }}}
 
+" }}}
 " ---- spell check ------------------------------------------------------- {{{
+
 " lvi-spell is a toggle (vim's :set spell): while on, the buffer re-checks as
 " you type -- misspelled words get exact-extent `spellbad` marks plus a `spell`
 " list to step. The toggle installs its own change/bufenter hooks once per
@@ -252,9 +265,10 @@ map [s :bg lvi-list prev spell<CR>
 map z= :silent !lvi-spell fix<CR>      " pick a suggestion for the word under
 map zg :bg lvi-spell add<CR>           " the cursor / add it to the dictionary
 hi spellbad underline pri=20           " the word marks themselves
-" }}}
 
+" }}}
 " ---- formatting -------------------------------------------------------- {{{
+
 " lvi-fmt formats the LIVE buffer through the file's formatter (ruff format /
 " shfmt / gofmt / stylua / deno fmt by extension; LVI_FMT_CMD overrides) and
 " splices back only the changed window -- the cursor stays put, one undo
@@ -276,9 +290,10 @@ map \= :bg lvi-fmt<CR>
 " each item's marker and hangs the wrapped lines under its text (ordered, roman,
 " letter, and bullet markers; nested lists nest). Then gqip/gqq reflow lists too:
 "   set fmtprg=lvi-reflow -w 79
-" }}}
 
+" }}}
 " ---- filetype settings (vim's ftplugin) -------------------------------- {{{
+
 " The per-file-type fmtprg above, generalized. lvi-ftype reads $LVI_FILE on every
 " buffer entry and sets sw/et/fmtprg/... from the name: Python at sw=4 with `ruff
 " format`, shell at sw=2 with shfmt. It ships as a TEMPLATE -- copy it to your
@@ -293,9 +308,10 @@ map \= :bg lvi-fmt<CR>
 " switch and a manual :set lasts only until you switch away. Use one such hook,
 " not several: two would race.
 on bufenter lvi-ftype
-" }}}
 
+" }}}
 " ---- folding ----------------------------------------------------------- {{{
+
 " lvi has the fold MECHANISM (collapse a range to one row, z-keys to navigate);
 " lvi-fold computes the POLICY from the live buffer and pushes :fold commands, the
 " way lvi-highlight pushes :hl. `zi` folds by marker (this rc wraps each section
@@ -306,9 +322,10 @@ hi Folded fg=cyan italic               " the summary bar (un-themed = plain)
 map zi :bg lvi-fold<CR>                " (re)fold by marker
 map zI :bg lvi-fold indent<CR>         " (re)fold by indent
 " on bufenter lvi-fold                 " ...or auto-fold every marked file on entry
-" }}}
 
+" }}}
 " ---- position memory (viminfo's `") ------------------------------------ {{{
+
 " lvi-pos remembers where you were in each file across sessions, in a plain-text
 " store under $XDG_STATE_HOME (LVI_POS_FILE to move it). `save` records the spot;
 " `restore` jumps there and drops the `" mark so you can jump back. Reopen a file
@@ -324,9 +341,10 @@ on ready    lvi-pos restore     " restore the file(s) opened at startup
 " buffer sitting at line 1 (a fresh read), so it never clobbers the live cursor
 " of a buffer you're revisiting.
 on bufenter lvi-pos restore
-" }}}
 
+" }}}
 " ---- global marks (vi's uppercase file marks A-Z) ---------------------- {{{
+
 " Lowercase marks a-z are per-buffer and built in; uppercase A-Z remember a FILE
 " too, so `A jumps to that file from anywhere. lvi-gmark stores them (one
 " mark/path/line/col line under $XDG_STATE_HOME, LVI_GMARK_FILE to move it). The
@@ -337,9 +355,10 @@ on markset  lvi-gmark set
 on markjump lvi-gmark go
 " List them any time (\m -- the marks leaf); or from a shell: !lvi-gmark list
 map \m :!lvi-gmark list<CR>
-" }}}
 
+" }}}
 " ---- multiple instances editing one file (lvi-mirror) ------------------ {{{
+
 " One process is one view, so the same file open in two panes has two buffers
 " that don't know about each other. lvi-mirror keeps them in sync: bound on
 " change and write, it pushes an edited buffer's text to every OTHER view showing
@@ -347,26 +366,29 @@ map \m :!lvi-gmark list<CR>
 " you only want it if you routinely open one file in several panes:
 "   on change lvi-mirror
 "   on write  lvi-mirror
-" }}}
 
+" }}}
 " ---- custom text objects ----------------------------------------------- {{{
+
 " Builtin objects (iw, i(, i", ip, ...) are in the core; language-aware ones are
 " a `:textobj KEY CMD` filter -- lvi shells CMD out synchronously and applies the
 " operator itself, so cit/dat/yit behave like builtins (c even enters insert).
 " lvi-textobj-tag adds Vim's tag object for HTML/XML, with no HTML in the core.
 textobj t lvi-textobj-tag       " dit/cit/dat/yat on the enclosing tag
-" }}}
 
+" }}}
 " ---- increment / decrement (no Ctrl-A in the core; the ! filter is enough) {{{
+
 " lvi-incr rewrites the first number on each piped line (line i gets i*step), so
 " one filter is both point Ctrl-A and visual g-Ctrl-A. These map the old reflex
 " onto the current line; over a range, use it directly: !ip lvi-incr (ramp) or
 " !ip lvi-incr -b 1 (renumber a list).
 map <C-a> :.!lvi-incr<CR>            " increment the number on this line
 map <C-x> :.!lvi-incr -s -1<CR>      " decrement it
-" }}}
 
+" }}}
 " ---- surround & comment (g@ operators) --------------------------------- {{{
+
 " g@{motion} runs the `operatorfunc` command over the span (like :bg, but driven
 " by a motion). Each map sets operatorfunc, then presses g@, so it waits for a
 " motion -- vim's <expr>-map trick as a plain key sequence. surround takes a pair
@@ -385,9 +407,10 @@ map gc :set opfunc=lvi-comment<CR>g@           " gcip toggles a paragraph, gcj 2
 map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 " (No map timeout in lvi: `gc` fires the instant it's typed, so a vim-style `gcc`
 " map is unreachable -- gC above, or `gc@`, comments the current line instead.)
-" }}}
 
+" }}}
 " ---- diff (lvi-diff / lvi-stagediff) ----------------------------------- {{{
+
 " lvi-diff is launched by hand over two live views (lvi-diff WID_A WID_B) and
 " installs its own maps INTO those panes -- they are not rc defaults, but they
 " follow the same scheme so they read the same:
@@ -395,4 +418,5 @@ map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 "   zx        toggle the fold over the surrounding unchanged region (z = folds)
 "   \d MENU   \dp put the hunk across to the peer, \do obtain it from the peer
 "             (vim's diff-mode dp / do, on the leader so they don't shadow d).
+
 " }}}
