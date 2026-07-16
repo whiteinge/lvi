@@ -208,8 +208,11 @@ The second `lvi-list` producer, and a one-line proof that "any tool that speaks
 `file:line:text` is a quickfix": it turns the `git diff` for the current buffer
 into a `gitchanges` list — one entry per hunk — and jumps to the first, so `n`/`N`
 walk your uncommitted changes. `lvi-gitchanges HEAD~3..` steps a commit range,
-`lvi-gitchanges <commit>` a single commit. Unlike `lvi-search` it reads the file
-on **disk**, not the live buffer, so it shows changes since your last `:w`.
+`lvi-gitchanges <commit>` a single commit, and `lvi-gitchanges --staged` steps
+what you've *staged* (a separate `gitstaged` list — handy for reviewing the hunks
+you moved onto the index in `lvi-stagediff`, folds and all). Unlike `lvi-search`
+it reads the file on **disk** (or the index), not the live buffer, so it shows
+changes since your last `:w` / `git add`.
 
 ### `lvi-lint` — any linter, as a list
 
