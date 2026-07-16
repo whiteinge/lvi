@@ -328,19 +328,20 @@ map zI :bg lvi-fold indent<CR>         " (re)fold by indent
 
 " lvi-pos remembers where you were in each file across sessions, in a plain-text
 " store under $XDG_STATE_HOME (LVI_POS_FILE to move it). `save` records the spot;
-" `restore` jumps there and drops the `" mark so you can jump back. Reopen a file
-" and you land where you left off. (The in-session last-change mark `. needs no
-" tool -- the core sets it as you edit.)
+" `restore` drops the `" mark there WITHOUT moving the cursor, so you open a file
+" fresh (at the top) and press `" to jump to where you left off. Because it moves
+" nothing, restore is safe on every buffer switch -- it can't fight a list jump
+" (lvi-gitchanges/-search) for the cursor. (The in-session last-change mark `. needs
+" no tool -- the core sets it as you edit.)
 on change   lvi-pos save        " after an edit settles...
 on write    lvi-pos save        " ...on :w...
 on bufleave lvi-pos save        " ...and when you leave a buffer
-on ready    lvi-pos restore     " restore the file(s) opened at startup
-" (add -n -- `lvi-pos restore -n` -- to set the `" mark but stay at line 1, so
-" you open at the top and jump to your old spot only when you press `")
-" And restore a file opened later with :e. Safe on every switch: it only jumps a
-" buffer sitting at line 1 (a fresh read), so it never clobbers the live cursor
-" of a buffer you're revisiting.
-on bufenter lvi-pos restore
+on bufenter lvi-pos restore     " set `" on every file you open (no cursor move)
+on ready    lvi-pos restore     " ...same for the file(s) opened at startup
+" Prefer to land AT your old spot automatically? Add -j (jump) -- but only on
+" `ready`. On `bufenter` a jump lands after a cross-file list step and steals it,
+" so keep the auto-jump to startup:
+"     on ready    lvi-pos restore -j
 
 " }}}
 " ---- global marks (vi's uppercase file marks A-Z) ---------------------- {{{

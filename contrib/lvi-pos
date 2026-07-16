@@ -9,13 +9,17 @@
 #   save     record the current file's cursor position to the store. Bind to the
 #            moments a position is worth keeping: `on change` (after an edit
 #            settles), `on write`, `on bufleave` (leaving a buffer).
-#   restore  look the current file up in the store and jump there, leaving the
-#            `` `" `` mark at the spot so `` `" `` takes you back after you wander.
-#            With -n (--no-jump) the cursor stays at the top instead: only the
-#            `` `" `` mark is set, so you open the file fresh at line 1 but `` `" ``
-#            still carries you to where you left off when you ask for it. Bind to
-#            `on ready` (the file(s) opened at startup) and `on bufenter` (a file
-#            opened later with :e).
+#   restore  look the current file up in the store and set the `` `" `` mark at the
+#            spot WITHOUT moving the cursor -- you open the file fresh (at the top)
+#            but `` `" `` carries you to where you left off when you ask for it.
+#            This is the default because it moves nothing, so it composes safely on
+#            any event -- it can't fight a list jump (lvi-gitchanges/-search) or
+#            another cursor mover firing on the same buffer switch. With -j
+#            (--jump) it ALSO moves the cursor there, to resume automatically --
+#            the surprising behavior, which you opt into. Bind restore to `on
+#            ready` (the launch file) and/or `on bufenter` (files opened later with
+#            :e); keep -j to `ready`, since a jump on `bufenter` clobbers cross-file
+#            list navigation (see THE CONFLICT below).
 #
 # THE STORE is a tab-delimited text file, newest entry last, one line per file:
 #     /abs/path/to/file<TAB>LINE<TAB>COL
@@ -25,28 +29,35 @@
 # inherits the editor's launch directory) so the same file keys the same entry no
 # matter where lvi was started.
 #
-# RESTORE IS GUARDED so `on bufenter` is safe on every switch: it only jumps when
-# the buffer is sitting at line 1. A freshly read file starts there (so restore
-# fires); a buffer you're revisiting already has lvi's own in-memory per-buffer
-# cursor restored to wherever you left it this session (so restore stands aside
-# and doesn't clobber the better, live position). The jump goes over the socket,
-# which never arms `change`/`bufenter`, so save and restore can't loop.
+# RESTORE IS GUARDED so it only acts on a FRESH read (the buffer sitting at line
+# 1): a freshly read file starts there; a buffer you're revisiting already has
+# lvi's own in-memory per-buffer cursor where you left it this session, so restore
+# stands aside rather than re-marking (or, with -j, yanking) it. All edits go over
+# the socket, which never arms `change`/`bufenter`, so save and restore can't loop.
 #
-# The in-session last-CHANGE mark (`` `. ``) is NOT this tool's job: setting an lvi
-# mark needs `:normal m{x}`, and the `on change` hook can fire while you're still
-# in insert mode (a typing pause) -- there the keys would land as literal text. So
-# the core stamps `` `. `` itself as you edit; this tool only sets the cross-session
-# `` `" `` on restore, which runs in normal mode (startup / a buffer switch), where
-# `:normal` is safe.
+# The in-session last-CHANGE mark (`` `. ``) is NOT this tool's job: the `on change`
+# hook can fire while you're still in insert mode (a typing pause), so the core
+# stamps `` `. `` itself as you edit; this tool only sets the cross-session `` `" ``.
+# It does so with `:mark " LINE COL`, the ex-side setter that drops a mark at an
+# address WITHOUT moving the cursor -- which is exactly what makes a mark-only
+# restore composable (see THE CONFLICT).
+#
+# THE CONFLICT (why -j belongs on `ready`, not `bufenter`): a cursor-moving list
+# tool (lvi-gitchanges, lvi-search) steps to a match in another file by opening it
+# (:e) and jumping. That :e fires `bufenter`, and a restore bound there with -j
+# ALSO moves the cursor -- landing AFTER the list's jump and stealing it (you end
+# up at your last-known line, or at the top, instead of the match). The default
+# mark-only restore has no such fight: it never moves the cursor, so it's safe on
+# `bufenter`. Reserve -j for `ready`, where nothing is stepping a list.
 #
 # Bind it (all touch no tty -> a detached spawn is implicit for `on` hooks):
 #     on change   lvi-pos save
 #     on write    lvi-pos save
 #     on bufleave lvi-pos save
-#     on ready    lvi-pos restore
-#     on bufenter lvi-pos restore
-# Add -n to either to keep the mark but stay at line 1 (open at the top):
-#     on ready    lvi-pos restore -n
+#     on bufenter lvi-pos restore       " set `" on every file you open (no move)
+#     on ready    lvi-pos restore       " ...same for the launch file
+# Add -j to auto-jump to where you left off -- safe on `ready`, NOT on `bufenter`:
+#     on ready    lvi-pos restore -j
 #
 # Config: LVI (client, default `lvi`), LVI_POS_FILE (store path, default
 # $XDG_STATE_HOME/lvi/positions), LVI_POS_MAX (entries to keep, default 1000).
@@ -61,8 +72,18 @@ maxn=${LVI_POS_MAX:-1000}
 
 want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
 sub=${1:-}; [ -n "$sub" ] && shift
-# restore -n / --no-jump: set the `" mark but leave the cursor at the top.
-nojump=; case "$1" in -n|--no-jump) nojump=1; shift ;; esac
+# restore [-j]: by DEFAULT set the `" mark WITHOUT moving the cursor -- the safe,
+# composable choice, since a mark-only restore can't fight a list jump (or any
+# other cursor mover) on the same event. -j/--jump ALSO moves the cursor to the
+# saved spot ("resume here") -- the surprising bit you opt into, and best bound to
+# `ready` (startup) rather than `bufenter`, where it would clobber list navigation
+# across files. -n/--no-jump is the old spelling of today's default, accepted as a
+# no-op so existing rc lines keep working.
+jump=
+case "$1" in
+  -j|--jump)    jump=1; shift ;;
+  -n|--no-jump) shift ;;                    # now the default; kept as a compat no-op
+esac
 target=${want_wid:-${LVI_WID:-auto}}
 send() { $LVI -w "$target" --detach -- "$@"; }
 
@@ -110,20 +131,16 @@ restore)
   case "$line" in ''|*[!0-9]*|0|1) exit 0 ;; esac      # nothing worth jumping to
   col=$(awk -F'\t' -v f="$file" '$1 == f { print $3 }' "$store" 2>/dev/null)
   case "$col" in ''|*[!0-9]*|0) col=1 ;; esac          # older/short entries -> column 1
-  # Restore the exact spot -- line AND byte column, like Vim's `" mark. :pos sets
-  # the cursor byte-exactly (a plain ${line}G lands on the first non-blank, and no
-  # normal-mode motion reaches a raw byte column); `m"` then drops the mark there.
-  # :pos clamps a stale line/col (the file shrank since we saved) into the buffer,
-  # the same tolerance as viminfo. We set the mark the only way lvi offers -- at
-  # the cursor -- because there is no command to mark an address without moving.
+  # Drop the `" mark at the exact spot -- line AND byte column, like Vim's `" mark.
+  # `:mark " LINE COL` sets it byte-exactly WITHOUT moving the cursor, so the
+  # (default) mark-only restore never touches the cursor -- it can't fight a list
+  # jump or any other bufenter cursor mover. :mark clamps a stale line/col (the
+  # file shrank since we saved) into the buffer, the same tolerance as viminfo.
   #
-  # With -n we still want the mark but not the move, so after dropping it we send
-  # the cursor back to where the fresh read left it (line 1; the line-1 guard
-  # above guarantees that is where we started).
-  if [ -n "$nojump" ]; then
-    send "pos $line $col" "normal m\"" "pos ${LVI_LINE:-1} ${LVI_COL:-1}"
-  else
-    send "pos $line $col" "normal m\""
-  fi
+  # With -j we ALSO move the cursor there to resume: :pos does the byte-exact move
+  # (a plain ${line}G lands on the first non-blank, and no normal-mode motion
+  # reaches a raw byte column). This is the surprising bit; keep it off `bufenter`.
+  send "mark \" $line $col"
+  [ -n "$jump" ] && send "pos $line $col"
   ;;
 esac
