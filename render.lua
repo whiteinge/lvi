@@ -124,7 +124,7 @@ function M.frame(ed)
         out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. fold_summary(head, buf, ts, W, foldsgr)
         if l == ed.cy then crow, ccol = sr + 1, 1 end
         sr, skip = sr + 1, 0
-        l = hasfolds and fold.next_vline(folds, l, nl) or (l + 1)
+        if hasfolds then l = fold.next_vline(folds, l, nl) else l = l + 1 end
       else
         local orig = buf:line(l) or ""
         local ivs = intervals(hidx[l], orig, ts)
@@ -153,7 +153,7 @@ function M.frame(ed)
           sr = sr + 1
         end
         skip = 0
-        l = hasfolds and fold.next_vline(folds, l, nl) or (l + 1)
+        if hasfolds then l = fold.next_vline(folds, l, nl) else l = l + 1 end
       end
     end
     while sr < textrows do out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. "~"; sr = sr + 1 end
@@ -175,7 +175,7 @@ function M.frame(ed)
           out[#out + 1] = disp.slice(ln, ts, left, W, intervals(hidx[L], ln, ts))
         end
         if L == ed.cy then crow = i + 1 end
-        L = hasfolds and fold.next_vline(folds, L, nl) or (L + 1)
+        if hasfolds then L = fold.next_vline(folds, L, nl) else L = L + 1 end
       end
     end
     crow = crow or 1

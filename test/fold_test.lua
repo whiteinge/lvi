@@ -267,6 +267,28 @@ describe("render collapses closed folds", function()
     expect(f:find("l7", 1, true)).to.exist()        -- resumes after the fold
   end)
 
+  -- Regression: a fold running to the LAST buffer line. next_vline correctly
+  -- returns nil at EOF; the walk must stop, not fall through to l+1 and redraw
+  -- the hidden interior (the `x and next_vline() or l+1` idiom bit exactly here).
+  it("hides the interior of a fold that ends on the last line (nowrap)", function()
+    local ed = render_ed(TEXT, false)                -- TEXT is l1..l10
+    ed.folds = { { s = 8, e = 10, open = false } }   -- fold to EOF
+    local f = render.frame(ed)
+    expect(f:find("3 lines", 1, true)).to.exist()    -- summary drawn
+    expect(f:find("l8", 1, true)).to.exist()         -- head visible
+    expect(f:find("l9", 1, true)).to_not.exist()     -- interior hidden
+    expect(f:find("l10", 1, true)).to_not.exist()
+  end)
+
+  it("hides the interior of a fold that ends on the last line (wrap)", function()
+    local ed = render_ed(TEXT, true)
+    ed.folds = { { s = 8, e = 10, open = false } }
+    local f = render.frame(ed)
+    expect(f:find("3 lines", 1, true)).to.exist()
+    expect(f:find("l9", 1, true)).to_not.exist()
+    expect(f:find("l10", 1, true)).to_not.exist()
+  end)
+
   it("hides the interior in wrap mode too", function()
     local ed = render_ed(TEXT, true)
     ed.folds = { { s = 3, e = 6, open = false } }
