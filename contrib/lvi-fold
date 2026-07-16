@@ -22,9 +22,11 @@
 #              orientation sections read on open. Feed it man output with
 #              overstrike stripped (see contrib/lvi-man).
 #
-# It replaces the view's folds each run (foldclear, then one `:fold` carrying
-# every range), so re-running after an edit re-folds cleanly. Folds arrive
-# CLOSED; open what you want with zo/zR, or bind zR to reveal-all.
+# It replaces the view's folds each run (one `:foldset` carrying every range),
+# so re-running after an edit re-folds cleanly -- and a range you already had
+# keeps its open/closed state, so a re-run (or an `on bufenter` re-push after a
+# buffer switch) never re-closes what you opened. NEW folds arrive CLOSED; open
+# what you want with zo/zR, or bind zR to reveal-all.
 #
 # Bind it inside lvi (WID comes from $LVI_WID). It reads the buffer, so it must
 # not run in the foreground of a `:silent !` (that freezes lvi's event loop while
@@ -118,5 +120,7 @@ ranges=$(
   esac | awk -v min="$MINLINES" '$2 - $1 + 1 >= min { printf " %d,%d", $1, $2 }'
 )
 
-$LVI -w "$target" -- foldclear
-[ -n "$ranges" ] && $LVI -w "$target" -- "fold$ranges"
+# One atomic replace: surviving ranges keep their open state, stale ones go,
+# and there is no unfolded flash between a clear and a re-fold. Empty ranges
+# means a bare `foldset` -- the spelling for "no folds found, clear them".
+$LVI -w "$target" -- "foldset$ranges"

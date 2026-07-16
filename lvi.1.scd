@@ -248,8 +248,10 @@ lands inside a closed fold snaps to its head). The summary row is themed by the
 draws as plain text.
 
 Nothing folds automatically: lvi ships the fold *mechanism* only. A tool
-computes *where* the folds go and pushes *:fold* over the socket, exactly as
+computes *where* the folds go and pushes *:foldset* over the socket, exactly as
 external search feeds *:hl* -- see *contrib/lvi-fold* (by marker or by indent).
+A re-push keeps the open/closed state of every range it re-lists, so a
+recomputing tool never re-closes the folds you opened.
 
 *zf*_motion_
 	Create a closed fold over the lines the _motion_ spans (e.g. *zf3j*, *zfG*,
@@ -542,6 +544,13 @@ _contrib/lvi-shell.sh_ do).
 *foldopen*, *foldclose*, *foldclear*
 	Open every fold, close every fold, or remove all folds (the tool-facing
 	spellings of *zR* / *zM* / *zE*).
+
+*foldset*
+	Replace the fold set wholesale: _args_ carry the same _L1_,_L2_ specs as
+	*fold*, and no specs means no folds. A range that survives the replacement
+	keeps its open/closed state; new ranges arrive closed. The re-push spelling
+	for a fold tool that recomputes where the folds go (*contrib/lvi-fold*), so
+	an *on bufenter* re-fold never re-closes what you opened.
 
 *on* _event_ [_cmd_]
 	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears

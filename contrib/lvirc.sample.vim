@@ -321,11 +321,12 @@ on bufenter lvi-ftype
 " ---- folding ----------------------------------------------------------- {{{
 
 " lvi has the fold MECHANISM (collapse a range to one row, z-keys to navigate);
-" lvi-fold computes the POLICY from the live buffer and pushes :fold commands, the
+" lvi-fold computes the POLICY from the live buffer and pushes :foldset, the
 " way lvi-highlight pushes :hl. `zi` folds by marker (this rc wraps each section
-" in a marker pair, so it folds into a table of contents), `zI` by indent. Folds
-" arrive CLOSED; open with zo/zR. Marker mode needs a matching close per open (it
-" nests by a stack, and ignores a trailing level digit on the open marker).
+" in a marker pair, so it folds into a table of contents), `zI` by indent. New
+" folds arrive CLOSED; open with zo/zR -- a re-run (or a bufenter re-push) keeps
+" what you opened open. Marker mode needs a matching close per open (it nests
+" by a stack, and ignores a trailing level digit on the open marker).
 hi Folded fg=cyan italic               " the summary bar (un-themed = plain)
 map zi :bg lvi-fold<CR>                " (re)fold by marker
 map zI :bg lvi-fold indent<CR>         " (re)fold by indent

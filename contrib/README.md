@@ -302,19 +302,21 @@ the buffer so the picker can read it — see the spawn disciplines above).
 lvi ships the fold *mechanism* — a closed fold collapses its lines to one
 summary row and `j`/`k`/scroll skip over it (`zf`/`zo`/`zc`/`zR`; see the
 manpage) — but no fold policy. `lvi-fold` is the policy half. It reads
-the live buffer over the socket and pushes the ranges back as `:fold`,
+the live buffer over the socket and pushes the ranges back as `:foldset`,
 the same read-compute-paint loop `lvi-highlight` runs against `:hl`. We
 ship with three fold methods (contributions welcome): `marker` (vim's `{{{
 … }}}`, nested by a stack; the pair is `$LVI_FOLD_MARKER`), `indent`
 (each block indented under its parent), and `man` (each rendered-manpage
 section under its heading — see `lvi-man`). It replaces the view's folds each
 run, so re-running it (by marker or `indent` mode, or `on bufenter` to auto-fold
-on open) re-folds after edits.
+on open) re-folds after edits — and because `:foldset` keeps the open/closed
+state of any range that survives the replacement, a re-run never re-closes
+the folds you opened.
 
 It reads the buffer, so it self-backgrounds (or bind it with `:bg`) for the same
 reason `lvi-highlight`/`lvi-search` do — see **Self-backgrounding** above. Any
 other fold policy (by syntax, by diff hunk, by `git` conflict markers) is the
-same shape: emit `L1,L2` pairs, hand them to `:fold`.
+same shape: emit `L1,L2` pairs, hand them to `:foldset`.
 
 ### `lvi-man` — read manpages in lvi
 

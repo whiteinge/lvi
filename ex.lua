@@ -946,20 +946,52 @@ def("nohl nohlsearch", function(ed) ed.highlights = {}; return "", "ok" end)
 -- a transient view overlay (see fold.lua): they never touch the buffer, so :w
 -- and the delegated-ex path see all lines regardless. Companions: :foldopen /
 -- :foldclose open/close every fold (the tool-facing spelling of zR / zM);
--- :foldclear removes them all.
-def("fold", function(ed, c)
-  ed.folds = ed.folds or {}
-  local function add(a, b) if b > a then ed.folds[#ed.folds + 1] = { s = a, e = b, open = false } end end
+-- :foldclear removes them all; :foldset replaces the whole set, preserving the
+-- open state of ranges that survive.
+-- Feed every L1,L2 spec of a fold-family command -- the address range, then the
+-- space-separated arg pairs -- to `add`, normalized to s < e. One grammar for
+-- both verbs (:fold appends, :foldset replaces), so a producer can switch verbs
+-- without touching its emitter.
+local function fold_specs(c, add)
   if c.a then add(math.min(c.a, c.b), math.max(c.a, c.b)) end
   for s1, s2 in c.args:gmatch("(%d+)%s*[,:%s]%s*(%d+)") do
     local a, b = tonumber(s1), tonumber(s2)
     add(math.min(a, b), math.max(a, b))
   end
+end
+
+def("fold", function(ed, c)
+  ed.folds = ed.folds or {}
+  fold_specs(c, function(a, b)
+    if b > a then ed.folds[#ed.folds + 1] = { s = a, e = b, open = false } end
+  end)
   return "", "ok"
 end)
 def("foldclear", function(ed) ed.folds = {}; return "", "ok" end)
 def("foldopen",  function(ed) for _, f in ipairs(ed.folds or {}) do f.open = true  end; return "", "ok" end)
 def("foldclose", function(ed) for _, f in ipairs(ed.folds or {}) do f.open = false end; return "", "ok" end)
+
+-- :foldset [L1,L2 ...] -- replace the fold set wholesale (no specs = no folds).
+-- A range that survives the replacement (same endpoints) keeps its open/closed
+-- state; new ranges arrive closed. This is the re-push spelling for a fold tool
+-- that recomputes policy on every run (contrib/lvi-fold on an `on bufenter`
+-- hook): :foldclear + :fold would re-close everything the user opened -- and
+-- flash the buffer unfolded between the two commands -- one atomic replace does
+-- neither. Endpoint matching is enough because splice hooks shift resident
+-- folds across edits by the same delta the recomputing tool sees in the buffer.
+def("foldset", function(ed, c)
+  local old, new = ed.folds or {}, {}
+  fold_specs(c, function(a, b)
+    if b <= a then return end
+    local f = { s = a, e = b, open = false }
+    for _, g in ipairs(old) do
+      if g.s == a and g.e == b then f.open = g.open; break end
+    end
+    new[#new + 1] = f
+  end)
+  ed.folds = new
+  return "", "ok"
+end)
 
 -- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
 -- but pointed at external tools). EVENT is change|bufenter|bufleave|bufdelete.

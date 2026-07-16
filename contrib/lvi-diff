@@ -32,14 +32,16 @@
 #   * FOLD UNCHANGED (zx) collapses the matched regions between hunks to a summary
 #     row (keeping LVI_DIFF_FOLDCTX context lines each side), leaving only the
 #     changes and their surroundings -- vimdiff's `foldmethod=diff`. It rides
-#     lvi's core fold overlay (:fold): build() derives the unchanged gaps from the
-#     SAME diff the map comes from and pushes them to both views. The gaps are 1:1
-#     matched, so they have identical line counts on both sides; folding them
+#     lvi's core fold overlay (:foldset): build() derives the unchanged gaps from
+#     the SAME diff the map comes from and pushes them to both views. The gaps are
+#     1:1 matched, so they have identical line counts on both sides; folding them
 #     symmetrically compresses each pane by the same rows, so the (line-based,
 #     map-driven) scrollbind stays aligned -- and because :top snaps off a hidden
 #     line to the fold head, a scroll that lands in a fold aligns on both heads.
 #     Off by default; zx toggles, or launch with LVI_DIFF_FOLD=1. Re-applied on
-#     every re-diff, so it tracks edits.
+#     every re-diff, so it tracks edits -- and a gap you opened (zo) to peek at
+#     context stays open across those re-applies (:foldset keeps the open state
+#     of a range that survives the replace).
 #
 # WHY NO DAEMON (the design we landed on). Scrollbind used to be a polling loop
 # that read each view's `:top` ~10x/s; that flickered (lvi repaints on every
@@ -105,7 +107,7 @@ esac
 # translate a top without re-diffing. Written by build(); read by scrollsync/hunk.
 mapfile() { echo "$PIDDIR/lvi-diff.$1-to-$2.map"; }
 
-# Fold-unchanged state. foldfile SELF caches the ":fold" range specs for a view
+# Fold-unchanged state. foldfile SELF caches the ":foldset" range specs for a view
 # (recomputed by build() from the same diff the map comes from); flagfile A B is
 # a touch-flag marking that fold-unchanged is ON for the pair. Both survive across
 # the stateless refresh, so an `on change` re-diff re-applies folds and a keyboard
@@ -117,12 +119,15 @@ flagfile() { echo "$PIDDIR/lvi-diff.$1-$2.fold"; }
 # nothing -- leave whatever folds are there). Called at the tail of every build so
 # folds track edits; the unchanged gaps have identical line counts on both sides,
 # so folding them symmetrically keeps the (line-based) scrollbind aligned.
+# :foldset replaces the set but keeps a surviving gap's open state, so a fold
+# you opened to peek at context outlives the per-keystroke re-diffs (an empty
+# spec is a bare foldset -- clear).
 apply_folds() {
   a=$1; b=$2
   [ -f "$(flagfile "$a" "$b")" ] || return 0
   sa=$(cat "$(foldfile "$a")" 2>/dev/null); sb=$(cat "$(foldfile "$b")" 2>/dev/null)
-  "$LVI" -w "$a" -- foldclear ${sa:+"fold$sa"} >/dev/null 2>&1
-  "$LVI" -w "$b" -- foldclear ${sb:+"fold$sb"} >/dev/null 2>&1
+  "$LVI" -w "$a" -- "foldset$sa" >/dev/null 2>&1
+  "$LVI" -w "$b" -- "foldset$sb" >/dev/null 2>&1
 }
 
 # Sweep map caches whose owning views are gone (launch-time GC -- with no daemon,
@@ -207,7 +212,7 @@ build() {
   # Fold specs: the UNCHANGED gaps between hunks, keeping CTX context lines at each
   # end. Same hunk parse as above; a gap on A is [ia, as-1] and on B is [ib, bs-1]
   # -- 1:1 matched, so identical line counts, so symmetric folding stays aligned.
-  # Emit " L1,L2" per side; :fold ignores a spec with fewer than 2 lines.
+  # Emit " L1,L2" per side; :foldset ignores a spec with fewer than 2 lines.
   folds=$(printf '%s\n' "$d" | awk -v nA="$nA" -v nB="$nB" -v ctx="$CTX" '
     function span(s, e,   fs, fe) { fs=s+ctx; fe=e-ctx; return (fe>fs) ? sprintf(" %d,%d", fs, fe) : "" }
     BEGIN { ia=1; ib=1 }

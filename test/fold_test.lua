@@ -211,6 +211,25 @@ describe(":fold ex command", function()
     ex.dispatch(ed, "foldclear")
     expect(#ed.folds).to.equal(0)
   end)
+
+  it("foldset replaces the set, preserving open state of surviving ranges", function()
+    local ed = make(TEXT)
+    ex.dispatch(ed, "fold 1,2 5,7")
+    ed.folds[2].open = true                      -- the user opened 5,7 (zo)
+    ex.dispatch(ed, "foldset 5,7 9,10")          -- re-push: 1,2 gone, 9,10 new
+    expect(#ed.folds).to.equal(2)
+    expect(ed.folds[1].s).to.equal(5)
+    expect(ed.folds[1].open).to.be.truthy()      -- survived the replace: still open
+    expect(ed.folds[2].s).to.equal(9)
+    expect(ed.folds[2].open).to_not.be.truthy()  -- new fold: arrives closed
+  end)
+
+  it("foldset with no specs clears every fold", function()
+    local ed = make(TEXT)
+    ex.dispatch(ed, "fold 1,2 5,7")
+    ex.dispatch(ed, "foldset")
+    expect(#ed.folds).to.equal(0)
+  end)
 end)
 
 describe("foldenable toggle (zi / :set)", function()
