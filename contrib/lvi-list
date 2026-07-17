@@ -77,7 +77,7 @@ usage() { echo "usage: lvi-list [-w auto|WID] SUBCOMMAND [args]" >&2; exit 2; }
 
 # ---- resolve the target view + its list directory ---------------------------
 want_wid=
-[ "${1:-}" = "-w" ] && { want_wid=${2:-}; shift 2; }
+[ "${1:-}" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || usage; shift 2; }
 sub=${1:-}; [ -n "$sub" ] || usage; shift
 
 target=${want_wid:-${LVI_WID:-auto}}          # what we hand to `lvi -w`
@@ -99,7 +99,7 @@ lastfile="$sock.last"                         # the list you most recently STEPP
 send()      { $LVI -w "$target" --detach -- "$@"; }         # fire-and-forget (see header)
 lf()        { printf '%s\n' "$listdir/$1"; }
 count()     { n=$(hdrs "$1" | grep -c .); echo "${n:-0}"; }  # number of ENTRIES (headers)
-hnr()       { hdrs "$1" | sed -n "${2}p"; }                  # raw line of entry $2's header
+hnr()       { [ "${2:-0}" -ge 1 ] 2>/dev/null || return 0; hdrs "$1" | sed -n "${2}p"; }  # raw line of entry $2's header (0 = no entry, not sed's invalid address 0)
 nth()       { r=$(hnr "$1" "$2"); [ -n "$r" ] && sed -n "${r}p" "$listdir/$1"; }  # $2's header line
 etext()     { sed -E 's/^[^:]*:[0-9]+(:[0-9]+)?:?[[:space:]]*//'; }  # entry line -> its text (drop file:line[:col]:)
 show_cur()  { last_set "$1"; c=$(getcur "$1"); [ "$c" -ge 1 ] && send "msg $(nth "$1" "$c" | etext)"; }  # on step: mark last-stepped + preview text
@@ -117,8 +117,7 @@ names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|
 # shape is self-delimiting -- body lines lack it (they are indented or prose), so
 # only an unindented body line that itself looks like `file:line:` is misread, and
 # producers indent continuations. `hdrs` prints each header's raw line number;
-# count/index step ENTRIES through it, `span` rebuilds one for `preview`. (The
-# body used to be filtered off on ingest; now it rides along, skipped by n/N.)
+# count/index step ENTRIES through it, `span` rebuilds one for `preview`.
 hdrs() { awk '/^[^:]*:[0-9]+(:|$)/{print NR}' "$listdir/$1" 2>/dev/null; }
 span() {                                                    # print entry $2: header + body
   s=$(hnr "$1" "$2"); [ -n "$s" ] || return 0
@@ -133,18 +132,18 @@ curfile() {
 }
 
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
-# there. The column rides `normal` keys: there is no ex spelling for "goto
-# column" (a bare `|N` line falls through to the system ex as a no-op), and
-# `l` steps characters, which tracks the byte columns producers emit through
-# tabs where the display-column `|` motion would not (multibyte still drifts
-# -- the usual byte-col caveat).
+# there. :pos is byte-exact -- the byte columns producers emit land where they
+# point, tabs and multibyte included -- and, like a bare line address, records
+# no jumplist entry. The filename is backslash-escaped for the :e splice (:e
+# shell-expands metacharacters in a file argument).
 jump() {
   f=${1%%:*}; r=${1#*:}; ln=${r%%:*}; r=${r#*:}; c=${r%%:*}
   case "$c"  in ''|*[!0-9]*) c=1 ;; esac
   case "$ln" in ''|*[!0-9]*) return 0 ;; esac
-  col="normal 0"; [ "$c" -gt 1 ] && col="normal 0$((c - 1))l"
-  if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then send "e $f" "$ln" "$col"
-  else send "$ln" "$col"; fi
+  if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then
+    esc=$(printf '%s\n' "$f" | sed 's/[~{[*?$"'\''`\\ 	]/\\&/g')
+    send "e $esc" "pos $ln $c"
+  else send "pos $ln $c"; fi
 }
 
 # Repaint NAME's entries for the CURRENT buffer, mark the current entry, and set
