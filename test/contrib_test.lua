@@ -176,6 +176,19 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    it("lvi-diff --xfer moves a whole-buffer hunk read-first (no phantom line)", function()
+      local d = stub({ ["buffer.w1"] = "NEW\n", ["buffer.w2"] = "OLD\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_SOCK = d .. "/sock",
+            LVI_WID = "w1", LVI_LINE = "1" },
+        "contrib/lvi-diff --xfer put w2 w2 w1")
+      -- Read the new line in ABOVE, then delete the old at its shifted
+      -- address -- delete-first would empty the destination and the >=1-line
+      -- clamp would leave a phantom blank the read does not replace.
+      expect(read(d .. "/log"):find("0 r !sed %-n '1,1p'[^\n]*\nundojoin\n2,2d _\n")).to.exist()
+      expect(read(d .. "/log"):find("\nfire\n")).to.exist()
+      cleanup(d)
+    end)
+
     -- lvi-mirror's env: LVI_WID names the view, LVI_SOCK puts the temp/state
     -- files in the stub dir, LVI_FILE skips the `path` round-trip. The stub
     -- serves per-view buffers (buffer.WID) so two views can diverge.

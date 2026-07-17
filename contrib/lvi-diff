@@ -25,7 +25,7 @@
 #   * HUNK NAV (]c / [c) jumps to the next/prev hunk and top-anchors BOTH panes
 #     (a socket :top wouldn't fire the peer's scroll hook, so we set both here).
 #   * HUNK MOVING (diffput/diffget): \dp puts the hunk under the cursor onto the
-#     other view, \do obtains the other's hunk here -- a delete+read splice whose
+#     other view, \do obtains the other's hunk here -- a read+delete splice whose
 #     deletes name the black-hole buffer (:d _), so a move never rotates the
 #     destination's registers, and which puts the destination's cursor back
 #     (:pos) and ends with a `fire` there: the wired `on change` re-diff
@@ -345,11 +345,19 @@ xfer() {
   else                      dstw=$self; ds=$as; de=$ae; srcf=$pf; ss=$bs; se=$be
   fi
   pc=$(posafter "$dstw" "$ds" "$de" "$ss" "$se")
+  # Read the new lines in ABOVE, then delete the old block at its shifted
+  # address -- never delete-then-read: a hunk spanning the whole destination
+  # would empty it, and the >=1-line invariant leaves a blank line the read
+  # does not replace (a phantom the buffer keeps). Same order as lvi-mirror.
   set --
-  [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d _"
+  k=0
   if [ "$ss" -le "$se" ]; then
-    [ $# -gt 0 ] && set -- "$@" undojoin       # delete + read revert as ONE u
     set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$srcf'"
+    k=$((se - ss + 1))
+  fi
+  if [ "$ds" -le "$de" ]; then
+    [ $# -gt 0 ] && set -- "$@" undojoin       # read + delete revert as ONE u
+    set -- "$@" "$((ds+k)),$((de+k))d _"
   fi
   [ $# -gt 0 ] && "$LVI" -w "$dstw" -- "$@" ${pc:+"$pc"} fire
 }
@@ -400,11 +408,15 @@ xferrange() {
   }
   ds=$1; de=$2; ss=$3; se=$4
   pc=$(posafter "$peer" "$ds" "$de" "$ss" "$se")
-  set --
-  [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d _"
+  set --                       # read-first, delete shifted -- see xfer's why
+  k=0
   if [ "$ss" -le "$se" ]; then
-    [ $# -gt 0 ] && set -- "$@" undojoin       # delete + read revert as ONE u
     set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$sf'"
+    k=$((se - ss + 1))
+  fi
+  if [ "$ds" -le "$de" ]; then
+    [ $# -gt 0 ] && set -- "$@" undojoin       # read + delete revert as ONE u
+    set -- "$@" "$((ds+k)),$((de+k))d _"
   fi
   [ $# -gt 0 ] && "$LVI" -w "$peer" -- "$@" ${pc:+"$pc"} fire
 }
