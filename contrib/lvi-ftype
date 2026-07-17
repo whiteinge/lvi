@@ -123,4 +123,4 @@ case "$ft" in make) ;; *) opt="$opt $(lvi-detect-indent "$fname" 2>/dev/null)" ;
 # fmtprg is always sent (an arm with no formatter falls back to $default_fmt), so
 # it is a total projection like the flags -- it never inherits the last buffer's.
 set -- "set $opt" "set fmtprg=${fmt:-$default_fmt}"
-exec $LVI -w "${LVI_WID:-auto}" -- "$@"
+exec "$LVI" -w "${LVI_WID:-auto}" -- "$@"

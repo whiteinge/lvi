@@ -82,7 +82,7 @@ case "$1" in
   -n|--no-jump) shift ;;                    # now the default; kept as a compat no-op
 esac
 target=${want_wid:-${LVI_WID:-auto}}
-send() { $LVI -w "$target" --detach -- "$@"; }
+send() { "$LVI" -w "$target" --detach -- "$@"; }
 
 # Validate the subcommand before touching the socket, so a typo reports usage
 # rather than silently no-op'ing on the (later) empty-file guard.
@@ -96,7 +96,7 @@ esac
 # be noisy). Absolutise so the key is stable across launch directories.
 # `-` not `:-`: a hook always exports LVI_FILE (empty for an unnamed buffer, which
 # we then skip); only a manual run from another terminal leaves it unset -> ask.
-file=${LVI_FILE-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+file=${LVI_FILE-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$file" in ""|"["*"]") exit 0 ;; esac    # unnamed/pseudo buffer ([stdin], ...)
 case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
 

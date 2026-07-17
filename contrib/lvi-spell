@@ -68,7 +68,7 @@ MAXBYTES=${LVI_SPELL_MAXBYTES:-262144}
 # repainted over (:silent !) under every documented binding.
 die() {
   echo "lvi-spell: $*" >&2
-  [ -n "${target:-}" ] && $LVI -w "$target" --detach -- "msge lvi-spell: $*" 2>/dev/null
+  [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "msge lvi-spell: $*" 2>/dev/null
   exit 1
 }
 
@@ -82,29 +82,29 @@ wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
   sock=$LVI_SOCK                      # inside lvi: trust the exported socket
 elif [ "$target" = auto ]; then
-  n=$($LVI -l | grep -c .)
+  n=$("$LVI" -l | grep -c .)
   [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
-  sock=$($LVI -l | cut -f2)
+  sock=$("$LVI" -l | cut -f2)
 else
-  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
   [ -n "$sock" ] || die "no running view '$target'"
 fi
 flag="$sock.spell"
 hooked="$sock.spell.hooked"
 
-send() { $LVI -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
+send() { "$LVI" -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
 
 # ---- worker: the actual scan (runs with lvi's loop live) ---------------------
 if [ -n "$worker" ]; then
   [ -f "$flag" ] || exit 0            # toggled off while we were queued
-  text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
+  text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
   nbytes=$(printf '%s' "$text" | wc -c)
   if [ "$nbytes" -gt "$MAXBYTES" ]; then
     echo "lvi-spell: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_SPELL_MAXBYTES)" >&2
     send "msge lvi-spell: ${nbytes}B over cap (raise LVI_SPELL_MAXBYTES)"
     exit 0
   fi
-  fname=$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
+  fname=$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
   case "$fname" in "["*"]") fname= ;; esac   # any pseudo-name: stay-in-place jumps
 
   # ispell -a pipe protocol: `!` turns on terse mode (no `*` line per correct

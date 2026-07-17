@@ -53,11 +53,11 @@ die() { echo "lvi-tags: $*" >&2; exit 1; }
 
 want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2; }
 target=${want_wid:-${LVI_WID:-auto}}
-send() { $LVI -w "$target" --detach -- "$@"; }
+send() { "$LVI" -w "$target" --detach -- "$@"; }
 
 # The buffer's file: from the env when spawned by lvi (a map), else ask. We need
 # the name only to detect the language (via the temp file's basename below).
-file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+file=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$file" in
   ""|"["*"]") die "buffer has no file name (need it to detect the language)" ;;
 esac
@@ -71,7 +71,7 @@ esac
 # private per-uid dir when we can name it, not in shared /tmp.
 sockdir=${LVI_SOCK%/*}
 if [ ! -d "$sockdir" ]; then
-  s=$($LVI -l 2>/dev/null | sed -n 1p | cut -f2); sockdir=${s%/*}
+  s=$("$LVI" -l 2>/dev/null | sed -n 1p | cut -f2); sockdir=${s%/*}
 fi
 { [ -n "$sockdir" ] && [ -d "$sockdir" ]; } || sockdir=${TMPDIR:-/tmp}
 tmpd=$(mktemp -d "$sockdir/lvi-tags.XXXXXX") || die "mktemp failed"
@@ -81,7 +81,7 @@ dump=${LVI_TAGS_DUMP:-$LVI_BUFFER}
 if [ -n "$dump" ] && [ -f "$dump" ]; then
   cp "$dump" "$tmpf" || die "could not read buffer snapshot $dump"
 else
-  $LVI -w "$target" -- %p >"$tmpf" || die "could not read buffer over the socket"
+  "$LVI" -w "$target" -- %p >"$tmpf" || die "could not read buffer over the socket"
 fi
 
 # Tag the temp file to stdout. --fields=+n gives the line number; the tag

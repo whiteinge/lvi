@@ -62,10 +62,10 @@ ref=${1:-}
 target=${want_wid:-${LVI_WID:-auto}}
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 name=gitchanges; [ -n "$staged" ] && name=gitstaged
-send() { $LVI -w "$target" --detach -- "$@"; }
+send() { "$LVI" -w "$target" --detach -- "$@"; }
 
 # The buffer's file: from the env when spawned by lvi (a map/hook), else ask.
-file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+file=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$file" in ""|"["*"]") die "current buffer has no file" ;; esac
 
 # Choose the diff. --staged -> index vs REF (HEAD by default), git's `--cached`.

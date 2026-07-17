@@ -77,7 +77,7 @@ close=${MARKER#*,}
 # Compute " L1,L2 L3,L4 ..." range specs from the live buffer. Each mode prints
 # one "start end" pair per line; the trailer folds them into :fold's arg syntax.
 ranges=$(
-  $LVI -w "$target" -- %p | case "$mode" in
+  "$LVI" -w "$target" -- %p | case "$mode" in
     indent)
       # One streaming pass with a stack of open folds (base indent, anchor
       # line): a non-blank line deeper than the previous one opens a fold
@@ -127,4 +127,4 @@ ranges=$(
 # One atomic replace: surviving ranges keep their open state, stale ones go,
 # and there is no unfolded flash between a clear and a re-fold. Empty ranges
 # means a bare `foldset` -- the spelling for "no folds found, clear them".
-$LVI -w "$target" -- "foldset$ranges"
+"$LVI" -w "$target" -- "foldset$ranges"

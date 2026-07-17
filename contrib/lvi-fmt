@@ -65,11 +65,11 @@ fi
 if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
   sock=$LVI_SOCK
 elif [ "$target" = auto ]; then
-  n=$($LVI -l | grep -c .)
+  n=$("$LVI" -l | grep -c .)
   [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
-  sock=$($LVI -l | cut -f2)
+  sock=$("$LVI" -l | cut -f2)
 else
-  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
   [ -n "$sock" ] || die "no running view '$target'"
 fi
 
@@ -79,13 +79,13 @@ trap 'rm -f "$oldf" "$newf"' EXIT
 
 # Snapshot by redirect, not command substitution: $(...) strips trailing
 # newlines, which would hide trailing blank lines from the diff below.
-$LVI -w "$target" -- '%p' > "$oldf" || die "cannot read view $target"
+"$LVI" -w "$target" -- '%p' > "$oldf" || die "cannot read view $target"
 nbytes=$(wc -c < "$oldf")
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
   echo "lvi-fmt: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_FMT_MAXBYTES)" >&2
   exit 0
 fi
-fname=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+fname=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$fname" in "["*"]") fname= ;; esac    # [No File], [stdin], ... -- pathless
 
 # Pick the formatter: $LVI_FMT_CMD wins; else by extension. Each table entry
@@ -105,7 +105,7 @@ else
   esac
 fi
 
-send() { $LVI -w "$target" --detach -- "$@"; }   # fire-and-forget (errors only)
+send() { "$LVI" -w "$target" --detach -- "$@"; }   # fire-and-forget (errors only)
 
 # Format first, edit after: a failing formatter (usually a syntax error) must
 # leave the buffer untouched. The failure is surfaced as a status segment --
@@ -154,7 +154,7 @@ fi
 # that hunk's first new line.
 line=${LVI_LINE:-}; col=${LVI_COL:-}
 if [ -z "$line" ]; then
-  pos=$($LVI -w "$target" -- pos)
+  pos=$("$LVI" -w "$target" -- pos)
   line=$(printf '%s' "$pos" | cut -f1); col=$(printf '%s' "$pos" | cut -f2)
 fi
 case "$line" in ''|*[!0-9]*) line=1 ;; esac
@@ -180,4 +180,4 @@ case "$adj" in ''|*[!0-9]*) adj=$line ;; esac
 # byte-exact, matching the byte column the env/`pos` reported), clear any old
 # failure, then fire `change` for the hook consumers. Synchronous because the
 # temp file must outlive the edit that reads it (the EXIT trap reaps it).
-$LVI -w "$target" -- "$edit" "pos $adj $col" "status fmt" fire
+"$LVI" -w "$target" -- "$edit" "pos $adj $col" "status fmt" fire

@@ -84,11 +84,11 @@ target=${want_wid:-${LVI_WID:-auto}}          # what we hand to `lvi -w`
 if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
   sock=$LVI_SOCK                              # inside lvi: trust the exported socket
 elif [ "$target" = auto ]; then
-  n=$($LVI -l | grep -c .)
+  n=$("$LVI" -l | grep -c .)
   [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
-  sock=$($LVI -l | cut -f2)
+  sock=$("$LVI" -l | cut -f2)
 else
-  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
   [ -n "$sock" ] || die "no running view '$target'"
 fi
 listdir="$sock.lists"
@@ -96,7 +96,7 @@ focusfile="$sock.focus"
 lastfile="$sock.last"                         # the list you most recently STEPPED (\lp preview target)
 
 # ---- small helpers ----------------------------------------------------------
-send()      { $LVI -w "$target" --detach -- "$@"; }         # fire-and-forget (see header)
+send()      { "$LVI" -w "$target" --detach -- "$@"; }         # fire-and-forget (see header)
 lf()        { printf '%s\n' "$listdir/$1"; }
 count()     { n=$(hdrs "$1" | grep -c .); echo "${n:-0}"; }  # number of ENTRIES (headers)
 hnr()       { [ "${2:-0}" -ge 1 ] 2>/dev/null || return 0; hdrs "$1" | sed -n "${2}p"; }  # raw line of entry $2's header (0 = no entry, not sed's invalid address 0)
@@ -128,7 +128,7 @@ span() {                                                    # print entry $2: he
 # Current file: from the env when we were spawned by lvi (a map/hook), else ask.
 curfile() {
   if [ -n "${LVI_FILE+x}" ]; then printf '%s\n' "$LVI_FILE"
-  else $LVI -w "$target" -- f 2>/dev/null | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; fi
+  else "$LVI" -w "$target" -- f 2>/dev/null | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; fi
 }
 
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
@@ -186,7 +186,7 @@ case "$sub" in
       # last CURRENT-file entry at or before the cursor.
       cf=$(curfile)
       cl=${LVI_LINE:-}; cc=${LVI_COL:-}
-      [ -n "$cl" ] || { set -- $($LVI -w "$target" -- pos); cl=${1:-1}; cc=${2:-1}; }
+      [ -n "$cl" ] || { set -- $("$LVI" -w "$target" -- pos); cl=${1:-1}; cc=${2:-1}; }
       i=$(awk -F: -v f="$cf" -v l="${cl:-1}" -v c="${cc:-1}" '
             /^[^:]*:[0-9]+(:|$)/ { n++
               if ($1==f && (($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)))) hit=n }
@@ -222,7 +222,7 @@ case "$sub" in
 
   here)
     name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
-    cf=$(curfile); cl=${LVI_LINE:-$($LVI -w "$target" -- pos | cut -f1)}
+    cf=$(curfile); cl=${LVI_LINE:-$("$LVI" -w "$target" -- pos | cut -f1)}
     i=$(awk -F: -v f="$cf" -v l="$cl" '
           /^[^:]*:[0-9]+(:|$)/ { n++; if ($1==f && ($2+0)>=(l+0)) { print n; exit } }' "$listdir/$name")
     [ -n "$i" ] || i=1

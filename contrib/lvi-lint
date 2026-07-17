@@ -57,7 +57,7 @@ DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # under every documented binding, so without :msge a failure looks like [0/0].
 die() {
   echo "lvi-lint: $*" >&2
-  [ -n "${target:-}" ] && $LVI -w "$target" --detach -- "msge lvi-lint: $*" 2>/dev/null
+  [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "msge lvi-lint: $*" 2>/dev/null
   exit 1
 }
 
@@ -81,12 +81,12 @@ if [ -z "$worker" ]; then
 fi
 
 # --- worker --------------------------------------------------------------------
-text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
+text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
 nbytes=$(printf '%s' "$text" | wc -c)
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
   die "${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)"
 fi
-fname=$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
+fname=$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
 case "$fname" in ""|"["*"]")
   die "current buffer has no file (backends key off the name)" ;;
 esac

@@ -83,16 +83,16 @@ target=${want_wid:-${LVI_WID:-auto}}            # what we hand to `lvi -w`
 if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
   sock=$LVI_SOCK                                # inside lvi: trust the exported socket
 elif [ "$target" = auto ]; then
-  n=$($LVI -l | grep -c .)
+  n=$("$LVI" -l | grep -c .)
   [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
-  sock=$($LVI -l | cut -f2)
+  sock=$("$LVI" -l | cut -f2)
 else
-  sock=$($LVI -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
   [ -n "$sock" ] || die "no running view '$target'"
 fi
 dir=${LVI_YANKRING_DIR:-$sock.yankring}
 
-send()   { $LVI -w "$target" --detach -- "$@"; }               # fire-and-forget (see header)
+send()   { "$LVI" -w "$target" --detach -- "$@"; }               # fire-and-forget (see header)
 getseq() { s=$(cat "$dir/.seq" 2>/dev/null); case $s in ''|*[!0-9]*) echo 0;; *) echo "$s";; esac; }
 getcur() { c=$(cat "$dir/.cur" 2>/dev/null); case $c in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
 setcur() { mkdir -p "$dir" 2>/dev/null; printf '%s\n' "$1" > "$dir/.cur"; }

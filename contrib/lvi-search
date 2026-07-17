@@ -68,7 +68,7 @@ fi
 # entries carry no file and lvi-list jumps stay put. Safe because lvi-search only
 # ever matches THIS buffer, so a match never needs a cross-file :e in the first
 # place -- and an :e of a pseudo-name would blank the buffer.
-file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+file=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$file" in "["*"]") file= ;; esac
 
 # Resolve case policy: an explicit -i wins, else LVI_SEARCH_CASE decides (smart
@@ -83,14 +83,14 @@ else
   esac
 fi
 
-matches=$($LVI -w "$target" -- '%p' | grep -n $iflag -- "$pat")
+matches=$("$LVI" -w "$target" -- '%p' | grep -n $iflag -- "$pat")
 rc=$?
 if [ -z "$matches" ]; then
   # Clear the paint (both groups -- the current-entry mark would otherwise stay
   # on screen) and the stale counter; the notice itself is ephemeral, so :msge,
   # not a status segment. grep exit 2 is a bad BRE, not an empty result.
   notice="/$pat/ no match"; [ "$rc" -ge 2 ] && notice="bad pattern /$pat/"
-  $LVI -w "$target" --detach -- "hl search" "hl search-cur" "status search" "msge $notice"
+  "$LVI" -w "$target" --detach -- "hl search" "hl search-cur" "status search" "msge $notice"
   exit 0
 fi
 # search owns its look so it shows without a theme (see CLAUDE.md). It re-sends
@@ -98,6 +98,6 @@ fi
 # (or in a wrapper), not in the rc.
 # pri=10 lifts the mark above syntax highlighting (pri 0) so it shows through a
 # styled first column (e.g. a Markdown `1.` ordered-list marker).
-$LVI -w "$target" --detach -- "hi search reverse pri=10"
+"$LVI" -w "$target" --detach -- "hi search reverse pri=10"
 printf '%s\n' "$matches" | awk -v f="$file" '{print f":"$0}' | lvi-list $wflag put search --focus
 lvi-list $wflag next
