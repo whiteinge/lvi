@@ -41,8 +41,10 @@
 " ---- editor defaults --------------------------------------------------- {{{
 
 " Plain core options -- a starting point, tune to taste. If you enable lvi-ftype
-" (below) it re-projects sw/et/fmtprg per file type on every buffer switch, so
-" set your real per-language values there and treat these as the fallback.
+" (below) it re-projects sw/et/fmtprg per file type on every buffer switch --
+" including the starting buffer, before your first keystroke -- so with the hook
+" on, the operative fallback is lvi-ftype's own defaults and these lines only
+" govern when the hook is off or lvi-ftype is missing.
 set expandtab
 set shiftwidth=4
 set autoindent

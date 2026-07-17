@@ -193,14 +193,14 @@ line** via `:msg` — ephemeral, cleared by your next motion, so a lint
 message is visible as you step. The full entry (header + body) is available
 via `lvi-list preview` on stdout; bind it to a `tmux display-popup` to see
 the whole multi-line message. That popup key defaults to the **most recent**
-stepped list meaning a custom `]e` map steps `lint` without stealing `n`/`N`'s
+stepped list, meaning a custom `]e` map steps `lint` without stealing `n`/`N`'s
 focus, yet the preview key still shows the lint entry you just navigated
 to. (`:msg`/ `:msge` are the generic in-editor notice mechanism. `:msge`
 styles it as an error via the `Error` group.)
 
 Lists are ephemeral and live beside the view's socket (auto-cleaned per
-view); use `lvi-list save`/`load` to ��persist a list to a location that
-isn't automatically cleaned See the `lvi-list` header for all arguments.
+view); use `lvi-list save`/`load` to persist a list to a location that
+isn't automatically cleaned. See the `lvi-list` header for all arguments.
 
 ### `lvi-gitchanges` — step your git diff
 
@@ -222,7 +222,7 @@ them like any other list — `on write lvi-lint` re-lints every save, and the
 status counter doubles as a pass/fail glance (`[0/0]` = clean).
 
 Vim grew the `errorformat` mini-language to understand output from many
-producers, but we've opted put the onus on the tool itself (or a wraper
+producers, but we've opted to put the onus on the tool itself (or a wrapper
 script) to produce the standard quickfix format. `lvi-lint` uses **backend
 adapters** (`lvi-lint-<name>`, picked by file extension or `LVI_LINT_BACKEND`)
 to normalize each tool's output with a few lines of awk. It follows the
@@ -284,7 +284,7 @@ and allows you to use already-familiar shell tools, shortcuts, and path
 traversal. Note: the editor is frozen while you're in the shell, so the
 command lands after you exit.
 
-This will change the shell prompt ��to denote you're in an lvi shell and
+This will change the shell prompt to denote you're in an lvi shell and
 the file you were editing `(lvi foo.txt) $`.
 
 ### `lvi-tags` — jump around / outline the current file
@@ -295,7 +295,13 @@ line, scrolling the picker *is* a structural overview of the buffer — "jump
 to a function" or "what's in this file". It re-tags the **live buffer**,
 not from an on-disk`tags` file, so it reflects your unsaved, in-progress
 edits. Bind it: `map \t :wbuf<CR>:silent !lvi-tags<CR>` (`:wbuf` snapshots
-the buffer so the picker can read it — see the spawn disciplines above).
+the buffer so the picker can read it — see the spawn disciplines above; keep
+the `:wbuf` prefix, or the picker tags a stale earlier snapshot).
+
+There is no `readtags` in the pipeline: `readtags` indexes and queries an
+on-disk `tags` file, but here ctags' own stdout *is* the query result —
+every tag comes from this one buffer by construction, so there is nothing
+to filter and nothing for a `tags` file to add.
 
 ### `lvi-fold` — collapse the buffer by structure
 
@@ -367,15 +373,15 @@ edit, or delete by hand.
 
 No core support was needed: the whole feature is a handful of `:on` hooks
 pointed at one script. `save` (on `change`/`write`/ `bufleave`) records the
-cursor; `restore` (on `ready`/`bufenter`) looks the file up, jumps to the
-exact line and column, and drops the `` `" `` mark so `` `" `` takes you
-back after you wander.
+cursor; `restore` (on `ready`/`bufenter`) looks the file up and drops the
+`` `" `` mark at the exact line and column — without moving the cursor, so
+you open fresh at the top and `` `" `` carries you back when you ask.
 
-Prefer to open fresh at the top? `restore -n` sets the `` `" `` mark but
-leaves the cursor at line 1, so you reach for `` `" `` only when you want it.
-`restore` only touches a buffer sitting at line 1 (a fresh read), so binding
-it to every `bufenter` never clobbers the live cursor of a buffer you're
-revisiting — lvi already keeps that in memory.
+Prefer to resume automatically? `restore -j` also jumps there. Keep `-j` on
+`ready` only: bound to `bufenter` it would land after — and steal — a list
+tool's cross-file jump. `restore` only touches a buffer sitting at line 1 (a
+fresh read), so binding it to every `bufenter` never clobbers the live cursor
+of a buffer you're revisiting — lvi already keeps that in memory.
 
 The one piece that *is* in the core is the `` `. `` mark, set to your last
 change as you type, so `` `. `` returns to the last edit within a session. (A
@@ -461,11 +467,19 @@ leaving only the hunks and their context — built on lvi's core `:fold`
 overlay, from the same diff the map comes from. Because matched regions have
 identical line counts on both sides, folding them symmetrically keeps the
 scrollbind aligned; it's off by default (`LVI_DIFF_FOLD=1` to start folded,
-`LVI_DIFF_FOLDCTX` for context).  Launch it on two live views — `lvi-diff`
-(auto-picks the sole pair) or `lvi-diff WID_A WID_B`. Or hand it **two files**
-— `lvi-diff old new` — and it opens them in a **new tmux window**, wires
-the same diff, and blocks until you quit the left one: a `vimdiff foo bar`
-for lvi. That file mode is also what makes it a git mergetool (below).
+`LVI_DIFF_FOLDCTX` for context).
+
+For implementors: the first cut of scrollbind was a polling daemon reading
+each view's `:top` ~10×/s, which flickered (lvi repaints on every socket
+event) and starved the idle `on change` hook. The `on scroll` hook inverted
+it — the editor gained one generic "the viewport moved to line N"
+notification, and all the diff-specific logic stayed in the script.
+
+Launch it on two live views — `lvi-diff` (auto-picks the sole pair) or
+`lvi-diff WID_A WID_B`. Or hand it **two files** — `lvi-diff old new` — and
+it opens them in a **new tmux window**, wires the same diff, and blocks
+until you quit the left one: a `vimdiff foo bar` for lvi. That file mode is
+also what makes it a git mergetool (below).
 
 ### `lvi-stagediff` — `git add -p`, as a diff you edit
 
