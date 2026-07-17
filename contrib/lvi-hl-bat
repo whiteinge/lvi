@@ -5,7 +5,9 @@
 # (overrides bat's filename detection when set); emits ex commands (produced by
 # the shared lvi-hl-ansi parser). Unlike the Pygments (positional) adapter, the
 # COLORS come from bat's own theme, not lvi's :hi -- an ANSI backend brings its
-# theme and lvi reproduces it. Choose the theme with BAT_THEME (or LVI_BAT flags).
+# theme and lvi reproduces it. Choose the theme with BAT_THEME; LVI_BAT names
+# the binary only (a single word -- flags don't fit through it). No --theme
+# mode: `lvi-highlight --theme` needs a positional backend (pygments).
 #
 # Flags matter for column accuracy: --style=plain (no gutter/grid), --wrap=never
 # (don't insert soft newlines) and --tabs=0 (don't expand tabs) keep bat's byte
@@ -13,6 +15,9 @@
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+# Refuse theme mode outright: silently treating --theme as a filename would
+# push a block of bare group-clears and read as a mysteriously blank theme.
+case ${1:-} in --theme) echo "lvi-hl-bat: no --theme mode (use BAT_THEME; pygments supports --theme)" >&2; exit 1 ;; esac
 BAT=${LVI_BAT:-}
 if [ -z "$BAT" ]; then
   if   command -v batcat >/dev/null 2>&1; then BAT=batcat   # Debian/Ubuntu name

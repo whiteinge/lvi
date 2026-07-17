@@ -17,7 +17,7 @@
 #     hi Type     fg=cyan
 #     on change   lvi-highlight           " re-highlight a beat after you stop typing
 #     on bufenter lvi-highlight           " ...and when you switch/open a buffer
-#     map \hh :silent !lvi-highlight<CR>  " ...and/or force it on a key (\h menu)
+#     map \hh :bg lvi-highlight<CR>       " ...and/or force it on a key (\h menu)
 #
 # The `hi` block above is optional: `lvi-highlight --theme` seeds the group
 # colors from a Pygments built-in style (via $LVI_PYGMENTS_STYLE) in one shot,
@@ -28,10 +28,13 @@
 # loop); pair it with `bufenter` so a socket-driven :e (e.g. lvi-open) highlights
 # the file it lands on.
 #
-# It self-backgrounds so the `:silent !` returns at once: reading the buffer
-# needs lvi's event loop, which is frozen while it waits on the child, so a
-# foreground read would deadlock (the same reason lvi-open uses --detach). Run
-# the worker directly for measuring/debugging:  lvi-highlight --worker WID
+# It self-backgrounds a --worker: reading the buffer needs lvi's event loop,
+# which is frozen while a foreground `:silent !` child runs, so a foreground
+# read would deadlock (the same reason lvi-open uses --detach); under :bg or a
+# hook the detach is merely harmless, so any binding is safe. A skip or a
+# config error lands in the `hl` status segment (cleared by the next
+# successful paint). Run the worker directly for measuring/debugging:
+#     lvi-highlight --worker WID
 #
 # Config (env): LVI (client, default `lvi`), LVI_HL_BACKEND (adapter, default
 # `pygments` -> contrib/lvi-hl-pygments), LVI_HL_MAXBYTES (skip buffers larger
@@ -88,7 +91,12 @@ if [ "$1" = "--theme" ]; then
   done <<EOF
 $("$adapter" --theme)
 EOF
-  [ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"
+  [ $# -gt 0 ] || {
+    echo "lvi-highlight: backend '$BACKEND' --theme emitted nothing (bad LVI_PYGMENTS_STYLE?)" >&2
+    "$LVI" -w "$wid" --detach -- "msge lvi-highlight: --theme emitted nothing (bad LVI_PYGMENTS_STYLE?)" 2>/dev/null
+    exit 1
+  }
+  "$LVI" -w "$wid" -- "$@"
   exit $?
 fi
 
@@ -104,7 +112,13 @@ wid=${1:-$LVI_WID}
 [ -n "$wid" ] || { echo "lvi-highlight: no WID (pass one or run from inside lvi)" >&2; exit 1; }
 
 adapter="$DIR/lvi-hl-$BACKEND"
-[ -x "$adapter" ] || { echo "lvi-highlight: no adapter for backend '$BACKEND' ($adapter)" >&2; exit 1; }
+[ -x "$adapter" ] || {
+  echo "lvi-highlight: no adapter for backend '$BACKEND' ($adapter)" >&2
+  # A status segment, not :msge: it repeats on every hook fire, and the next
+  # successful paint clears it -- the lvi-diff over-cap pattern.
+  "$LVI" -w "$wid" -- "status hl [lvi-highlight: no adapter '$BACKEND']" >/dev/null 2>&1
+  exit 1
+}
 
 # Disabled via `lvi-highlight off`: clear every syntax group and stop. Empty
 # input makes the adapter emit a bare `hl GROUP` for each group it owns.
@@ -113,19 +127,22 @@ if [ -n "${LVI_SOCK:-}" ] && [ -f "$LVI_SOCK.hl-off" ]; then
   while IFS= read -r cmd; do [ -n "$cmd" ] && set -- "$@" "$cmd"; done <<EOF
 $(printf '' | "$adapter" "")
 EOF
-  [ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"
+  "$LVI" -w "$wid" -- "$@" "status hl"
   exit 0
 fi
 
 # Live buffer + its filename (for language detection). Works on unsaved content.
 text=$("$LVI" -w "$wid" -- '%p') || { echo "lvi-highlight: cannot read view $wid" >&2; exit 1; }
 fname=$("$LVI" -w "$wid" -- 'f' | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
-case "$fname" in "[No File]" | "[No Name]") fname= ;; esac
+case "$fname" in "["*"]") fname= ;; esac   # [No File], [stdin], ... -- pathless
 
-# Size cap: skip a buffer too big to lex on every trigger.
+# Size cap: skip a buffer too big to lex on every trigger. The notice is a
+# status segment (idempotent under repeated hook fires); the next successful
+# paint -- the buffer shrank, or the cap was raised -- clears it.
 nbytes=$(printf '%s' "$text" | wc -c)
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
   echo "lvi-highlight: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_HL_MAXBYTES)" >&2
+  "$LVI" -w "$wid" -- "status hl [lvi-highlight off: over ${MAXBYTES}B cap]" >/dev/null 2>&1
   exit 0
 fi
 
@@ -142,4 +159,7 @@ done <<EOF
 $(printf '%s' "$text" | "$adapter" "$fname" "$lang")
 EOF
 
-[ $# -gt 0 ] && "$LVI" -w "$wid" -- "$@"
+# One round-trip: the paint, plus clearing any earlier skip/error segment. Sent
+# even with nothing to paint, so the segment can't stick -- and an empty paint
+# is a success, not a worker error.
+"$LVI" -w "$wid" -- "$@" "status hl"

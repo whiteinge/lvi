@@ -101,7 +101,7 @@ on change lvi-highlight
 on bufenter lvi-highlight
 
 " highlight MENU (\h): \hh forces a refresh now, \ht toggles syntax off/on.
-map \hh :silent !lvi-highlight<CR>          " re-highlight on demand
+map \hh :bg lvi-highlight<CR>               " re-highlight on demand
 map \ht :bg lvi-highlight toggle<CR>        " :syntax off / on
 
 " }}}

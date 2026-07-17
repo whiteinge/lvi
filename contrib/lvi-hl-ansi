@@ -1,6 +1,8 @@
 #!/usr/bin/env luajit
 -- lvi-hl-ansi -- shared ANSI-color -> lvi :hl parser, reused by every ANSI
--- highlighting backend (bat, source-highlight, tree-sitter highlight, ...).
+-- highlighting backend that emits semicolon-form SGR (bat, source-highlight;
+-- an emitter using colon-form parameters like `38:2:...` would need those
+-- normalized first -- lvi's `hi sgr=` accepts digits and semicolons only).
 --
 -- Reads ANSI-colored text on stdin and prints `hi synN sgr=<params>` +
 -- `hl synN L:C1-C2 ...` ex commands. An ANSI backend has already chosen colors
@@ -19,6 +21,8 @@
 -- color escapes) isn't merged; fine for these backends. Non-SGR escapes (cursor
 -- moves etc.) are skipped. The backend must not re-wrap long lines (pass its
 -- --wrap=never) or expand tabs (--tabs=0), or byte columns would desync.
+-- At most 64 distinct styles are tracked per run; text drawn in styles past
+-- that cap comes out unhighlighted (a theme rarely has more than a few dozen).
 
 -- -h/--help: print this script's header comment (its full reference), then exit.
 if arg[1] == "-h" or arg[1] == "--help" then
