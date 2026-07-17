@@ -76,6 +76,7 @@ function M.new_ed()
     textobj_cmds = {},        -- :textobj KEY -> CMD (custom objects; see ex.textobj_range)
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
     event_mark = false,       -- transient: the A-Z char while a markset/markjump hook fires (-> $LVI_MARK)
+    event_name = false,       -- transient: the event name while a hook fires (-> $LVI_EVENT)
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
@@ -286,7 +287,9 @@ end
 function M.fire(ed, event, buf)
   local hooks = ed.hooks[event]
   if not hooks then return end
+  ed.event_name = event                -- -> $LVI_EVENT, via export_context
   for _, cmd in ipairs(hooks) do ed.spawn_bg(cmd, buf) end
+  ed.event_name = false
 end
 
 -- Called when the poll loop goes idle: run each registered `change` hook once,
@@ -501,6 +504,11 @@ function M.run(opts)
     -- empty for every other spawn, so no child sees a stale mark. Set transiently
     -- by normal.lua right around the fire, same discipline as the range vars below.
     sys.setenv("LVI_MARK", ed.event_mark or "")
+    -- The event behind an `:on` hook fire; empty for every other spawn (`:bg`,
+    -- `:!`, g@). Set transiently by M.fire, the LVI_MARK discipline -- it lets a
+    -- tool split hook-fired from asked-for behavior (contrib/lvi-lint stays
+    -- quiet about an unlintable buffer under a hook, errors when run by hand).
+    sys.setenv("LVI_EVENT", ed.event_name or "")
     -- Range bounds default to empty here (the no-range state every spawn surface
     -- re-establishes); only a ranged `:bg` overwrites them, right after this runs,
     -- so a prior ranged spawn can't leak its L1/L2 into a later rangeless child.

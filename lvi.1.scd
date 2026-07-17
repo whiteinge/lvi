@@ -1133,6 +1133,12 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	for the basename. *LVI_CWORD* uses the same word definition as *w*/*b*/*e*
 	and is empty when the cursor is not on a word character.
 
+*LVI_EVENT*
+	The event name (*change*, *write*, ...) while an *:on* hook's command runs;
+	empty for every other child (*:bg*, *:!*, *g@*). Lets one tool serve both
+	surfaces: quiet about a shortfall when re-fired by a hook, loud when you
+	asked by hand.
+
 *XDG_RUNTIME_DIR*, *TMPDIR*
 	Preferred locations for the socket directory (else _/tmp_).
 
