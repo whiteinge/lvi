@@ -33,10 +33,12 @@ f=${1:-$LVI_FILE}
 [ "$f" = "-" ] || [ -n "$f" ] || exit 0
 
 # 1. EditorConfig -- delegate to the core CLI, never reimplement the spec.
+# The values are repo-supplied (any checkout can ship a .editorconfig), so they
+# are never eval'd -- capture, then match against known-good words only.
 if [ "$f" != "-" ] && [ -r "$f" ] && command -v editorconfig >/dev/null 2>&1; then
-  style= size=
-  eval "$(editorconfig "$f" 2>/dev/null | sed -n \
-    's/^indent_style=\(.*\)/style=\1/p; s/^indent_size=\([0-9][0-9]*\)/size=\1/p')"
+  ec=$(editorconfig "$f" 2>/dev/null)
+  style=$(printf '%s\n' "$ec" | sed -n 's/^indent_style=//p')
+  size=$(printf '%s\n' "$ec" | sed -n 's/^indent_size=\([0-9][0-9]*\)$/\1/p')
   case $style in
     tab)   echo noet; exit 0 ;;
     space) [ -n "$size" ] && echo "et sw=$size" || echo et; exit 0 ;;
@@ -44,7 +46,7 @@ if [ "$f" != "-" ] && [ -r "$f" ] && command -v editorconfig >/dev/null 2>&1; th
 fi
 
 # 2. Content sniff of the head.
-{ [ "$f" = "-" ] && cat || head -n 512 -- "$f"; } 2>/dev/null | awk '
+{ [ "$f" = "-" ] && head -n 512 || head -n 512 -- "$f"; } 2>/dev/null | awk '
   /^\t/               { tabs++; prev=1; pind=0; next }   # tab-led line
   /^ *[^ \t]/ && /^ / {                                  # space-led line
       match($0, /^ */); ind = RLENGTH; spaces++
