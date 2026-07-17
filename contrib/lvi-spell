@@ -49,9 +49,7 @@
 # CAVEATS (v1): whole buffer only -- code wants comments/strings filtering this
 # doesn't have; toggle it on to sweep, off to silence. Extents are byte columns
 # via LC_ALL=C; multibyte text can drift (the lvi-hl-ansi class of caveat).
-# $LVI_CWORD is a vi word, so contractions ("don't") check as fragments. The
-# fix splice normalizes with `wb`, whose one blind spot is a single-char word
-# at the very end of the buffer (w cannot leave it, so b overshoots).
+# $LVI_CWORD is a vi word, so contractions ("don't") check as fragments.
 #
 # Config: LVI (client, default `lvi`), LVI_SPELL_CMD (an ispell -a pipe
 # command, default `aspell -a`; `hunspell -a` speaks the same protocol -- add
@@ -66,7 +64,13 @@ SPELL=${LVI_SPELL_CMD:-aspell -a}     # unquoted below: command + args
 PICKER=${LVI_PICKER:-fzf}
 MAXBYTES=${LVI_SPELL_MAXBYTES:-262144}
 
-die() { echo "lvi-spell: $*" >&2; exit 1; }
+# Errors also land on the target's status line: stderr is discarded (:bg) or
+# repainted over (:silent !) under every documented binding.
+die() {
+  echo "lvi-spell: $*" >&2
+  [ -n "${target:-}" ] && $LVI -w "$target" --detach -- "msge lvi-spell: $*" 2>/dev/null
+  exit 1
+}
 
 worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
 want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
@@ -97,10 +101,11 @@ if [ -n "$worker" ]; then
   nbytes=$(printf '%s' "$text" | wc -c)
   if [ "$nbytes" -gt "$MAXBYTES" ]; then
     echo "lvi-spell: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_SPELL_MAXBYTES)" >&2
+    send "msge lvi-spell: ${nbytes}B over cap (raise LVI_SPELL_MAXBYTES)"
     exit 0
   fi
   fname=$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
-  case "$fname" in "[No File]"|"[No Name]") fname= ;; esac   # empty = stay-in-place jumps
+  case "$fname" in "["*"]") fname= ;; esac   # any pseudo-name: stay-in-place jumps
 
   # ispell -a pipe protocol: `!` turns on terse mode (no `*` line per correct
   # word), and each data line is sent behind a `^` escape so a line starting
@@ -161,14 +166,12 @@ spell_fix() {
   choice=$(printf '%s\n' "$line" | sed 's/^[^:]*: //; s/, /\n/g' | $PICKER) || exit 0
   [ -n "$choice" ] || exit 0
   esc=$(printf '\033')
-  # lvi has no text objects (no ciw), so splice with plain vi keys: `wb`
-  # normalizes to the word's start (w leaves the word -- clamping inside it at
-  # buffer end -- and b re-enters from beyond, landing on its first char),
-  # then c<len>l changes exactly the word's length -- unlike cw it cannot eat
-  # the trailing space. One `normal` line is one undo group, and `.` repeats.
-  # One connection, two commands, in order: the keys land first, then `fire`
-  # arms the change debounce -- so an enabled scan sees the new text.
-  send "normal wbc${#word}l$choice$esc" fire
+  # `ciw` changes exactly the word under the cursor (iw is a core text object;
+  # $LVI_CWORD being non-empty guarantees the cursor is on a word). One
+  # `normal` line is one undo group, and `.` repeats. One connection, two
+  # commands, in order: the keys land first, then `fire` arms the change
+  # debounce -- so an enabled scan sees the new text.
+  send "normal ciw$choice$esc" fire
 }
 
 spell_add() {
