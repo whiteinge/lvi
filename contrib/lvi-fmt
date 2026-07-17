@@ -73,14 +73,20 @@ else
   [ -n "$sock" ] || die "no running view '$target'"
 fi
 
-text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
-nbytes=$(printf '%s' "$text" | wc -c)
+oldf=$(mktemp "${sock%/*}/lvi-fmt.old.XXXXXX") || exit 1
+newf=$(mktemp "${sock%/*}/lvi-fmt.new.XXXXXX") || exit 1
+trap 'rm -f "$oldf" "$newf"' EXIT
+
+# Snapshot by redirect, not command substitution: $(...) strips trailing
+# newlines, which would hide trailing blank lines from the diff below.
+$LVI -w "$target" -- '%p' > "$oldf" || die "cannot read view $target"
+nbytes=$(wc -c < "$oldf")
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
   echo "lvi-fmt: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_FMT_MAXBYTES)" >&2
   exit 0
 fi
 fname=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$fname" in "[No File]"|"[No Name]") fname= ;; esac
+case "$fname" in "["*"]") fname= ;; esac    # [No File], [stdin], ... -- pathless
 
 # Pick the formatter: $LVI_FMT_CMD wins; else by extension. Each table entry
 # reads stdin, writes stdout, and hands the tool the REAL name for config
@@ -101,15 +107,10 @@ fi
 
 send() { $LVI -w "$target" --detach -- "$@"; }   # fire-and-forget (errors only)
 
-oldf=$(mktemp "${sock%/*}/lvi-fmt.old.XXXXXX") || exit 1
-newf=$(mktemp "${sock%/*}/lvi-fmt.new.XXXXXX") || exit 1
-trap 'rm -f "$oldf" "$newf"' EXIT
-printf '%s\n' "$text" > "$oldf"
-
 # Format first, edit after: a failing formatter (usually a syntax error) must
 # leave the buffer untouched. The failure is surfaced as a status segment --
 # the worker has no tty and detached output is discarded.
-if ! printf '%s\n' "$text" | eval "$fmt" > "$newf"; then
+if ! eval "$fmt" < "$oldf" > "$newf"; then
   send "status fmt fmt: $backend failed (\$LVI_FMT_DEBUG for details)"
   exit 1
 fi
@@ -174,9 +175,9 @@ adj=$(printf '%s\n' "$d" | awk -v cl="$line" '
   }
   END { print seen ? hit : cl + delta }')
 case "$adj" in ''|*[!0-9]*) adj=$line ;; esac
-curcmd="normal 0"; [ "$col" -gt 1 ] && curcmd="normal 0$((col - 1))l"
 
-# One synchronous round-trip, in order: the splice, the cursor, clear any old
+# One synchronous round-trip, in order: the splice, the cursor (:pos is
+# byte-exact, matching the byte column the env/`pos` reported), clear any old
 # failure, then fire `change` for the hook consumers. Synchronous because the
 # temp file must outlive the edit that reads it (the EXIT trap reaps it).
-$LVI -w "$target" -- "$edit" "$adj" "$curcmd" "status fmt" fire
+$LVI -w "$target" -- "$edit" "pos $adj $col" "status fmt" fire

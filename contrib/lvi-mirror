@@ -2,7 +2,7 @@
 # lvi-mirror [WID] -- mirror a running lvi's live buffer into every OTHER view
 # open on the same file, so an edit in one tmux pane appears in the others.
 #
-# The bet, same as lvi-search/lvi-highlight: no in-editor multi-window. tmux (or
+# Same premise as lvi-search/lvi-highlight: no in-editor multi-window. tmux (or
 # any multiplexer) owns the panes -- each runs its own `lvi thefile`, a separate
 # process with its own buffer and socket. This script is the thread between them:
 # it pulls the LIVE buffer over the control socket (so UNSAVED edits propagate,
@@ -14,12 +14,15 @@
 #     on change lvi-mirror      " propagate edits as they settle
 #     on write  lvi-mirror      " propagate the saved/clean state on :w
 #
-# THE LOOP-SAFETY GIFT (why this doesn't ring): a `change` hook fires only after
-# a KEYBOARD edit settles; a peer receives our push over its SOCKET, and
-# socket-sourced edits deliberately never arm the change hook (see editor.lua's
-# handle_socket_command). So when A pushes to B, B does not push back. Every pane
-# can carry the identical `on change lvi-mirror` and the mesh is stable by
-# construction -- no instance needs to know the topology in advance.
+# LOOP SAFETY: a `change` hook fires only after a KEYBOARD edit settles; a peer
+# receives our push over its SOCKET, and socket-sourced edits never arm the
+# change hook on their own (see editor.lua's handle_socket_command). A push does
+# end with an explicit `fire` -- so the peer's OTHER change consumers (live
+# highlighting) see the new text -- and that re-runs the peer's own
+# `on change lvi-mirror`, but the echo finds every view already in sync, applies
+# nothing, and fires nothing: one bounce, then quiet. Every pane can carry the
+# identical `on change lvi-mirror` and the mesh is stable by construction -- no
+# instance needs to know the topology in advance.
 #
 # It self-backgrounds (double-fork) exactly like lvi-highlight: reading a peer's
 # buffer needs lvi's event loop, which is FROZEN if we were invoked from a
@@ -37,12 +40,14 @@
 # no git needed), NOT `diff -e`: an ed-script's multi-line insert blocks would be
 # shredded by the socket's newline framing. Each hunk becomes lvi-native
 # single-line commands, applied BOTTOM-UP so old line numbers stay valid:
-#     delete  a,b       ->  :a,bd
+#     delete  a,b       ->  :a,bd _
 #     append  after a   ->  :a  r !sed -n 'b1,b2p' NEWTMP   (pull new lines from us)
-#     change  a,b       ->  :a,bd  then  :a-1 r !sed -n 'b1,b2p' NEWTMP
-# The cursor: :d/:r move it as a side effect, so we save the peer's position,
-# shift it by the net line-delta of the hunks ABOVE it (so it tracks its content
-# across edits higher up), and restore it last.
+#     change  a,b       ->  :a,bd _  then  :a-1 r !sed -n 'b1,b2p' NEWTMP
+# Deletes name the black-hole buffer `_`, so a background sync never rotates the
+# peer's delete history or feeds a command-backed clipboard. The cursor: :d/:r
+# move it as a side effect, so we save the peer's position, shift it by the net
+# line-delta of the hunks ABOVE it (so it tracks its content across edits higher
+# up), and restore it last with :pos.
 #
 # THE MODIFIED FLAG comes along for free in the DIRTY direction (a mirrored edit
 # is a real splice on the peer, so the peer goes modified on its own). Only the
@@ -102,24 +107,29 @@ canon() {
   fi
 }
 
-# Our own file (env when spawned by lvi; else ask the view) and live buffer.
+# Our own file (env when spawned by lvi; else ask the view).
 myfile=${LVI_FILE:-$("$LVI" -w "$wid" -- f | parse_file)}
 mycanon=$(canon "$myfile") || { echo "lvi-mirror: view $wid has no filename; nothing to mirror" >&2; exit 0; }
-mine=$("$LVI" -w "$wid" -- '%p') || { echo "lvi-mirror: cannot read view $wid" >&2; exit 1; }
 mymod=$("$LVI" -w "$wid" -- 'set modified?' 2>/dev/null)   # modified|nomodified ('' if unsupported)
 
-nbytes=$(printf '%s' "$mine" | wc -c)
+# Stage OUR buffer once (peers read new lines out of it via sed) and a scratch
+# file we rewrite with each peer's OLD content to diff against. They carry
+# buffer text, so they live beside the socket in lvi's private per-uid dir (all
+# of a uid's views share the dir), never the shared /tmp. Captured by redirect,
+# not command substitution: $(...) strips trailing newlines, which would hide
+# trailing blank lines from the diff and leave the peers diverged forever.
+sock=${LVI_SOCK:-$("$LVI" -l | awk -F'\t' -v w="$wid" '$1==w{print $2; exit}')}
+[ -n "$sock" ] || { echo "lvi-mirror: no running view '$wid'" >&2; exit 1; }
+newf=$(mktemp "${sock%/*}/lvi-mirror.new.XXXXXX") || exit 1
+oldf=$(mktemp "${sock%/*}/lvi-mirror.old.XXXXXX") || exit 1
+trap 'rm -f "$newf" "$oldf"' EXIT
+"$LVI" -w "$wid" -- '%p' > "$newf" || { echo "lvi-mirror: cannot read view $wid" >&2; exit 1; }
+
+nbytes=$(wc -c < "$newf")
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
   echo "lvi-mirror: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_MIRROR_MAXBYTES)" >&2
   exit 0
 fi
-
-# Stage OUR buffer once (peers read new lines out of it via sed) and a scratch
-# file we rewrite with each peer's OLD content to diff against.
-newf=$(mktemp "${TMPDIR:-/tmp}/lvi-mirror.new.XXXXXX") || exit 1
-oldf=$(mktemp "${TMPDIR:-/tmp}/lvi-mirror.old.XXXXXX") || exit 1
-trap 'rm -f "$newf" "$oldf"' EXIT
-printf '%s' "$mine" > "$newf"
 q=\'   # single-quote, to wrap the filename inside the awk-emitted commands
 
 # Fan out to every OTHER live view whose (canonicalized) file matches ours.
@@ -130,9 +140,8 @@ q=\'   # single-quote, to wrap the filename inside the awk-emitted commands
 
   set --   # accumulate this peer's commands: content hunks, cursor, then flag
 
-  theirs=$("$LVI" -w "$peer" -- '%p')
-  if [ "$theirs" != "$mine" ]; then       # content differs: build the diff hunks
-  printf '%s' "$theirs" > "$oldf"
+  "$LVI" -w "$peer" -- '%p' > "$oldf" || continue
+  if ! cmp -s "$oldf" "$newf"; then       # content differs: build the diff hunks
 
   # Peer cursor, so we can put it back after :d/:r have moved it.
   pos=$("$LVI" -w "$peer" -- pos)
@@ -159,11 +168,11 @@ $(printf '%s\n' "$d" | awk -v newf="$newf" -v q="$q" '
     END {
       for (i = n; i >= 1; i--) {
         if (OP[i] == "d") {
-          printf "%s,%sd\n", OA[i], OB[i]
+          printf "%s,%sd _\n", OA[i], OB[i]
         } else if (OP[i] == "a") {
           printf "%s r !sed -n %s,%sp %s%s%s\n", OA[i], NA[i], NB[i], q, newf, q
         } else {                                   # change: delete then read new lines in
-          printf "%s,%sd\n", OA[i], OB[i]
+          printf "%s,%sd _\n", OA[i], OB[i]
           printf "%s r !sed -n %s,%sp %s%s%s\n", OA[i]-1, NA[i], NB[i], q, newf, q
         }
       }
@@ -189,18 +198,20 @@ EOF
     END { print seen ? hit : cl + delta }')
   case "$adj" in ''|*[!0-9]*) adj=$line ;; esac
 
-  # Hunks first, then the cursor restore (lvi clamps an over-range line/col).
-  # The column rides `normal` keys -- a bare `|N` ex line is a system-ex no-op
-  # (see lvi-list's jump) -- and `l` steps characters, tracking byte columns
-  # through tabs.
-  curcmd="normal 0"; [ "$col" -gt 1 ] && curcmd="normal 0$((col - 1))l"
-  set -- "$@" "$adj" "$curcmd"
+  # Hunks first, then the cursor restore: :pos is byte-exact (the same byte
+  # columns `pos` reported) and clamps an over-range line/col. Last, `fire`
+  # lets the peer's other change-hook consumers (live highlighting) see the
+  # pushed text -- its own `on change lvi-mirror` re-runs too, but that echo
+  # finds the contents equal, applies nothing, and fires nothing: one bounce.
+  set -- "$@" "pos $adj $col" fire
   fi
 
   # Flag sync: whenever WE are clean, make the (now in-sync) peer clean too. The
   # dirty direction needs nothing -- the splices above already did it.
   [ "$mymod" = nomodified ] && set -- "$@" "set nomodified"
 
-  # One round-trip, in order: content, cursor, flag. Skip if there's nothing.
-  [ $# -gt 0 ] && "$LVI" -w "$peer" -- "$@"
+  # One round-trip, in order: content, cursor, fire, flag. Skip if there's
+  # nothing (and don't let the skip become the loop's exit status).
+  [ $# -gt 0 ] || continue
+  "$LVI" -w "$peer" -- "$@"
 done
