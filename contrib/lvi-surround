@@ -9,7 +9,8 @@
 # span from the environment and edits back over the socket rather than filtering
 # stdin->stdout the way the ! operator's tools do (lvi-incr, lvi-reflow). That is
 # what lets it reach PART of a line: a charwise motion hands over byte columns,
-# not just whole lines.
+# not just whole lines. The edit is one call: the splice, a byte-exact cursor
+# restore (:pos), then `fire` so change-hook consumers see the new text.
 #
 # THE SPAN (exported by g@, see the manpage):
 #   $LVI_KIND          "char" | "line"
@@ -42,7 +43,8 @@
 #
 # Operates on bytes (LC_ALL=C), so COL1/COL2 land right for multibyte text.
 # Debug: LVI_SURROUND_DEBUG=1 traces to stderr -- but g@ discards a spawn's
-# stderr, so trace by invoking it straight (LVI_KIND=char LVI_LINE1=1 ... lvi-surround ().
+# stderr, so trace by invoking it straight:
+#     LVI_KIND=char LVI_LINE1=1 LVI_COL1=1 LVI_COL2=3 lvi-surround paren
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -79,8 +81,11 @@ c2=${LVI_COL2:-}
 n=$((l2 - l1 + 1))
 trace "kind=$kind lines=$l1-$l2 cols=$c1-$c2 pair=$open$close"
 
-tmp=${TMPDIR:-/tmp}/lvi-surround.$$
-orig=$tmp.orig; new=$tmp.new
+# Temp files carry buffer text, so they live beside the socket in lvi's
+# private per-uid dir ($LVI_SOCK rides every g@ spawn), not in shared /tmp.
+sockdir=${LVI_SOCK%/*}; [ -d "$sockdir" ] || sockdir=${TMPDIR:-/tmp}
+orig=$(mktemp "$sockdir/lvi-surround.orig.XXXXXX") || exit 1
+new=$(mktemp "$sockdir/lvi-surround.new.XXXXXX") || exit 1
 trap 'rm -f "$orig" "$new"' EXIT
 
 "$LVI" -w "$w" -- "${l1},${l2}p" > "$orig" || { trace "read failed"; exit 1; }
@@ -96,7 +101,12 @@ NR==n         { print substr($0,1,c2) rp substr($0,c2+1); next }
               { print }
 ' "$orig" > "$new" || { trace "transform failed"; exit 1; }
 
-# One atomic filter call replaces LINE1..LINE2 with the wrapped text (cat ignores
-# the piped-in original and emits the rewrite) -- one undo step, byte-exact, and
-# it copes with the linewise case adding two lines. Same seam lvi-incr rides.
-"$LVI" -w "$w" -- "${l1},${l2}!cat '$new'" || { trace "splice failed"; exit 1; }
+# One atomic call: the filter replaces LINE1..LINE2 with the wrapped text (cat
+# ignores the piped-in original and emits the rewrite) -- one undo step,
+# byte-exact, and it copes with the linewise case adding two lines (the cursor
+# restore shifts down one to stay on its text). Then :pos puts the cursor back
+# (the filter parks it at the span's first line) and `fire` wakes the change
+# hooks. Same splice seam lvi-incr rides.
+cl=${LVI_LINE:-$l1}; [ "$kind" = line ] && cl=$((cl + 1))
+"$LVI" -w "$w" -- "${l1},${l2}!cat '$new'" "pos $cl ${LVI_COL:-1}" fire ||
+  { trace "splice failed"; exit 1; }

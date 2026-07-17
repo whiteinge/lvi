@@ -7,9 +7,11 @@
 # otherwise it adds one. So the same key comments and un-comments.
 #
 # A SPAWN-flavor operator (fired detached by g@, like :bg): it reads the span
-# from $LVI_LINE1/$LVI_LINE2 and edits back over the socket. Commenting is
-# line-wise by nature, so $LVI_KIND/$LVI_COL* are ignored -- a charwise motion
-# still comments the whole lines it touches.
+# from $LVI_LINE1/$LVI_LINE2 and edits back over the socket in one call -- the
+# splice, a byte-exact cursor restore (:pos), then `fire` so change-hook
+# consumers (live highlighting) see the new text. Commenting is line-wise by
+# nature, so $LVI_KIND/$LVI_COL* are ignored -- a charwise motion still
+# comments the whole lines it touches.
 #
 # STYLE picks the comment syntax. Give it explicitly, or omit it to guess from
 # the file's extension ($LVI_FILE). Shell-safe aliases are provided because the
@@ -17,6 +19,9 @@
 # be mangled -- so prefer the alias, or quote the literal:
 #     //   or  c            // line comment          C, JS, Go, Rust, ...
 #     '#'  or  hash          # line comment          shell, Python, YAML, ...
+#     --   or  dash         -- line comment          Lua, SQL, Haskell
+#     '%'  or  percent       % line comment          TeX
+#     ';'  or  semi          ; line comment          Lisp family
 #     :    or  colon         : line comment          (some assembler / config)
 #     cblock                /* ... */ block          C, CSS
 #     html                  <!-- ... --> block       HTML, XML, Markdown
@@ -54,12 +59,12 @@ if [ -z "$style" ]; then                        # guess from the file's extensio
   case "${LVI_FILE##*.}" in
     c|h|cpp|cc|cxx|hpp|hh|js|jsx|ts|tsx|go|rs|java|kt|swift|scala|php|dart|zig) style=// ;;
     sh|bash|zsh|py|rb|pl|pm|r|yaml|yml|toml|conf|cfg|ini|mk|make|dockerfile)    style='#' ;;
+    lua|sql|hs)                                                                style=-- ;;
+    tex|sty|cls)                                                               style='%' ;;
+    lisp|el|clj|cljs|scm|rkt)                                                  style=';' ;;
     css|scss|less)                                                             style=cblock ;;
     html|htm|xml|svg|md|markdown|vue|xhtml)                                    style=html ;;
-    *) case "${LVI_FILE##*/}" in
-         Makefile|makefile|Dockerfile|*.env|.*) style='#' ;;
-         *) style='#' ;;                          # a sane default for unknowns
-       esac ;;
+    *) style='#' ;;                               # a sane default for unknowns
   esac
   trace "auto style for '$LVI_FILE' -> $style"
 fi
@@ -67,6 +72,9 @@ fi
 case "$style" in
   //|c)                mode=line; mark='//' ;;
   '#'|hash)            mode=line; mark='#' ;;
+  --|dash)             mode=line; mark='--' ;;
+  '%'|percent)         mode=line; mark='%' ;;
+  ';'|semi)            mode=line; mark=';' ;;
   :|colon)             mode=line; mark=':' ;;
   '/* */'|'/*'|cblock) mode=block; open='/*' close='*/' ;;
   '<!-- -->'|'<!--'|html|xml) mode=block; open='<!--' close='-->' ;;
@@ -78,8 +86,11 @@ l1=${LVI_LINE1:?"lvi-comment: no LVI_LINE1 -- arm with :set operatorfunc= then g
 l2=${LVI_LINE2:-$l1}
 trace "mode=$mode mark=$mark${open:+ block=$open $close} lines=$l1-$l2"
 
-tmp=${TMPDIR:-/tmp}/lvi-comment.$$
-orig=$tmp.orig; new=$tmp.new
+# Temp files carry buffer text, so they live beside the socket in lvi's
+# private per-uid dir ($LVI_SOCK rides every g@ spawn), not in shared /tmp.
+sockdir=${LVI_SOCK%/*}; [ -d "$sockdir" ] || sockdir=${TMPDIR:-/tmp}
+orig=$(mktemp "$sockdir/lvi-comment.orig.XXXXXX") || exit 1
+new=$(mktemp "$sockdir/lvi-comment.new.XXXXXX") || exit 1
 trap 'rm -f "$orig" "$new"' EXIT
 
 "$LVI" -w "$w" -- "${l1},${l2}p" > "$orig" || { trace "read failed"; exit 1; }
@@ -135,6 +146,9 @@ END {
 }
 ' "$orig" > "$new" || { trace "transform failed"; exit 1; }
 
-# One atomic filter call swaps LINE1..LINE2 for the toggled text (cat emits the
-# rewrite, ignoring the piped-in original) -- one undo step, byte-exact.
-"$LVI" -w "$w" -- "${l1},${l2}!cat '$new'" || { trace "splice failed"; exit 1; }
+# One atomic call: the filter swaps LINE1..LINE2 for the toggled text (cat
+# emits the rewrite, ignoring the piped-in original) -- one undo step,
+# byte-exact -- then :pos puts the cursor back where the motion started (the
+# filter parks it at the span's first line) and `fire` wakes the change hooks.
+"$LVI" -w "$w" -- "${l1},${l2}!cat '$new'" "pos ${LVI_LINE:-$l1} ${LVI_COL:-1}" fire ||
+  { trace "splice failed"; exit 1; }
