@@ -44,7 +44,7 @@
 # default "{{{,}}}"), LVI_FOLD_MINLINES (skip folds smaller than this many lines,
 # default 2), LVI_FOLD_MANHEAD (man-mode heading regex, default "^[A-Z][A-Z ]*$"),
 # LVI_FOLD_MANKEEP (man-mode headings to leave unfolded, default NAME/SYNOPSIS),
-# LVI_FOLD_DEBUG (a file to capture the worker's stderr).
+# LVI_FOLD_DEBUG (a file to capture the worker's output).
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -57,6 +57,9 @@ MANKEEP=${LVI_FOLD_MANKEEP:-'^(NAME|SYNOPSIS) *$'}
 worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
 want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
 mode=${1:-marker}
+case "$mode" in marker|indent|man) ;;
+  *) echo "lvi-fold: unknown MODE '$mode' (marker|indent|man)" >&2; exit 2 ;;
+esac
 target=${want_wid:-${LVI_WID:-auto}}
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 
@@ -76,27 +79,21 @@ close=${MARKER#*,}
 ranges=$(
   $LVI -w "$target" -- %p | case "$mode" in
     indent)
+      # One streaming pass with a stack of open folds (base indent, anchor
+      # line): a non-blank line deeper than the previous one opens a fold
+      # anchored at that previous line; returning to the base (or shallower)
+      # closes it at the last non-blank line inside. Blank lines extend
+      # whatever is open. O(n) -- this runs on every bufenter, and the naive
+      # per-line rescan was O(n^2) on a file that is mostly one deep block.
       awk '
-        function indent(s,  n) { match(s, /^[ \t]*/); return RLENGTH }
-        { line[NR] = $0 }
-        END {
-          n = NR
-          for (i = 1; i <= n; i++) {
-            # blank lines inherit the surrounding indent so they do not split a block
-            ind = (line[i] ~ /^[ \t]*$/) ? -1 : indent(line[i])
-            depth[i] = ind
-          }
-          # a fold starts where indent increases; it runs while indent stays deeper
-          for (i = 1; i < n; i++) {
-            if (depth[i] < 0) continue
-            base = depth[i]; j = i + 1; last = i
-            while (j <= n && (depth[j] < 0 || depth[j] > base)) {
-              if (depth[j] > base) last = j
-              j++
-            }
-            if (last > i) print (i+1), last
-          }
-        }' ;;
+        /^[ \t]*$/ { next }
+        {
+          match($0, /^[ \t]*/); d = RLENGTH
+          while (sp > 0 && d <= base[sp]) { if (pnb > start[sp]) print start[sp] + 1, pnb; sp-- }
+          if (pnb && d > pd) { base[++sp] = pd; start[sp] = pnb }
+          pnb = NR; pd = d
+        }
+        END { while (sp > 0) { if (pnb > start[sp]) print start[sp] + 1, pnb; sp-- } }' ;;
     man)
       # man mode: each flush-left heading opens a section; fold its body (the
       # lines up to the next heading) so the page collapses to a heading TOC.
@@ -113,8 +110,15 @@ ranges=$(
         }' ;;
     *)
       # marker mode: a stack of open-marker line numbers; each close pops one.
+      # A close AFTER the open on the same line pairs with it right away (a
+      # one-line fold, dropped by MINLINES) so it can't orphan a push that a
+      # later close would mispair.
       awk -v o="$open" -v c="$close" '
-        index($0, o) { stack[++sp] = NR; next }
+        index($0, o) {
+          stack[++sp] = NR
+          if (index(substr($0, index($0, o) + length(o)), c)) { s = stack[sp--]; if (NR > s) print s, NR }
+          next
+        }
         index($0, c) { if (sp > 0) { s = stack[sp--]; if (NR > s) print s, NR } }
       ' ;;
   esac | awk -v min="$MINLINES" '$2 - $1 + 1 >= min { printf " %d,%d", $1, $2 }'
