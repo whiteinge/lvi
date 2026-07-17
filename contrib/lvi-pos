@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-pos [-w auto|WID] save | restore [-n]
+# lvi-pos [-w auto|WID] save | restore [-j]
 #
 # Remember where you were in each file across sessions -- vi/vim's `` `" `` mark,
 # restored from viminfo -- but as a plain-text store and a couple of `:on` hooks
@@ -32,8 +32,9 @@
 # RESTORE IS GUARDED so it only acts on a FRESH read (the buffer sitting at line
 # 1): a freshly read file starts there; a buffer you're revisiting already has
 # lvi's own in-memory per-buffer cursor where you left it this session, so restore
-# stands aside rather than re-marking (or, with -j, yanking) it. All edits go over
-# the socket, which never arms `change`/`bufenter`, so save and restore can't loop.
+# stands aside rather than re-marking (or, with -j, yanking) it. No loops: save
+# touches no socket, and restore's commands (:mark, :pos) edit nothing and switch
+# no buffer, so neither can retrigger the hooks that fire them.
 #
 # The in-session last-CHANGE mark (`` `. ``) is NOT this tool's job: the `on change`
 # hook can fire while you're still in insert mode (a typing pause), so the core
@@ -72,13 +73,9 @@ maxn=${LVI_POS_MAX:-1000}
 
 want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
 sub=${1:-}; [ -n "$sub" ] && shift
-# restore [-j]: by DEFAULT set the `" mark WITHOUT moving the cursor -- the safe,
-# composable choice, since a mark-only restore can't fight a list jump (or any
-# other cursor mover) on the same event. -j/--jump ALSO moves the cursor to the
-# saved spot ("resume here") -- the surprising bit you opt into, and best bound to
-# `ready` (startup) rather than `bufenter`, where it would clobber list navigation
-# across files. -n/--no-jump is the old spelling of today's default, accepted as a
-# no-op so existing rc lines keep working.
+# restore [-j]: default sets the `" mark without moving the cursor; -j/--jump
+# also moves there (THE CONFLICT in the header covers why -j belongs on `ready`
+# only). -n/--no-jump is the old spelling of today's default, a compat no-op.
 jump=
 case "$1" in
   -j|--jump)    jump=1; shift ;;
@@ -91,7 +88,7 @@ send() { $LVI -w "$target" --detach -- "$@"; }
 # rather than silently no-op'ing on the (later) empty-file guard.
 case "$sub" in
   save|restore) ;;
-  *) echo "usage: lvi-pos [-w auto|WID] save | restore [-n]" >&2; exit 2 ;;
+  *) echo "usage: lvi-pos [-w auto|WID] save | restore [-j]" >&2; exit 2 ;;
 esac
 
 # The buffer's file: from the env when spawned by a hook, else ask over the
@@ -100,7 +97,7 @@ esac
 # `-` not `:-`: a hook always exports LVI_FILE (empty for an unnamed buffer, which
 # we then skip); only a manual run from another terminal leaves it unset -> ask.
 file=${LVI_FILE-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$file" in ""|"[No File]"|"[No Name]") exit 0 ;; esac
+case "$file" in ""|"["*"]") exit 0 ;; esac    # unnamed/pseudo buffer ([stdin], ...)
 case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
 
 # Skip volatile files, the way viminfo skips gitcommit/gitrebase and temp edits:
@@ -113,6 +110,10 @@ save)
   line=${LVI_LINE:-1}; col=${LVI_COL:-1}
   case "$line" in ''|*[!0-9]*) line=1 ;; esac
   case "$col"  in ''|*[!0-9]*) col=1  ;; esac
+  # A glance at a file (open, don't move, leave -- the bufleave save) reports
+  # line 1, and restore ignores line-1 entries as worthless; saving one would
+  # only overwrite a remembered deep position with nothing.
+  [ "$line" = 1 ] && exit 0
   mkdir -p "$(dirname "$store")" 2>/dev/null || exit 0
   tmp=$(mktemp "$store.XXXXXX") || exit 0
   trap 'rm -f "$tmp"' EXIT INT TERM
@@ -131,16 +132,12 @@ restore)
   case "$line" in ''|*[!0-9]*|0|1) exit 0 ;; esac      # nothing worth jumping to
   col=$(awk -F'\t' -v f="$file" '$1 == f { print $3 }' "$store" 2>/dev/null)
   case "$col" in ''|*[!0-9]*|0) col=1 ;; esac          # older/short entries -> column 1
-  # Drop the `" mark at the exact spot -- line AND byte column, like Vim's `" mark.
-  # `:mark " LINE COL` sets it byte-exactly WITHOUT moving the cursor, so the
-  # (default) mark-only restore never touches the cursor -- it can't fight a list
-  # jump or any other bufenter cursor mover. :mark clamps a stale line/col (the
-  # file shrank since we saved) into the buffer, the same tolerance as viminfo.
-  #
-  # With -j we ALSO move the cursor there to resume: :pos does the byte-exact move
-  # (a plain ${line}G lands on the first non-blank, and no normal-mode motion
-  # reaches a raw byte column). This is the surprising bit; keep it off `bufenter`.
-  send "mark \" $line $col"
-  [ -n "$jump" ] && send "pos $line $col"
+  # Drop the `" mark at the exact spot: `:mark " LINE COL` is byte-exact and
+  # moves nothing; it clamps a stale line/col (the file shrank since we saved)
+  # into the buffer, the same tolerance as viminfo. With -j, :pos also moves
+  # the cursor there -- one connection for both commands, so the order is
+  # pinned (and a plain restore exits 0 either way).
+  if [ -n "$jump" ]; then send "mark \" $line $col" "pos $line $col"
+  else send "mark \" $line $col"; fi
   ;;
 esac
