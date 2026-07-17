@@ -30,8 +30,9 @@
 # this reflects your last :w / `git add`, not unsaved edits. Save/stage first if a
 # hunk looks stale. --staged line numbers are index-side, so they best match the
 # buffer when the staged and working versions agree (as they do right after you
-# stage a hunk in lvi-stagediff). (Contrast lvi-search, which greps the live
-# buffer via %p.)
+# stage a hunk in lvi-stagediff); single-commit mode emits REF's own line
+# numbers, which drift from today's buffer by however much the file has changed
+# since. (Contrast lvi-search, which greps the live buffer via %p.)
 #
 # Bind it with :bg -- git is non-interactive so it needs no tty, and :bg avoids
 # the alt-screen flash that :silent ! causes:
@@ -53,8 +54,9 @@ case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print
 LVI=${LVI:-lvi}
 
 die() { echo "lvi-gitchanges: $*" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || die "git not found on PATH"
 
-want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2; }
 staged=; case "${1:-}" in --staged|--cached) staged=1; shift ;; esac
 ref=${1:-}
 target=${want_wid:-${LVI_WID:-auto}}
@@ -64,7 +66,7 @@ send() { $LVI -w "$target" --detach -- "$@"; }
 
 # The buffer's file: from the env when spawned by lvi (a map/hook), else ask.
 file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$file" in ""|"[No File]"|"[No Name]") die "current buffer has no file" ;; esac
+case "$file" in ""|"["*"]") die "current buffer has no file" ;; esac
 
 # Choose the diff. --staged -> index vs REF (HEAD by default), git's `--cached`.
 # Otherwise: no ref -> working tree vs HEAD; a range -> that range; a lone commit
@@ -96,7 +98,9 @@ entries=$(printf '%s\n' "$diff" | awk -v f="$file" '
   }')
 
 if [ -z "$entries" ]; then
-  send "hl $name" "hl $name-cur" "status $name no changes"
+  # Clear the paint and the stale counter; the notice itself is a one-shot
+  # answer, so an ephemeral :msg, not a status segment that would sit forever.
+  send "hl $name" "hl $name-cur" "status $name" "msg $name: no changes"
   exit 0
 fi
 
