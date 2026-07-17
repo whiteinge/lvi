@@ -405,8 +405,11 @@ _contrib/lvi-shell.sh_ do).
 *d* [_buffer_], *p*
 	Delete or print the addressed lines. *d* saves the deleted lines to a
 	register, like the *d* operator: the unnamed register (") always, plus
-	_buffer_ when a single-letter name follows. (A mark or search address makes
-	the line fall through to the system ex, whose registers lvi cannot see.)
+	_buffer_ when a single-letter name follows. The buffer *\_* is the
+	black-hole: the delete touches no register at all, so a tool pushing
+	deletes over the socket does not rotate the delete history or feed a
+	command-backed clipboard. (A mark or search address makes the line fall
+	through to the system ex, whose registers lvi cannot see.)
 
 *r* {_file_|*!*_cmd_}
 	Read a file, or the output of a shell _cmd_, after the addressed line.
@@ -554,7 +557,8 @@ _contrib/lvi-shell.sh_ do).
 
 *on* _event_ [_cmd_]
 	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears
-	that event's hooks. _event_ is *change* (a keyboard edit settled -- for live
+	that event's hooks. Re-registering an identical _cmd_ is a no-op, so a
+	script that wires hooks can be re-run without stacking duplicates. _event_ is *change* (a keyboard edit settled -- for live
 	highlighting), *write* (after a successful *w*/*wq*/*x*), *scroll* (a keyboard
 	action moved the viewport top -- fired at once, undebounced, with the new top
 	line in *LVI_TOP*; the seam an external tool uses to mirror one view's scroll

@@ -717,13 +717,18 @@ end)
 -- stack "1, since a line delete is "large"), plus a named register when a
 -- single-letter buffer is given (POSIX ex's optional buffer arg). The text is
 -- linewise (trailing '\n'), matching a linewise yank/dd, so a following :put / p
--- pastes whole lines. (Mark/search addresses like :'a,'bd still fall through to
--- the system ex, whose registers lvi can't see -- see the addressing note at the
--- top of this file.)
+-- pastes whole lines. `_` is the black-hole buffer (vim's "_): the delete
+-- touches no register at all -- for socket tools (lvi-diff, lvi-mirror) whose
+-- pushed deletes must not rotate the user's delete history or feed a
+-- command-backed clipboard. (Mark/search addresses like :'a,'bd still fall
+-- through to the system ex, whose registers lvi can't see -- see the addressing
+-- note at the top of this file.)
 def("d delete", function(ed, c)
   local from, to = line_range(ed, c.a, c.b)
-  local reg = c.args:match("^(%a)%s*$")           -- optional single-letter buffer
-  M.set_del_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
+  local reg = c.args:match("^([%a_])%s*$")        -- optional single-letter buffer
+  if reg ~= "_" then
+    M.set_del_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
+  end
   ed.buf:delete(from, to)
   ed.cy = clampline(ed, from)
   ed.cx = 1
@@ -1015,6 +1020,11 @@ def("on", function(ed, c)
   -- REPLACES; the fire-and-forget events compose (append).
   if event == "complete" then ed.hooks.complete = { rest }; return "", "ok" end
   ed.hooks[event] = ed.hooks[event] or {}
+  -- Re-registering an identical command is a no-op, so a wiring script re-run
+  -- on the same view (lvi-diff, lvi-stagediff --attach) never stacks duplicates.
+  for _, h in ipairs(ed.hooks[event]) do
+    if h == rest then return "", "ok" end
+  end
   table.insert(ed.hooks[event], rest)
   return "", "ok"
 end)
