@@ -6,23 +6,29 @@
 # pointing LVI here is the only seam needed.
 #
 #   $STUB_DIR/buffer   payload served for `%p` (provide it if the script reads)
+#   $STUB_DIR/buffer.WID  per-view `%p` payload, when a test needs two views
+#                      that DIVERGE (lvi-mirror); falls back to `buffer`
 #   $STUB_DIR/path     payload served for `path` (missing = pathless -> empty,
 #                      matching the real client, which prints nothing for an
 #                      empty payload)
 #   $STUB_DIR/pos      payload served for `pos` (missing -> "1<TAB>1")
+#   $STUB_DIR/modified payload served for `set modified?` (missing -> empty)
 #   $STUB_DIR/list     output served for `lvi -l` (missing -> no views)
 #   $STUB_DIR/log      every command received, appended one per line
 dir=${STUB_DIR:?stub-lvi: STUB_DIR not set}
 [ "$1" = -l ] && { cat "$dir/list" 2>/dev/null; exit 0; }
-[ "$1" = -w ] && shift 2
+wid=
+[ "$1" = -w ] && { wid=$2; shift 2; }
 [ "$1" = --detach ] && shift
 [ "$1" = -- ] && shift
 for c in "$@"; do
   printf '%s\n' "$c" >> "$dir/log"
   case $c in
-    %p)   cat "$dir/buffer" ;;
+    %p)   if [ -n "$wid" ] && [ -f "$dir/buffer.$wid" ]; then cat "$dir/buffer.$wid"
+          else cat "$dir/buffer"; fi ;;
     path) cat "$dir/path" 2>/dev/null ;;
     pos)  if [ -f "$dir/pos" ]; then cat "$dir/pos"; else printf '1\t1\n'; fi ;;
+    'set modified?') cat "$dir/modified" 2>/dev/null ;;
     f)    printf '"%s" 1 lines\n' "$(cat "$dir/path" 2>/dev/null || echo '[No File]')" ;;
   esac
 done

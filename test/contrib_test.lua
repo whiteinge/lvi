@@ -176,6 +176,68 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- lvi-mirror's env: LVI_WID names the view, LVI_SOCK puts the temp/state
+    -- files in the stub dir, LVI_FILE skips the `path` round-trip. The stub
+    -- serves per-view buffers (buffer.WID) so two views can diverge.
+    it("lvi-mirror --worker pushes a diff to the peer and records the push", function()
+      local d = stub({ ["buffer.w1"] = "a\nb\n", ["buffer.w2"] = "a\n" })
+      write(d .. "/list", "w1\t" .. d .. "/sock\t/lvi-mirror-test/f\n"
+                       .. "w2\t" .. d .. "/sock\t/lvi-mirror-test/f\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/lvi-mirror-test/f" },
+        "contrib/lvi-mirror --worker")
+      local log = read(d .. "/log")
+      expect(log:find("r !sed %-n 1,2p")).to_not.exist()   -- no whole-buffer ship...
+      expect(log:find("1 r !sed %-n 2,2p")).to.exist()     -- ...just the new line
+      expect(log:find("\nfire\n")).to.exist()
+      local sum = io.popen("cksum < '" .. d .. "/buffer.w1'"):read("*l")
+      expect(read(d .. "/lvi-mirror.pushed.w2")).to.equal(sum .. "\n")
+      cleanup(d)
+    end)
+
+    it("lvi-mirror --worker replaces a whole-buffer change read-first (no phantom line)", function()
+      local d = stub({ ["buffer.w1"] = "NEW\n", ["buffer.w2"] = "OLD\n" })
+      write(d .. "/list", "w1\t" .. d .. "/sock\t/lvi-mirror-test/f\n"
+                       .. "w2\t" .. d .. "/sock\t/lvi-mirror-test/f\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/lvi-mirror-test/f" },
+        "contrib/lvi-mirror --worker")
+      -- Read the new line in ABOVE, then delete the old at its shifted
+      -- address -- delete-first would empty the buffer and the >=1-line clamp
+      -- would leave a phantom blank the read does not replace.
+      expect(read(d .. "/log"):find("0 r !sed %-n 1,1p[^\n]*\nundojoin\n2,2d _\n")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-mirror --worker suppresses a dirty echo before reading any peer", function()
+      local d = stub({ ["buffer.w1"] = "a\nb\n" })
+      local sum = io.popen("cksum < '" .. d .. "/buffer.w1'"):read("*l")
+      write(d .. "/lvi-mirror.pushed.w1", sum .. "\n")     -- this content WAS a push
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/lvi-mirror-test/f" },
+        "contrib/lvi-mirror --worker")
+      expect(read(d .. "/log")).to.equal("%p\nset modified?\n")
+      cleanup(d)
+    end)
+
+    it("lvi-mirror --worker: a clean echo flag-syncs in-step peers, pushes nothing", function()
+      local d = stub({ ["buffer.w1"] = "a\nb\n", ["buffer.w2"] = "a\nb\n",
+                       ["buffer.w3"] = "a\nTYPED AHEAD\n", modified = "nomodified\n" })
+      local sum = io.popen("cksum < '" .. d .. "/buffer.w1'"):read("*l")
+      write(d .. "/lvi-mirror.pushed.w1", sum .. "\n")
+      write(d .. "/list", "w1\t" .. d .. "/sock\t/lvi-mirror-test/f\n"
+                       .. "w2\t" .. d .. "/sock\t/lvi-mirror-test/f\n"
+                       .. "w3\t" .. d .. "/sock\t/lvi-mirror-test/f\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/lvi-mirror-test/f" },
+        "contrib/lvi-mirror --worker")
+      local log = read(d .. "/log")
+      expect(log:find("set nomodified")).to.exist()        -- w2 (in step) got the flag
+      expect(log:find("sed")).to_not.exist()               -- w3 (diverged) got NOTHING
+      expect(log:find("fire")).to_not.exist()
+      cleanup(d)
+    end)
+
     it("lvi-pos save/restore round-trips through the store", function()
       local d = stub({})
       -- Not under /tmp: lvi-pos deliberately skips volatile paths there.

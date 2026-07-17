@@ -19,10 +19,16 @@
 # change hook on their own (see editor.lua's handle_socket_command). A push does
 # end with an explicit `fire` -- so the peer's OTHER change consumers (live
 # highlighting) see the new text -- and that re-runs the peer's own
-# `on change lvi-mirror`, but the echo finds every view already in sync, applies
-# nothing, and fires nothing: one bounce, then quiet. Every pane can carry the
-# identical `on change lvi-mirror` and the mesh is stable by construction -- no
-# instance needs to know the topology in advance.
+# `on change lvi-mirror`: the ECHO. Each push records a hash of what it
+# delivered beside the destination's socket; a worker whose own content still
+# matches that record knows it is the echo and never pushes CONTENT -- a
+# dirty echo exits at once, a clean one only completes the modified-flag sync
+# to peers still in step. That is correctness, not thrift: an echo that
+# pushed would diff the origin pane, where the human may have typed on past
+# the settle, against its own older content, and push back a REVERT of the
+# newest keystrokes. Every pane can carry the identical `on change
+# lvi-mirror` and the mesh is stable by construction -- no instance needs to
+# know the topology in advance.
 #
 # It self-backgrounds (double-fork) exactly like lvi-highlight: reading a peer's
 # buffer needs lvi's event loop, which is FROZEN if we were invoked from a
@@ -42,9 +48,13 @@
 # single-line commands, applied BOTTOM-UP so old line numbers stay valid:
 #     delete  a,b       ->  :a,bd _
 #     append  after a   ->  :a  r !sed -n 'b1,b2p' NEWTMP   (pull new lines from us)
-#     change  a,b       ->  :a,bd _  then  :a-1 r !sed -n 'b1,b2p' NEWTMP
-# Deletes name the black-hole buffer `_`, so a background sync never rotates the
-# peer's delete history or feeds a command-backed clipboard. The cursor: :d/:r
+#     change  a,b       ->  :a-1 r !sed -n 'b1,b2p' NEWTMP  then  :a+k,b+kd _
+# A change reads the new lines in BEFORE deleting the old (k = the insert's
+# line count): the other order, on a change spanning the whole buffer, empties
+# it -- and the >=1-line invariant then leaves a blank line the read does not
+# replace, a phantom the peer keeps forever. Deletes name the black-hole
+# buffer `_`, so a background sync never rotates the peer's delete history or
+# feeds a command-backed clipboard. The cursor: :d/:r
 # move it as a side effect, so we save the peer's position, shift it by the net
 # line-delta of the hunks ABOVE it (so it tracks its content across edits higher
 # up), and restore it last with :pos.
@@ -108,7 +118,6 @@ canon() {
 # Our own file (env when spawned by lvi; else ask the view).
 myfile=${LVI_FILE:-$("$LVI" -w "$wid" -- path)}
 mycanon=$(canon "$myfile") || { echo "lvi-mirror: view $wid has no filename; nothing to mirror" >&2; exit 0; }
-mymod=$("$LVI" -w "$wid" -- 'set modified?' 2>/dev/null)   # modified|nomodified ('' if unsupported)
 
 # Stage OUR buffer once (peers read new lines out of it via sed) and a scratch
 # file we rewrite with each peer's OLD content to diff against. They carry
@@ -128,6 +137,32 @@ if [ "$nbytes" -gt "$MAXBYTES" ]; then
   echo "lvi-mirror: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_MIRROR_MAXBYTES)" >&2
   exit 0
 fi
+
+# THE ECHO CHECK. A push ends with `fire` (below), which re-runs the
+# destination's own `on change lvi-mirror` -- this run, one settle later. Each
+# push records a hash of what it delivered, keyed by the destination's wid;
+# our content still matching that record marks this run as the echo. An echo
+# must never push CONTENT: its text is by definition one settle old, and the
+# origin pane's human may have typed on past the settle -- diffing their newer
+# text against ours would push back a REVERT of the newest keystrokes, the
+# read-to-write gap the state-ownership razor says a script cannot lock.
+# Content the keyboard has since changed hashes differently and propagates
+# normally. A dirty echo has nothing else to say and exits here; a clean one
+# still owes the flag sync below (a :w in the RECEIVING pane must clear its
+# in-sync peers), so it goes on in flag-only mode. The records are tool-owned
+# state beside the sockets; reap the ones whose views are gone (lvi-diff's
+# launch-time GC discipline -- no daemon owns their lifetime).
+myhash=$(cksum < "$newf")
+pushedf="${sock%/*}/lvi-mirror.pushed"
+echo_run=
+[ "$myhash" = "$(cat "$pushedf.$wid" 2>/dev/null)" ] && echo_run=1
+mymod=$("$LVI" -w "$wid" -- 'set modified?' 2>/dev/null)   # modified|nomodified ('' if unsupported)
+[ -n "$echo_run" ] && [ "$mymod" != nomodified ] && exit 0
+live=$("$LVI" -l | cut -f1)
+for f in "$pushedf".*; do
+  [ -e "$f" ] || continue
+  printf '%s\n' "$live" | grep -qxF "${f##*.}" || rm -f "$f"
+done
 q=\'   # single-quote, to wrap the filename inside the awk-emitted commands
 
 # Fan out to every OTHER live view whose (canonicalized) file matches ours.
@@ -139,9 +174,12 @@ q=\'   # single-quote, to wrap the filename inside the awk-emitted commands
   [ "$pcanon" = "$mycanon" ] || continue
 
   set --   # accumulate this peer's commands: content hunks, cursor, then flag
+  pushed=  # set when the batch carries content (then the push gets recorded)
 
   "$LVI" -w "$peer" -- '%p' > "$oldf" || continue
   if ! cmp -s "$oldf" "$newf"; then       # content differs: build the diff hunks
+  [ -n "$echo_run" ] && continue          # an echo never pushes content; this peer moved on
+  pushed=1
 
   # Peer cursor, so we can put it back after :d/:r have moved it.
   pos=$("$LVI" -w "$peer" -- pos)
@@ -168,14 +206,21 @@ $(printf '%s\n' "$d" | awk -v newf="$newf" -v q="$q" '
     END {
       # emit() threads `undojoin` between the commands, so the whole settle
       # reverts as ONE undo step on the peer instead of one per hunk command.
+      # A change hunk reads the new lines in ABOVE, then deletes the old block
+      # at its shifted address -- never delete-then-read: a change spanning the
+      # whole buffer would empty it, the >=1-line invariant would leave one
+      # blank line the read does not replace, and the peer would keep a phantom
+      # trailing line forever (which also breaks the echo check: the content
+      # no longer matches what the push recorded).
       for (i = n; i >= 1; i--) {
         if (OP[i] == "d") {
           emit(sprintf("%s,%sd _", OA[i], OB[i]))
         } else if (OP[i] == "a") {
           emit(sprintf("%s r !sed -n %s,%sp %s%s%s", OA[i], NA[i], NB[i], q, newf, q))
-        } else {                                   # change: delete then read new lines in
-          emit(sprintf("%s,%sd _", OA[i], OB[i]))
+        } else {                                   # change: read new in, then delete old
+          k = NB[i] - NA[i] + 1
           emit(sprintf("%s r !sed -n %s,%sp %s%s%s", OA[i]-1, NA[i], NB[i], q, newf, q))
+          emit(sprintf("%s,%sd _", OA[i]+k, OB[i]+k))
         }
       }
     }
@@ -204,8 +249,8 @@ EOF
   # Hunks first, then the cursor restore: :pos is byte-exact (the same byte
   # columns `pos` reported) and clamps an over-range line/col. Last, `fire`
   # lets the peer's other change-hook consumers (live highlighting) see the
-  # pushed text -- its own `on change lvi-mirror` re-runs too, but that echo
-  # finds the contents equal, applies nothing, and fires nothing: one bounce.
+  # pushed text -- its own `on change lvi-mirror` re-runs too, and exits at
+  # the echo check above against the record written below: it reads no one.
   set -- "$@" "pos $adj $col" fire
   fi
 
@@ -214,7 +259,9 @@ EOF
   [ "$mymod" = nomodified ] && set -- "$@" "set nomodified"
 
   # One round-trip, in order: content, cursor, fire, flag. Skip if there's
-  # nothing (and don't let the skip become the loop's exit status).
+  # nothing (and don't let the skip become the loop's exit status). A content
+  # push that lands records what the peer now holds -- the echo check's key.
   [ $# -gt 0 ] || continue
-  "$LVI" -w "$peer" -- "$@"
+  "$LVI" -w "$peer" -- "$@" || continue
+  [ -n "$pushed" ] && printf '%s\n' "$myhash" > "$pushedf.$peer"
 done
