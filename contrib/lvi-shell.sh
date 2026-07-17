@@ -2,8 +2,8 @@
 #
 # The inverse of the contrib pickers: instead of lvi running a tool that phones
 # home over the socket, YOUR SHELL is the tool. Source this file from your
-# shell's rc (zsh/bash/ksh -- it uses hyphenated function names and `local`,
-# so not strict POSIX sh):
+# shell's rc (zsh/bash/mksh -- it uses hyphenated function names and `local`,
+# so not strict POSIX sh, and not ksh93, which lacks `local`):
 #
 #     . /path/to/lvi/contrib/lvi-shell.sh
 #

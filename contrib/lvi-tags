@@ -8,11 +8,8 @@
 #
 # LIVE BUFFER, NOT A tags FILE: it tags the in-memory buffer, so it reflects
 # your unsaved, in-progress edits -- the whole point of driving a running
-# editor. There is no `tags` file and no `readtags`: we ctags the buffer's text
-# and read ctags' stdout directly (the standard tag format). ctags' own stdout
-# IS the query result here -- every tag comes from this one buffer by
-# construction, so there is nothing to filter and readtags (which indexes/queries
-# an on-disk `tags`) would be pure ceremony.
+# editor. There is no `tags` file: ctags' stdout is read directly (the
+# standard tag format; see contrib/README.md for why no readtags).
 #
 # GETTING THE BUFFER: two ways, and we can't just read `%p` on demand. A picker
 # needs the terminal, so this is bound with `:silent !` -- which FREEZES lvi's
@@ -21,6 +18,8 @@
 # the buffer to a file FIRST, with lvi's `:wbuf` (writes $LVI_BUFFER), then hands
 # us the tty:
 #     map \t :wbuf<CR>:silent !lvi-tags<CR>
+# Keep the :wbuf prefix in the map: without it, the picker tags whatever an
+# earlier :wbuf dumped -- a stale snapshot, possibly of a different buffer.
 # We read that file ($LVI_TAGS_DUMP overrides, else $LVI_BUFFER). Run from
 # ANOTHER terminal (`lvi-tags -w WID`), lvi is NOT frozen and $LVI_BUFFER is not
 # in our env, so we fall back to reading `%p` live over the socket.
@@ -52,7 +51,7 @@ CTAGS=${LVI_CTAGS:-ctags}
 
 die() { echo "lvi-tags: $*" >&2; exit 1; }
 
-want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2; }
 target=${want_wid:-${LVI_WID:-auto}}
 send() { $LVI -w "$target" --detach -- "$@"; }
 
@@ -60,7 +59,7 @@ send() { $LVI -w "$target" --detach -- "$@"; }
 # the name only to detect the language (via the temp file's basename below).
 file=${LVI_FILE:-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
 case "$file" in
-  ""|"[No File]"|"[No Name]") die "buffer has no file name (need it to detect the language)" ;;
+  ""|"["*"]") die "buffer has no file name (need it to detect the language)" ;;
 esac
 
 # Get the buffer's text into a temp file named like the buffer, so ctags detects
@@ -68,7 +67,14 @@ esac
 # snapshot the binding already dumped ($LVI_TAGS_DUMP, else $LVI_BUFFER from
 # :wbuf) -- reading %p while frozen under :silent ! would deadlock. With neither
 # (run externally with -w), lvi is live, so read %p over the socket.
-tmpd=$(mktemp -d) || die "mktemp failed"
+# The snapshot carries buffer text, so it lives beside the socket in lvi's
+# private per-uid dir when we can name it, not in shared /tmp.
+sockdir=${LVI_SOCK%/*}
+if [ ! -d "$sockdir" ]; then
+  s=$($LVI -l 2>/dev/null | sed -n 1p | cut -f2); sockdir=${s%/*}
+fi
+{ [ -n "$sockdir" ] && [ -d "$sockdir" ]; } || sockdir=${TMPDIR:-/tmp}
+tmpd=$(mktemp -d "$sockdir/lvi-tags.XXXXXX") || die "mktemp failed"
 trap 'rm -rf "$tmpd"' EXIT INT TERM
 tmpf="$tmpd/$(basename "$file")"
 dump=${LVI_TAGS_DUMP:-$LVI_BUFFER}

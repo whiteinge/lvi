@@ -43,6 +43,10 @@ while getopts s:b: opt; do
     *) echo "usage: lvi-incr [-s STEP] [-b BASE]" >&2; exit 2 ;;
   esac
 done
+shift $((OPTIND - 1))
+[ $# -eq 0 ] || { echo "lvi-incr: unexpected argument '$1' (usage: lvi-incr [-s STEP] [-b BASE])" >&2; exit 2; }
+case ${step#-} in ''|*[!0-9]*) echo "lvi-incr: STEP must be an integer" >&2; exit 2 ;; esac
+[ -z "$base" ] || case ${base#-} in ''|*[!0-9]*) echo "lvi-incr: BASE must be an integer" >&2; exit 2 ;; esac
 
 LC_ALL=C awk -v step="$step" -v base="$base" -v dbg="${LVI_INCR_DEBUG:-}" '
 {

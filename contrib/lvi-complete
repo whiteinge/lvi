@@ -67,9 +67,13 @@ words=$(tr -cs 'A-Za-z0-9_' '\n' \
 # chosen word is emitted with the token's leading prefix restored (see above).
 if [ -n "${LVI_COMPL_POPUP:-}" ] && [ -n "${TMUX:-}" ]; then
   # display-popup runs a separate command with its own tty, so hand the list in
-  # and take the selection out through temp files.
-  cf=$(mktemp) || exit 0; sf=$(mktemp) || { rm -f "$cf"; exit 0; }
-  tf=$(mktemp) || { rm -f "$cf" "$sf"; exit 0; }
+  # and take the selection out through temp files. The word list is derived
+  # from buffer text, so the files live beside the socket in lvi's private
+  # per-uid dir (the completion funnel always runs us inside lvi).
+  td=${LVI_SOCK%/*}; [ -d "$td" ] || td=${TMPDIR:-/tmp}
+  cf=$(mktemp "$td/lvi-compl.XXXXXX") || exit 0
+  sf=$(mktemp "$td/lvi-compl.XXXXXX") || { rm -f "$cf"; exit 0; }
+  tf=$(mktemp "$td/lvi-compl.XXXXXX") || { rm -f "$cf" "$sf"; exit 0; }
   printf '%s\n' "$words" > "$cf"; printf '%s' "$query" > "$tf"
   # display-popup runs its command in a fresh shell under the tmux SERVER, which
   # does NOT inherit the LVI_COMPL_* env lvi exported to us -- so the query
@@ -79,7 +83,9 @@ if [ -n "${LVI_COMPL_POPUP:-}" ] && [ -n "${TMUX:-}" ]; then
   sel=$(cat "$sf")
   rm -f "$cf" "$sf" "$tf"
 else
-  sel=$(printf '%s\n' "$words" | "$PICKER" -q "$query")
+  # $PICKER unquoted on purpose: LVI_PICKER may carry flags ('fzf --height 10'),
+  # the same contract as lvi-spell and the popup branch above.
+  sel=$(printf '%s\n' "$words" | $PICKER -q "$query")
 fi
 [ -n "$sel" ] || exit 0
 printf '%s%s\n' "$prefix" "$sel"

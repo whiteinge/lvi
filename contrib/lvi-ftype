@@ -53,6 +53,8 @@
 #
 # LVI overrides the client (default `lvi`).
 
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 fname=$LVI_FILE
 [ -n "$fname" ] || exit 0        # unnamed buffer: nothing to key off
