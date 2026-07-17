@@ -33,10 +33,16 @@
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 
-worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
-want_wid=; [ "$1" = "-w" ] && { want_wid=$2; shift 2; }
-icase=; [ "$1" = "-i" ] && { icase=1; shift; }
-pat=${1:-}
+worker= want_wid= icase= pat=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --worker) worker=1; shift ;;
+    -w) want_wid=${2:-}; [ -n "$want_wid" ] || { echo "lvi-search: -w needs auto|WID" >&2; exit 2; }; shift 2 ;;
+    -i) icase=1; shift ;;
+    --) pat=${2:-}; break ;;          # end of flags: what follows is the pattern
+    *)  pat=$1; break ;;
+  esac
+done
 target=${want_wid:-${LVI_WID:-auto}}
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 
@@ -51,7 +57,7 @@ fi
 # Detach the buffer-reading half; return at once so lvi's loop resumes and can
 # service the worker's socket traffic.
 if [ -z "$worker" ]; then
-  ( "$0" --worker $wflag ${icase:+-i} "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
+  ( "$0" --worker $wflag ${icase:+-i} -- "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
   exit 0
 fi
 
@@ -78,11 +84,18 @@ else
 fi
 
 matches=$($LVI -w "$target" -- '%p' | grep -n $iflag -- "$pat")
+rc=$?
 if [ -z "$matches" ]; then
-  $LVI -w "$target" --detach -- "hl search" "status search /$pat/ no match"
+  # Clear the paint (both groups -- the current-entry mark would otherwise stay
+  # on screen) and the stale counter; the notice itself is ephemeral, so :msge,
+  # not a status segment. grep exit 2 is a bad BRE, not an empty result.
+  notice="/$pat/ no match"; [ "$rc" -ge 2 ] && notice="bad pattern /$pat/"
+  $LVI -w "$target" --detach -- "hl search" "hl search-cur" "status search" "msge $notice"
   exit 0
 fi
-# search owns its look so it shows without a theme (see CLAUDE.md); rc may override.
+# search owns its look so it shows without a theme (see CLAUDE.md). It re-sends
+# this on every search, so an rc `hi search` gets overwritten -- restyle HERE
+# (or in a wrapper), not in the rc.
 # pri=10 lifts the mark above syntax highlighting (pri 0) so it shows through a
 # styled first column (e.g. a Markdown `1.` ordered-list marker).
 $LVI -w "$target" --detach -- "hi search reverse pri=10"
