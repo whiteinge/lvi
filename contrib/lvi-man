@@ -5,7 +5,7 @@
 # Wire it up (in your shell rc), then use `man` normally:
 #
 #     export MANPAGER=lvi-man
-#     export MANROFFOPT=-c      " groff emits plain overstrike col can clean up
+#     export MANROFFOPT=-c      # groff then emits plain overstrike, which col cleans up
 #
 # How it works: man pipes its formatted page to us on stdin. We strip the
 # backspace-overstrike bold/underline (col -bx -- lvi is not a terminal-escape

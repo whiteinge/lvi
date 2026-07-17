@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-reflow [-w WIDTH] [WIDTH] -- reflow ASCII lists as a stdin->stdout filter.
+# lvi-reflow [-w WIDTH] [WIDTH] -- reflow plain-text lists, stdin->stdout.
 #
 # The one piece of vim's `formatoptions`/`formatlistpat` machinery that has no
 # faithful CLI equivalent: rewrap a bulleted/numbered list and keep each item's
@@ -50,12 +50,18 @@ while [ $# -gt 0 ]; do
 done
 case $width in ''|*[!0-9]*) echo "lvi-reflow: width must be a positive integer" >&2; exit 2 ;; esac
 
-exec awk -v width="$width" -v tab="$tab" '
+# The two multibyte bullets (en-dash U+2013, bullet U+2022) are minted with the
+# SHELL's printf (octal escapes are POSIX there) and passed in via -v: awk `\x`
+# string escapes are undefined by POSIX and gawk/mawk already disagree on them,
+# and sprintf("%c", n) yields a code point, not a byte, under gawk in a UTF-8
+# locale.
+exec awk -v width="$width" -v tab="$tab" \
+  -v endash="$(printf '\342\200\223')" -v bullet="$(printf '\342\200\242')" '
 # One ERE for a list marker, anchored at start: (ordered|bullet) + trailing ws.
 # The ordered branch is optional-open-bracket, then digits / roman / one letter,
 # then one of ] : . ) } -- the closing set leads with ] so it is a literal.
 BEGIN {
-  MARKER = "^[ \t]*(([[({]?([0-9]+|[iIvVxXlLcCdDmM]+|[a-zA-Z])[]:.)}])|([-+o*]|\xe2\x80\x93|\xe2\x80\xa2))[ \t]+"
+  MARKER = "^[ \t]*(([[({]?([0-9]+|[iIvVxXlLcCdDmM]+|[a-zA-Z])[]:.)}])|([-+o*]|" endash "|" bullet "))[ \t]+"
 }
 
 # Display columns of s, counting a tab as advancing to the next multiple of tab.
