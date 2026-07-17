@@ -41,6 +41,8 @@
 # The directory hangs off $LVI_SOCK, so socket discovery (which filters `[ -S ]`)
 # skips it. LVI_YANKRING_DIR relocates it -- point several views at one path for
 # a shared ring (the cursor rides along, so they share the cycle position too).
+# Sharing is best-effort, not synchronized: two views yanking in the same
+# instant can race the counter and one entry wins.
 #
 # SPAWN DISCIPLINE. `push`/`get` are register backends: lvi runs them inline
 # (yank/put are synchronous) with $LVI_* exported, so they only touch files --
@@ -123,15 +125,18 @@ case "$sub" in
 
   cycle)
     total=$(count); [ "$total" -gt 0 ] || exit 0
-    seq=$(getseq); c=$(getcur)
+    seq=$(getseq); was=$(getcur); c=$was
     case "${1:-}" in
       prev) c=$((c + 1)) ;;                               # older
       next) c=$((c - 1)) ;;                               # newer
       *)    die "cycle needs prev|next" ;;
     esac
     [ "$c" -lt 0 ] && c=0; [ "$c" -ge "$total" ] && c=$((total - 1))
+    [ "$c" -eq "$was" ] && exit 0                         # at the ring's edge: re-putting the same entry would only grow the undo log
     setcur "$c"
-    send "normal u\"${REG}p" ;;                           # undo the paste, put the stepped entry
+    # Undo the paste, put the stepped entry; `fire` so change-hook consumers
+    # (live highlighting) see the re-put text -- socket edits don't arm them.
+    send "normal u\"${REG}p" fire ;;
 
   pick)
     total=$(count); [ "$total" -gt 0 ] || die "yankring empty"
@@ -145,7 +150,7 @@ case "$sub" in
     i=${sel%%:*}
     case "$i" in ''|*[!0-9]*) exit 0 ;; esac
     setcur "$i"
-    send "normal \"${REG}p" ;;                            # fresh paste of the chosen entry (no undo)
+    send "normal \"${REG}p" fire ;;                       # fresh paste of the chosen entry (no undo); fire: see cycle
 
   list)
     total=$(count); seq=$(getseq); i=0
