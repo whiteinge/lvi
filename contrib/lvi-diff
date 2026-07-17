@@ -72,10 +72,14 @@
 #    folds/unfolds the unchanged regions.)
 #
 # SUGGESTED BINDING (~/.lvirc, or run by hand). Launch it once per diff session.
-# Theme the groups to taste (it sets readable defaults; LVI_DIFF_NOSTYLE=1 skips):
-#     hi DiffChange bg=yellow fg=black
-#     hi DiffDelete bg=red    fg=black
-#     hi DiffAdd    bg=green  fg=black
+# Theme the groups to taste (it sets readable defaults; LVI_DIFF_NOSTYLE=1
+# skips). Keep the pri= -- overlay overlaps resolve per cell by group priority,
+# and at the default 0 the diff bands TIE with a syntax highlighter's groups
+# (lvi-highlight), so each token flips arbitrarily between the two and the
+# hunk shows as patches. pri lifts the whole band above them:
+#     hi DiffChange bg=yellow fg=black pri=20
+#     hi DiffDelete bg=red    fg=black pri=20
+#     hi DiffAdd    bg=green  fg=black pri=20
 #
 # Config (env): LVI (client, default `lvi`); LVI_DIFF_MAXBYTES (skip a buffer
 # larger than this; default 4194304 = 4 MiB -- over it, both views show a
@@ -513,9 +517,12 @@ rm -f "$(flagfile "$A" "$B")"       # start clean; LVI_DIFF_FOLD opts into foldi
 [ -n "$LVI_DIFF_FOLD" ] && : > "$(flagfile "$A" "$B")"
 build "$A" "$B" || exit 0           # first diff + caches + highlights + folds (bails if over cap)
 
+# pri=20 pins the diff bands above a syntax highlighter's groups: overlaps
+# resolve per cell by priority, and a tie (both default 0) breaks arbitrarily,
+# leaving each syntax token to puncture the band -- a hunk in patches.
 if [ -z "$LVI_DIFF_NOSTYLE" ]; then
-  "$LVI" -w "$A" -- 'hi DiffChange bg=yellow fg=black' 'hi DiffDelete bg=red fg=black' >/dev/null 2>&1
-  "$LVI" -w "$B" -- 'hi DiffChange bg=yellow fg=black' 'hi DiffAdd bg=green fg=black'  >/dev/null 2>&1
+  "$LVI" -w "$A" -- 'hi DiffChange bg=yellow fg=black pri=20' 'hi DiffDelete bg=red fg=black pri=20' >/dev/null 2>&1
+  "$LVI" -w "$B" -- 'hi DiffChange bg=yellow fg=black pri=20' 'hi DiffAdd bg=green fg=black pri=20'  >/dev/null 2>&1
 fi
 
 # Wire both views, then exit. ]c/[c (hunk nav) and -- unless NOMAP -- \dp/\do (move)
