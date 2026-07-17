@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 luajit lvi <file>              # launch the editor (interactive; needs a tty)
-luajit lvi -l                  # list running views:  <wid>\t<socket-path>
+luajit lvi -l                  # list running views:  <wid>\t<socket-path>\t<file>
 luajit lvi -w <wid> -- <cmds>  # send ex commands to a running view; -w auto = sole view
 luajit test/buffer_test.lua    # run one test file
 make test                      # run all tests (auto-discovers test/*_test.lua)

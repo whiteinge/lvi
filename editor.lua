@@ -269,6 +269,16 @@ function M.note_keyboard_change(ed, prev_buf, prev_rev)
   end
 end
 
+-- Write the `<socket>.file` sidecar: the path (or display name) of the buffer
+-- this view is editing, for `lvi -l`'s file column. Best-effort -- a failed
+-- write just leaves the column stale/empty -- and reaped with every other
+-- sidecar (path.reap_sidecars).
+function M.note_file(ed)
+  if not ed.sock_path then return end
+  local f = io.open(ed.sock_path .. ".file", "w")
+  if f then f:write(ed.buf.path or ed.buf.name or ""); f:close() end
+end
+
 -- Fire every hook registered for an event, each detached. `buf` (optional)
 -- overrides the buffer reported in the context env vars (for bufdelete). The
 -- generic firer behind both the idle `change` hook and the buffer events; bufs
@@ -648,7 +658,14 @@ function M.run(opts)
   -- events. Doing it here keeps startup buffer construction (and rc-time :e)
   -- silent; from now on every switch fires bufleave/bufenter through bufs. One
   -- initial bufenter lets lists paint the starting buffer.
-  ed.fire_event = function(event, buf) M.fire(ed, event, buf) end
+  ed.fire_event = function(event, buf)
+    -- Keep the `<socket>.file` sidecar naming the current buffer's file, so
+    -- `lvi -l`'s third column comes from an offline directory read -- never a
+    -- per-view socket round-trip that a hung view could stall. bufenter is
+    -- exactly "the current buffer changed" (including the initial one below).
+    if event == "bufenter" then M.note_file(ed) end
+    M.fire(ed, event, buf)
+  end
   ed.fire_event("bufenter")
   -- One-shot startup event: the view is fully live (socket up, rc loaded). Fired
   -- once here, before the poll loop, like the initial bufenter above -- a hook's
@@ -862,6 +879,12 @@ function M.run(opts)
         sys.write(1, pre .. render.frame(ed))
       end
     end
+    -- Clean shutdown (never the crash path): the view is about to tear down,
+    -- so the analog of vim's VimLeave -- the moment for a tool to save state
+    -- (lvi-pos's final position) or reap its own sidecars. Hooks are spawned
+    -- detached and outlive us, but the socket closes right after cleanup(), so
+    -- an exit hook must read $LVI_* and the disk, not call back over the socket.
+    ed.fire_event("exit")
   end)
 
   cleanup()

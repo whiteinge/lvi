@@ -26,7 +26,16 @@ local a = parser:parse()
 
 if a.list then
   local path = require("path")
-  for _, v in ipairs(path.list_sockets()) do print(v.wid .. "\t" .. v.path) end
+  for _, v in ipairs(path.list_sockets()) do
+    -- Third column: the file the view is editing, from the `.file` sidecar the
+    -- editor maintains (offline read -- no socket round-trip a hung view could
+    -- stall). Empty when the sidecar is missing (an older lvi) or the buffer
+    -- is pathless. Additive: cut -f1/-f2 consumers are unaffected.
+    local f = io.open(v.path .. ".file", "r")
+    local name = f and (f:read("*a") or "") or ""
+    if f then f:close() end
+    print(v.wid .. "\t" .. v.path .. "\t" .. name)
+  end
   os.exit(0)
 end
 

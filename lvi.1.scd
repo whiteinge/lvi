@@ -46,7 +46,10 @@ CONTROL SOCKET*).
 	the single-threaded loop.
 
 *-l*, *--list*
-	List running views as _wid_<TAB>_socket-path_, one per line, and exit.
+	List running views as _wid_<TAB>_socket-path_<TAB>_file_, one per line, and
+	exit. _file_ is what that view is editing (empty for a pathless buffer),
+	read from a sidecar the editor maintains -- no per-view round-trip that a
+	hung view could stall.
 
 *-q*, *--quickfix* _errorfile_
 	Editor mode: export _errorfile_ as *LVI_QUICKFIX* and fire the *ready* event
@@ -205,6 +208,9 @@ registers, as in vi: a whole-line or multi-line delete shifts the numbered stack
 *"1* to *"9* down one and lands in *"1* (so *"1* is the most recent, *"2* the one
 before it); a delete of less than a line goes to the small-delete register *"-*.
 Naming a register (*"a*) leaves both untouched, and yanks never touch them.
+*"\_* is the black-hole: text deleted or yanked into it goes nowhere -- no named
+register, no unnamed mirror, no numbered stack, no clipboard backend (the ex
+spelling is *d \_*, see below).
 
 A register may instead be backed by shell commands with *register* (below): a
 yank or delete into it pipes the text out and a put reads fresh in. Backing *+*
@@ -351,9 +357,11 @@ expansion must yield exactly one name; the reprint is one word per line
 (*printf '%s\\n'* rather than the spec's *echo*, whose XSI backslash handling
 would mangle names), so quoting protects whitespace -- *:w "foo bar.txt"*
 works. And it is the shell: *:w $(cmd)* executes _cmd_ -- the same power *!*
-already grants, but a script splicing picked names into a command line must
-backslash-escape the metacharacters (as _contrib/lvi-open_ and
-_contrib/lvi-shell.sh_ do).
+already grants. A script splicing a picked or stored name into a command line
+skips all of this with the literal spelling *-- *_name_: the rest of the
+argument is taken verbatim, no expansion (*:e -- foo $bar.txt* opens exactly
+that file). Without it the script must backslash-escape every metacharacter,
+spaces and tabs included.
 
 *w*[*!*] [_file_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but
@@ -460,6 +468,12 @@ _contrib/lvi-shell.sh_ do).
 
 *u*, *redo*
 	Undo, redo.
+
+*undojoin*
+	Join the next change with the last undo group, as in vim: the following
+	command's edits revert together with it under one *u*. One-shot; a socket
+	tool interleaves it between commands so a multi-command edit (a hunk move's
+	delete + read) is one user-level change. Declined right after an undo.
 
 *set* _option_...
 	Set editor options. A boolean toggles with a *!* suffix and reports with a
@@ -568,7 +582,10 @@ _contrib/lvi-shell.sh_ do).
 	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
 	*contrib/lvi-list*), or *markset*/*markjump* (an uppercase mark *m*_A-Z_ was
 	set, or *`*_A-Z_ / *'*_A-Z_ jumped to, with the letter in *LVI_MARK* -- the
-	seam *contrib/lvi-gmark* uses for global, cross-file marks). *complete* is
+	seam *contrib/lvi-gmark* uses for global, cross-file marks), or *exit*
+	(a clean quit, the analog of vim's *VimLeave* -- the moment to save state
+	or reap sidecars; the socket is closing, so an exit hook reads *LVI_\** and
+	the disk rather than calling back). *complete* is
 	special: not auto-fired but run
 	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and is a single
 	completer that replaces on re-register instead of composing. Socket-driven
@@ -664,6 +681,11 @@ _contrib/lvi-shell.sh_ do).
 	_line_<TAB>_col_, or with arguments move it there (_col_ is a byte column,
 	clamped into the buffer, and unlike a motion it leaves no jumplist entry);
 	echo _text_; run _cmd_ suppressing its interactive prompt.
+
+*path*
+	The buffer's file path, machine-readable: exactly the path (the value hooks
+	see in *LVI_FILE*), empty for a pathless buffer. The script-side *f* --
+	tools should parse this, not *f*'s human wording.
 
 *msg* _text_, *msge* _text_
 	Write _text_ to this view's one-line message (status line, left half).

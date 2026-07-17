@@ -22,7 +22,7 @@ local M = {}
 local EVENTS = { change = true, write = true, ready = true,
                  bufenter = true, bufleave = true, bufdelete = true,
                  complete = true, scroll = true,
-                 markset = true, markjump = true }
+                 markset = true, markjump = true, exit = true }
 
 -- Command-line history. The ':' prompt (Ctrl-P/N) and the :cmdwin buffer both
 -- append here via record_history and read ed.cmdhist directly. A rolling recent
@@ -57,6 +57,11 @@ end
 -- line commands (:d) and normal.lua's operators so a yank/delete means the same
 -- thing on every surface -- normal.lua binds its `set_reg` to this.
 function M.set_reg(ed, name, text, linewise)
+  -- `_` is the black-hole (vim's "_): the text goes nowhere -- not the named
+  -- register, not the unnamed mirror, not a clipboard backend. Handled here so
+  -- one check covers every surface: :d _, and normal-mode "_d / "_y / "_c
+  -- (the `"` prefix accepts any character).
+  if name == "_" then return end
   local r = { text = text, linewise = linewise }
   if name then ed.regs[name] = r; reg_pipe(ed, name, text) end
   ed.regs['"'] = r
@@ -380,6 +385,12 @@ end
 -- Empty arg -> nil, no error (callers fall back to the buffer's own path).
 local function expand_file(ed, s)
   if s == "" then return nil end
+  -- `-- NAME` takes the rest of the argument literally, no expansion -- the
+  -- spelling for a script splicing an arbitrary picked/stored name into a file
+  -- command, which otherwise must backslash-escape every metacharacter (and
+  -- keep its escape class in lockstep with the pattern below).
+  local lit = s:match("^%-%- (.*)$")
+  if lit then return lit ~= "" and lit or nil end
   if not s:find("[~{%[%*%?%$\"'`\\]") then return s end
   local out, code, err = run_capture(ed, "printf '%s\\n' " .. s)
   if code ~= 0 then return nil, "expansion failed: " .. fail_reason(err, code) end
@@ -726,9 +737,7 @@ end)
 def("d delete", function(ed, c)
   local from, to = line_range(ed, c.a, c.b)
   local reg = c.args:match("^([%a_])%s*$")        -- optional single-letter buffer
-  if reg ~= "_" then
-    M.set_del_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
-  end
+  M.set_del_reg(ed, reg, table.concat(ed.buf:get(from, to), "\n") .. "\n", true)
   ed.buf:delete(from, to)
   ed.cy = clampline(ed, from)
   ed.cx = 1
@@ -744,6 +753,23 @@ def("f file", function(ed)
   -- Match the status line (render): a pathless buffer reports its display name
   -- ([stdin], [Command Line], ...) if it has one, else the generic label.
   return ('"%s" %d lines'):format(ed.buf.path or ed.buf.name or "[No File]", ed.buf:nlines()), "ok"
+end)
+
+-- :path -- the buffer's file path, machine-readable: exactly the path (as
+-- opened; the same value hooks see in $LVI_FILE), empty for a pathless buffer
+-- ([stdin], scratch, ...). The script-side :f -- tools were parsing :f's human
+-- format with sed, which breaks silently if that wording ever shifts.
+def("path", function(ed)
+  return ed.buf.path or "", "ok"
+end)
+
+-- :undojoin -- join the NEXT change with the last undo group (vim's :undojoin).
+-- The seam a socket tool interleaves between its commands so a multi-command
+-- edit (lvi-diff's delete+read hunk move, lvi-mirror's hunk stream) reverts
+-- with ONE `u` instead of one per command.
+def("undojoin", function(ed)
+  ed.buf:undojoin()
+  return "", "ok"
 end)
 
 def("u undo", function(ed)

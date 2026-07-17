@@ -142,6 +142,15 @@ local function record(self, inv)
       u.group = { id = u.seq } -- new user change: fresh id, becomes current state
       u.now = u.seq
       u.undone = {}            -- a new edit invalidates redo
+    elseif u.group.joined then
+      -- First edit landing in a group :undojoin re-opened: the joined result
+      -- is a new state, so renumber -- a write between the group's original
+      -- close and the join must leave the buffer reading as modified.
+      u.group.joined = nil
+      u.seq = u.seq + 1
+      u.group.id = u.seq
+      u.now = u.seq
+      u.undone = {}
     end
     u.group[#u.group + 1] = inv
   end
@@ -213,8 +222,28 @@ end
 -- boundaries so one undo reverts one user-level change.
 function Buffer:undo_checkpoint()
   local u = self._undo
+  if u.join then u.join = nil; return end       -- :undojoin ate this boundary
   if u.group and #u.group > 0 then u.done[#u.done + 1] = u.group end
   u.group = nil
+end
+
+-- Join the NEXT change with the last undo group (vim's :undojoin). Re-opens
+-- the last closed group (the caller's own boundary checkpoint has usually just
+-- closed it) and suppresses the next checkpoint, so a socket tool can
+-- interleave `undojoin` between commands and the whole sequence reverts as one
+-- user-level change. One-shot; undo/redo cancel a pending join, and a join
+-- right after an undo is declined (it would corrupt the redo stack -- vim
+-- errors there). The re-opened group is marked `joined` so record() can stamp
+-- the buffer as a NEW state when an edit actually lands -- not here, or a bare
+-- :undojoin with nothing after it would spuriously dirty the buffer.
+function Buffer:undojoin()
+  local u = self._undo
+  if #u.undone > 0 then return end
+  if not u.group or #u.group == 0 then
+    local g = table.remove(u.done)
+    if g then g.joined = true; u.group = g end
+  end
+  u.join = true
 end
 
 -- Byte column (1-based) at which strings a and b first diverge -- i.e. where the
@@ -249,6 +278,7 @@ end
 -- nil if none.
 function Buffer:undo()
   local u = self._undo
+  u.join = nil
   self:undo_checkpoint()
   local g = table.remove(u.done)
   if not g then return nil end
@@ -266,6 +296,7 @@ end
 -- nil if none.
 function Buffer:redo()
   local u = self._undo
+  u.join = nil
   local g = table.remove(u.undone)
   if not g then return nil end
   u.sink = {}
