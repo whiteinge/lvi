@@ -1406,6 +1406,33 @@ def("normal norm", function(ed, c)
   return "", "ok"
 end)
 
+-- :source [FILE] (POSIX :so) -- run FILE as a file of ex commands, through the
+-- same loop the startup rc uses (config.run): '"' comments and blank lines
+-- skipped, a failing line collected and reported but not fatal to the rest.
+-- Bare :source loads the rc auto-discovery locations ($XDG_CONFIG_HOME/lvi/
+-- lvirc, then ~/.lvirc) IGNORING $LVIRC: the caller is usually an alternate rc
+-- that $LVIRC itself names (contrib/lvirc-man pulling the user's maps in
+-- before overriding for the pager), so honoring the override would source the
+-- file into itself -- and finding no rc is then a quiet no-op, not an error
+-- (having no personal config is a fine state to pull in). The depth cap
+-- breaks mutual includes. require() runs late: config requires ex, so a
+-- top-level require here would be a cycle.
+def("source so", function(ed, c)
+  local config = require("config")
+  local p, xerr = expand_file(ed, c.args)
+  if xerr then return xerr, "err" end
+  if not p then p = config.user_rc_path(); if not p then return "", "ok" end end
+  if (ed.source_depth or 0) >= 8 then
+    return "source nested too deeply: " .. p, "err"
+  end
+  ed.source_depth = (ed.source_depth or 0) + 1
+  local errs = config.run(ed, p)
+  ed.source_depth = ed.source_depth - 1
+  if not errs then return "cannot open " .. p, "err" end
+  if #errs > 0 then return config.summary(p, errs), "err" end
+  return "", "ok"
+end)
+
 -- :sysex EX-LINE -- hand a line to the system ex VERBATIM, bypassing lvi's
 -- command table above. The pin for scripts that need ex's semantics for a
 -- name lvi also owns (lvi's :d, :u, ... shadow ex's), and insurance against

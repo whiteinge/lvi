@@ -54,6 +54,14 @@ function M.rc_path()
     if override == "" or override == "NONE" then return nil end
     return override
   end
+  return M.user_rc_path()
+end
+
+-- The auto-discovery half alone, IGNORING $LVIRC -- what a bare :source loads.
+-- The caller there is usually an alternate rc that $LVIRC itself names (e.g.
+-- contrib/lvirc-man pulling the user's own config in before overriding it for
+-- the pager), so honoring the override would source the file into itself.
+function M.user_rc_path()
   local home = os.getenv("HOME")
   local xdg = os.getenv("XDG_CONFIG_HOME")
   if (not xdg or xdg == "") and home then xdg = home .. "/.config" end
@@ -61,16 +69,15 @@ function M.rc_path()
       or readable(home and (home .. "/.lvirc"))
 end
 
--- Load and run the rc file (if any) through ex.dispatch. Blank lines and '"'
--- comments (whole-line or trailing; see strip_comment) are skipped. A failing
--- command does NOT abort the rest; instead
--- it is collected. Returns the path loaded (or nil if none) and a list of
--- { lnum = N, line = "...", err = "..." } for the caller to surface.
-function M.load(ed)
-  local path = M.rc_path()
-  if not path then return nil, {} end
+-- Run a file of ex commands through ex.dispatch -- the one loop behind both
+-- the startup rc and :source. Blank lines and '"' comments (whole-line or
+-- trailing; see strip_comment) are skipped. A failing command does NOT abort
+-- the rest; it is collected. Returns a list of { lnum = N, line = "...",
+-- err = "..." } for the caller to surface, or nil when the file cannot be
+-- opened.
+function M.run(ed, path)
   local f = io.open(path, "r")
-  if not f then return path, { { lnum = 0, err = "cannot open " .. path } } end
+  if not f then return nil end
   local errs, lnum = {}, 0
   for line in f:lines() do
     lnum = lnum + 1
@@ -83,6 +90,29 @@ function M.load(ed)
     end
   end
   f:close()
+  return errs
+end
+
+-- One-line failure report for a run's error list: the first few in full --
+-- the first is usually the root cause (later ones often cascade from it) --
+-- then a count. Shared by the startup banner and :source's payload.
+function M.summary(path, errs)
+  local parts = {}
+  for i = 1, math.min(#errs, 3) do
+    parts[#parts + 1] = ("line %d: %s"):format(errs[i].lnum, errs[i].err)
+  end
+  if #errs > 3 then parts[#parts + 1] = ("+%d more"):format(#errs - 3) end
+  return ("%s: %d error%s -- %s"):format(
+    path, #errs, #errs > 1 and "s" or "", table.concat(parts, "; "))
+end
+
+-- Load and run the rc file (if any). Returns the path loaded (or nil if none)
+-- and M.run's error list.
+function M.load(ed)
+  local path = M.rc_path()
+  if not path then return nil, {} end
+  local errs = M.run(ed, path)
+  if not errs then return path, { { lnum = 0, err = "cannot open " .. path } } end
   return path, errs
 end
 

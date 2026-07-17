@@ -704,6 +704,16 @@ spaces and tabs included.
 	*hi Error ...*); plain if unthemed. Newlines collapse; the message clears on
 	the next normal-mode key.
 
+*source* [_file_], *so* [_file_]
+	Run _file_ as a file of ex commands -- the same loop, comment rules, and
+	error handling as the rc (see *CONFIGURATION*); a failing line is reported
+	but does not stop the rest. With no _file_, load the rc auto-discovery
+	locations (*$XDG_CONFIG_HOME/lvi/lvirc*, then _~/.lvirc_) ignoring *$LVIRC*:
+	an alternate rc named by *$LVIRC* (e.g. _contrib/lvirc-man_) uses a bare
+	*source* to pull the user's own config in before overriding parts of it,
+	and honoring the override there would source the file into itself. Finding
+	no rc is a quiet no-op. Nesting is capped to break mutual includes.
+
 *sysex* _ex-line_
 	Hand _ex-line_ to the system *ex*(1) verbatim, bypassing lvi's own command
 	table -- the pin for scripts that need ex's semantics for a name lvi also
@@ -888,7 +898,11 @@ exists is used:
 So *map* and *set* persist by putting them in the rc file; a color theme is a set
 of *hi* lines, live syntax highlighting is one *on change* line, and the system
 clipboard is one *register* line (e.g. *register + read wl-paste write wl-copy*).
-See *contrib/README.md* and *contrib/lvirc.sample.vim*.
+See *contrib/README.md* and *contrib/lvirc.sample.vim*. An rc can pull in
+another file of ex commands with *source* -- and an alternate rc set via
+*$LVIRC* can start with a bare *source* to layer itself over your normal
+config rather than replace it (how _contrib/lvirc-man_ keeps your maps in the
+manpage viewer).
 
 # TURNING ON THE IDE
 

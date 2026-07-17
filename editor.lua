@@ -77,6 +77,7 @@ function M.new_ed()
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
     event_mark = false,       -- transient: the A-Z char while a markset/markjump hook fires (-> $LVI_MARK)
     event_name = false,       -- transient: the event name while a hook fires (-> $LVI_EVENT)
+    source_depth = 0,         -- :source nesting, capped to break mutual includes
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
@@ -655,15 +656,7 @@ function M.run(opts)
     local rc, errs = config.load(ed)
     if #ed.inject > 0 then pump(ed) end          -- config may queue :normal keys
     if #errs > 0 then
-      -- Report the first few failures, not just a count with the last one --
-      -- the first is usually the root cause (later ones often cascade from it).
-      local parts = {}
-      for i = 1, math.min(#errs, 3) do
-        parts[#parts + 1] = ("line %d: %s"):format(errs[i].lnum, errs[i].err)
-      end
-      if #errs > 3 then parts[#parts + 1] = ("+%d more"):format(#errs - 3) end
-      local msg = ("%s: %d error%s -- %s"):format(
-        rc, #errs, #errs > 1 and "s" or "", table.concat(parts, "; "))
+      local msg = config.summary(rc, errs)
       if tty then ed.message = msg else io.stderr:write("lvi: " .. msg .. "\n") end
     end
   end
