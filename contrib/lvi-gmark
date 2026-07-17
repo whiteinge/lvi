@@ -31,6 +31,9 @@
 #                e.g. `map \m :!lvi-gmark list<CR>`, or run from a shell).
 #   del MARK     forget MARK.
 #
+# MARK is an uppercase letter. Digits 0-9 are accepted too, as extra slots
+# reachable only from the CLI -- the editor's seam fires for letters alone.
+#
 # THE STORE is a tab-delimited text file, one line per mark, grep-able and
 # hand-editable:
 #     MARK<TAB>/abs/path<TAB>LINE<TAB>COL
@@ -64,8 +67,9 @@ case "$sub" in
 set)
   mark=${1:-$LVI_MARK}
   case "$mark" in [A-Z0-9]) ;; *) echo "lvi-gmark: MARK must be one of A-Z 0-9" >&2; exit 2 ;; esac
-  file=$LVI_FILE
-  case "$file" in ""|"[No File]"|"[No Name]") exit 0 ;; esac    # unnamed buffer: nothing to key on
+  # From the env when the markset hook spawned us; a manual run asks the view.
+  file=${LVI_FILE-$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
+  case "$file" in ""|"["*"]") exit 0 ;; esac    # unnamed/pseudo buffer: nothing to key on
   file=$(abspath "$file")
   line=${LVI_LINE:-1}; col=${LVI_COL:-1}
   case "$line" in ''|*[!0-9]*) line=1 ;; esac
@@ -97,7 +101,10 @@ go)
   if [ "$file" = "$cur" ]; then
     send "pos $line $col"
   else
-    send "e \"$file\"" "pos $line $col"
+    # :e shell-expands metacharacters in a file argument, so the stored path
+    # must be backslash-escaped to land verbatim (the ex.lua splice rule).
+    esc=$(printf '%s\n' "$file" | sed 's/[~{[*?$"'\''`\\ 	]/\\&/g')
+    send "e $esc" "pos $line $col"
   fi
   ;;
 list)
