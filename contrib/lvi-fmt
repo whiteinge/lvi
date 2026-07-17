@@ -85,8 +85,7 @@ if [ "$nbytes" -gt "$MAXBYTES" ]; then
   echo "lvi-fmt: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_FMT_MAXBYTES)" >&2
   exit 0
 fi
-fname=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$fname" in "["*"]") fname= ;; esac    # [No File], [stdin], ... -- pathless
+fname=${LVI_FILE:-$("$LVI" -w "$target" -- path)}
 
 # Pick the formatter: $LVI_FMT_CMD wins; else by extension. Each table entry
 # reads stdin, writes stdout, and hands the tool the REAL name for config

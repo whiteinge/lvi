@@ -86,10 +86,8 @@ nbytes=$(printf '%s' "$text" | wc -c)
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
   die "${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)"
 fi
-fname=$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
-case "$fname" in ""|"["*"]")
-  die "current buffer has no file (backends key off the name)" ;;
-esac
+fname=$("$LVI" -w "$target" -- path)
+[ -n "$fname" ] || die "current buffer has no file (backends key off the name)"
 
 backend=$LVI_LINT_BACKEND
 if [ -z "$backend" ]; then

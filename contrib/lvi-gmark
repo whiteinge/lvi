@@ -68,8 +68,8 @@ set)
   mark=${1:-$LVI_MARK}
   case "$mark" in [A-Z0-9]) ;; *) echo "lvi-gmark: MARK must be one of A-Z 0-9" >&2; exit 2 ;; esac
   # From the env when the markset hook spawned us; a manual run asks the view.
-  file=${LVI_FILE-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-  case "$file" in ""|"["*"]") exit 0 ;; esac    # unnamed/pseudo buffer: nothing to key on
+  file=${LVI_FILE-$("$LVI" -w "$target" -- path)}
+  [ -n "$file" ] || exit 0                      # pathless buffer: nothing to key on
   file=$(abspath "$file")
   line=${LVI_LINE:-1}; col=${LVI_COL:-1}
   case "$line" in ''|*[!0-9]*) line=1 ;; esac
@@ -101,10 +101,9 @@ go)
   if [ "$file" = "$cur" ]; then
     send "pos $line $col"
   else
-    # :e shell-expands metacharacters in a file argument, so the stored path
-    # must be backslash-escaped to land verbatim (the ex.lua splice rule).
-    esc=$(printf '%s\n' "$file" | sed 's/[~{[*?$"'\''`\\ 	]/\\&/g')
-    send "e $esc" "pos $line $col"
+    # `e -- NAME` takes the stored path literally -- no shell expansion, so
+    # nothing to escape.
+    send "e -- $file" "pos $line $col"
   fi
   ;;
 list)

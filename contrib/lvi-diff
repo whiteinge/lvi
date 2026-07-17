@@ -88,8 +88,7 @@
 # LIMITS (by design): two-way only, no directories, no filler lines. Setting a
 # view's `:top` parks its cursor at the top line, so the follower pane's cursor
 # jumps to its top as you scroll the other -- fine for reading, surprising if you
-# then edit the pane you weren't driving. A change-hunk move is two undo steps on
-# the destination.
+# then edit the pane you weren't driving.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -344,7 +343,10 @@ xfer() {
   pc=$(posafter "$dstw" "$ds" "$de" "$ss" "$se")
   set --
   [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d _"
-  [ "$ss" -le "$se" ] && set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$srcf'"
+  if [ "$ss" -le "$se" ]; then
+    [ $# -gt 0 ] && set -- "$@" undojoin       # delete + read revert as ONE u
+    set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$srcf'"
+  fi
   [ $# -gt 0 ] && "$LVI" -w "$dstw" -- "$@" ${pc:+"$pc"} fire
 }
 
@@ -396,7 +398,10 @@ xferrange() {
   pc=$(posafter "$peer" "$ds" "$de" "$ss" "$se")
   set --
   [ "$ds" -le "$de" ] && set -- "$@" "${ds},${de}d _"
-  [ "$ss" -le "$se" ] && set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$sf'"
+  if [ "$ss" -le "$se" ]; then
+    [ $# -gt 0 ] && set -- "$@" undojoin       # delete + read revert as ONE u
+    set -- "$@" "$((ds-1)) r !sed -n '${ss},${se}p' '$sf'"
+  fi
   [ $# -gt 0 ] && "$LVI" -w "$peer" -- "$@" ${pc:+"$pc"} fire
 }
 
@@ -468,13 +473,15 @@ if [ -f "$1" ] && [ -f "$2" ]; then
   awin=$(tmux new-window -P -F '#{window_id}' "${LVI} '$qa'; printf %s \"\$?\" > '$codef'") || exit 1
   tmux split-window -h -d -t "$awin" "exec ${LVI} '$qb'"
   # Wire the diff once both views register (just calls our own wid mode).
+  # `lvi -l`'s file column names each view's file, so one call scans them all.
   i=0; while [ $i -lt 50 ]; do
     wa=""; wb=""
-    for w in $("$LVI" -l 2>/dev/null | cut -f1); do
-      f=$("$LVI" -w "$w" -- f 2>/dev/null | sed -n 's/^"\(.*\)" .*/\1/p')
+    while IFS='	' read -r w _sock f; do
       [ "$f" = "$fa" ] && wa=$w
       [ "$f" = "$fb" ] && wb=$w
-    done
+    done <<EOF
+$("$LVI" -l 2>/dev/null)
+EOF
     [ -n "$wa" ] && [ -n "$wb" ] && { "$SELF" "$wa" "$wb"; break; }
     i=$((i + 1)); sleep 0.1
   done

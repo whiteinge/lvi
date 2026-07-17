@@ -133,8 +133,7 @@ fi
 
 # Live buffer + its filename (for language detection). Works on unsaved content.
 text=$("$LVI" -w "$wid" -- '%p') || { echo "lvi-highlight: cannot read view $wid" >&2; exit 1; }
-fname=$("$LVI" -w "$wid" -- 'f' | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
-case "$fname" in "["*"]") fname= ;; esac   # [No File], [stdin], ... -- pathless
+fname=$("$LVI" -w "$wid" -- path)          # empty for a pathless buffer
 
 # Size cap: skip a buffer too big to lex on every trigger. The notice is a
 # status segment (idempotent under repeated hook fires); the next successful

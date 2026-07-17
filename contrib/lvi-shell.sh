@@ -59,12 +59,11 @@ case $- in *i*)
   fi ;;
 esac
 
-# Absolutize and escape one path argument for splicing into an ex command.
-# Spaces/tabs are escaped along with the metacharacters: expansion word-splits,
-# and a name holding both would otherwise expand to several words.
+# Absolutize one path argument for splicing into an ex command, emitted in the
+# literal `-- NAME` spelling (no shell expansion, so nothing to escape).
 lvi__path() {
   case $1 in /*) ;; *) set -- "$PWD/$1" ;; esac
-  printf '%s\n' "$1" | sed 's/[~{[*?$"'\''`\\ 	]/\\&/g'
+  printf -- '-- %s\n' "$1"
 }
 
 # Send one ex command: queued-detached under the editor, live otherwise.

@@ -65,9 +65,9 @@
 #   * One human, several viewports: last-writer-per-settle wins. Two panes typing
 #     into the same region inside one 150ms window can lose an update -- there is
 #     no OT/CRDT here and there won't be.
-#   * Each hunk applies as its own socket command = its own undo step on the peer
-#     (a c-hunk is two), and undo (a keyboard act) itself mirrors back, so undo is
-#     quasi-global. Know this before leaning on it.
+#   * A settle's whole push is ONE undo step on the peer (`undojoin` threads the
+#     hunk commands together), and undo (a keyboard act) itself mirrors back, so
+#     undo is quasi-global. Know this before leaning on it.
 #   * `:wq`/`:x` fire write, but the pane is exiting -- its socket closes before
 #     this worker can read it back, so the FINAL save may not clear the peers'
 #     flags. A plain `:w` (pane stays open) propagates reliably; that's the norm.
@@ -92,14 +92,12 @@ wid=${1:-$LVI_WID}
 [ -n "$wid" ] || { echo "lvi-mirror: no WID (pass one or run from inside lvi)" >&2; exit 1; }
 command -v diff >/dev/null 2>&1 || { echo "lvi-mirror: diff not found on PATH" >&2; exit 1; }
 
-# Parse the filename out of `:f` ('"path" N lines'); empty for an unnamed buffer.
-parse_file() { sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; }
-
 # Canonicalize a path so two panes launched from different directories still
 # match. realpath -m tolerates a not-yet-saved file; without realpath we compare
-# raw (works when both panes used the same spelling). An unnamed buffer -> fail.
+# raw (works when both panes used the same spelling). Empty (a pathless buffer)
+# or a bracketed display name (as `lvi -l`'s file column shows for one) -> fail.
 canon() {
-  case "$1" in ''|'[No File]'|'[No Name]') return 1 ;; esac
+  case "$1" in ''|'['*']') return 1 ;; esac
   if command -v realpath >/dev/null 2>&1; then
     realpath -m -- "$1" 2>/dev/null || printf '%s\n' "$1"
   else
@@ -108,7 +106,7 @@ canon() {
 }
 
 # Our own file (env when spawned by lvi; else ask the view).
-myfile=${LVI_FILE:-$("$LVI" -w "$wid" -- f | parse_file)}
+myfile=${LVI_FILE:-$("$LVI" -w "$wid" -- path)}
 mycanon=$(canon "$myfile") || { echo "lvi-mirror: view $wid has no filename; nothing to mirror" >&2; exit 0; }
 mymod=$("$LVI" -w "$wid" -- 'set modified?' 2>/dev/null)   # modified|nomodified ('' if unsupported)
 
@@ -133,9 +131,11 @@ fi
 q=\'   # single-quote, to wrap the filename inside the awk-emitted commands
 
 # Fan out to every OTHER live view whose (canonicalized) file matches ours.
-"$LVI" -l | cut -f1 | while read -r peer; do
+# `lvi -l`'s third column carries each view's file, so the whole scan is one
+# call -- no per-peer socket round-trip just to ask.
+"$LVI" -l | while IFS='	' read -r peer _sock pfile; do
   [ -n "$peer" ] && [ "$peer" != "$wid" ] || continue
-  pcanon=$(canon "$("$LVI" -w "$peer" -- f | parse_file)") || continue
+  pcanon=$(canon "$pfile") || continue
   [ "$pcanon" = "$mycanon" ] || continue
 
   set --   # accumulate this peer's commands: content hunks, cursor, then flag
@@ -166,17 +166,20 @@ $(printf '%s\n' "$d" | awk -v newf="$newf" -v q="$q" '
       n++; OA[n]=oa; OB[n]=ob; OP[n]=op; NA[n]=na; NB[n]=nb
     }
     END {
+      # emit() threads `undojoin` between the commands, so the whole settle
+      # reverts as ONE undo step on the peer instead of one per hunk command.
       for (i = n; i >= 1; i--) {
         if (OP[i] == "d") {
-          printf "%s,%sd _\n", OA[i], OB[i]
+          emit(sprintf("%s,%sd _", OA[i], OB[i]))
         } else if (OP[i] == "a") {
-          printf "%s r !sed -n %s,%sp %s%s%s\n", OA[i], NA[i], NB[i], q, newf, q
+          emit(sprintf("%s r !sed -n %s,%sp %s%s%s", OA[i], NA[i], NB[i], q, newf, q))
         } else {                                   # change: delete then read new lines in
-          printf "%s,%sd _\n", OA[i], OB[i]
-          printf "%s r !sed -n %s,%sp %s%s%s\n", OA[i]-1, NA[i], NB[i], q, newf, q
+          emit(sprintf("%s,%sd _", OA[i], OB[i]))
+          emit(sprintf("%s r !sed -n %s,%sp %s%s%s", OA[i]-1, NA[i], NB[i], q, newf, q))
         }
       }
-    }')
+    }
+    function emit(s) { if (n_out++) print "undojoin"; print s }')
 EOF
 
   # Shift the saved cursor by the net line-delta of hunks strictly above it, so

@@ -21,9 +21,6 @@ PICKER=${LVI_PICKER:-fzf}
 
 files=$(git ls-files 2>/dev/null || find . -type f ! -path '*/.*' 2>/dev/null)
 sel=$(printf '%s\n' "$files" | "$PICKER") || exit 0
-# lvi shell-expands file arguments (POSIX ex semantics), so a picked name
-# containing a metacharacter ($, *, ~, ...) must be escaped to land verbatim.
-# Spaces and tabs too: expansion word-splits, and a name holding both a space
-# and a metachar would otherwise expand to several words and be rejected.
-sel=$(printf '%s\n' "$sel" | sed 's/[~{[*?$"'\''`\\ 	]/\\&/g')
-[ -n "$sel" ] && "$LVI" -w "$LVI_WID" --detach -- "e $sel"
+# `e -- NAME` takes the picked name literally -- no shell expansion, so a $ or
+# a space in it needs no escaping.
+[ -n "$sel" ] && "$LVI" -w "$LVI_WID" --detach -- "e -- $sel"

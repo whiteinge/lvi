@@ -346,7 +346,8 @@ map zI :bg lvi-fold indent<CR>         " (re)fold by indent
 " no tool -- the core sets it as you edit.)
 on change   lvi-pos save        " after an edit settles...
 on write    lvi-pos save        " ...on :w...
-on bufleave lvi-pos save        " ...and when you leave a buffer
+on bufleave lvi-pos save        " ...when you leave a buffer...
+on exit     lvi-pos save        " ...and the last buffer's spot, at :q
 on bufenter lvi-pos restore     " set `" on every file you open (no cursor move)
 on ready    lvi-pos restore     " ...same for the file(s) opened at startup
 " Prefer to land AT your old spot automatically? Add -j (jump) -- but only on

@@ -62,14 +62,12 @@ if [ -z "$worker" ]; then
 fi
 
 # --- worker ------------------------------------------------------------------
-# The buffer's filename (entries are file:line:text so cross-file tools share the
-# format). A pathless buffer -- unsaved, read from stdin, a scratch view -- shows
-# a bracketed pseudo-name ([No Name], [stdin], [Command Line], ...); blank it so
-# entries carry no file and lvi-list jumps stay put. Safe because lvi-search only
-# ever matches THIS buffer, so a match never needs a cross-file :e in the first
-# place -- and an :e of a pseudo-name would blank the buffer.
-file=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$file" in "["*"]") file= ;; esac
+# The buffer's filename (entries are file:line:text so cross-file tools share
+# the format). `path` is empty for a pathless buffer -- unsaved, stdin, scratch
+# -- so those entries carry no file and lvi-list jumps stay put. Safe because
+# lvi-search only ever matches THIS buffer, so a match never needs a
+# cross-file :e in the first place.
+file=${LVI_FILE:-$("$LVI" -w "$target" -- path)}
 
 # Resolve case policy: an explicit -i wins, else LVI_SEARCH_CASE decides (smart
 # looks for an uppercase letter in the pattern, so a locale-aware [[:upper:]]).

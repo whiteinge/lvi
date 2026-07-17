@@ -57,10 +57,8 @@ send() { "$LVI" -w "$target" --detach -- "$@"; }
 
 # The buffer's file: from the env when spawned by lvi (a map), else ask. We need
 # the name only to detect the language (via the temp file's basename below).
-file=${LVI_FILE:-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$file" in
-  ""|"["*"]") die "buffer has no file name (need it to detect the language)" ;;
-esac
+file=${LVI_FILE:-$("$LVI" -w "$target" -- path)}
+[ -n "$file" ] || die "buffer has no file name (need it to detect the language)"
 
 # Get the buffer's text into a temp file named like the buffer, so ctags detects
 # the language from the name (and the shebang/modeline in the content). Prefer a

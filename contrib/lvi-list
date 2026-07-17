@@ -128,21 +128,20 @@ span() {                                                    # print entry $2: he
 # Current file: from the env when we were spawned by lvi (a map/hook), else ask.
 curfile() {
   if [ -n "${LVI_FILE+x}" ]; then printf '%s\n' "$LVI_FILE"
-  else "$LVI" -w "$target" -- f 2>/dev/null | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p'; fi
+  else "$LVI" -w "$target" -- path 2>/dev/null; fi
 }
 
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
 # there. :pos is byte-exact -- the byte columns producers emit land where they
 # point, tabs and multibyte included -- and, like a bare line address, records
-# no jumplist entry. The filename is backslash-escaped for the :e splice (:e
-# shell-expands metacharacters in a file argument).
+# no jumplist entry. `e -- NAME` takes the entry's filename literally (no
+# shell expansion, nothing to escape).
 jump() {
   f=${1%%:*}; r=${1#*:}; ln=${r%%:*}; r=${r#*:}; c=${r%%:*}
   case "$c"  in ''|*[!0-9]*) c=1 ;; esac
   case "$ln" in ''|*[!0-9]*) return 0 ;; esac
   if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then
-    esc=$(printf '%s\n' "$f" | sed 's/[~{[*?$"'\''`\\ 	]/\\&/g')
-    send "e $esc" "pos $ln $c"
+    send "e -- $f" "pos $ln $c"
   else send "pos $ln $c"; fi
 }
 

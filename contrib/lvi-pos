@@ -8,7 +8,8 @@
 #
 #   save     record the current file's cursor position to the store. Bind to the
 #            moments a position is worth keeping: `on change` (after an edit
-#            settles), `on write`, `on bufleave` (leaving a buffer).
+#            settles), `on write`, `on bufleave` (leaving a buffer), `on exit`
+#            (the last buffer's spot at :q -- viminfo's write-out moment).
 #   restore  look the current file up in the store and set the `` `" `` mark at the
 #            spot WITHOUT moving the cursor -- you open the file fresh (at the top)
 #            but `` `" `` carries you to where you left off when you ask for it.
@@ -96,8 +97,8 @@ esac
 # be noisy). Absolutise so the key is stable across launch directories.
 # `-` not `:-`: a hook always exports LVI_FILE (empty for an unnamed buffer, which
 # we then skip); only a manual run from another terminal leaves it unset -> ask.
-file=${LVI_FILE-$("$LVI" -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')}
-case "$file" in ""|"["*"]") exit 0 ;; esac    # unnamed/pseudo buffer ([stdin], ...)
+file=${LVI_FILE-$("$LVI" -w "$target" -- path)}
+[ -n "$file" ] || exit 0                      # pathless buffer: nothing to key on
 case "$file" in /*) ;; *) file="$PWD/$file" ;; esac
 
 # Skip volatile files, the way viminfo skips gitcommit/gitrebase and temp edits:
