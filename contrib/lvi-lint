@@ -35,9 +35,14 @@
 #     hi lint bg=52 pri=10                 " un-themed = invisible, so theme it
 #     hi lint-cur bg=124 pri=11
 # The status counter doubles as the pass/fail glance: `lint [0/17]` means
-# findings, `lint [0/0]` after a run means clean. Failures that would make a
-# run meaningless -- linter not installed, no backend for the file, buffer over
-# the size cap -- land as a status-line error (:msge), never as a clean [0/0].
+# findings, `lint [0/0]` after a run means clean. A failure never fakes that
+# clean, but it speaks with two voices, split by how we were invoked: run BY
+# HAND, every failure lands as a status-line error (:msge). Under a HOOK
+# ($LVI_EVENT set), which re-fires on every settle of every buffer, a buffer
+# that was never lintable (no file name, no backend for its extension) is
+# skipped in silence, and configured-but-broken (linter not installed, no
+# adapter, over the size cap) posts a `lint [...]` status segment instead --
+# idempotent across re-fires, replaced by the next successful run's counter.
 #
 # It self-backgrounds a --worker like lvi-highlight: reading the buffer needs
 # lvi's event loop. Under `on write`/:bg the loop is live and the detach is
@@ -58,6 +63,22 @@ DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 die() {
   echo "lvi-lint: $*" >&2
   [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "msge lvi-lint: $*" 2>/dev/null
+  exit 1
+}
+
+# The two hook voices (see the header). skip: unconfigured -- silent under a
+# hook, die by hand. fail: configured but broken -- a `lint` status segment
+# under a hook (the same segment the counter uses, so the next successful put
+# clears it; re-posting the same text every settle repaints nothing), die by
+# hand. $LVI_EVENT is the split: lvi sets it in hook children only.
+skip() {
+  [ -n "${LVI_EVENT:-}" ] && exit 0
+  die "$*"
+}
+fail() {
+  [ -z "${LVI_EVENT:-}" ] && die "$*"
+  echo "lvi-lint: $*" >&2
+  [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "status lint [lvi-lint: $*]" 2>/dev/null
   exit 1
 }
 
@@ -86,7 +107,7 @@ fi
 # backend, no adapter) pulling the whole text over the socket each time is pure
 # churn -- every round-trip is an event the editor repaints after.
 fname=$("$LVI" -w "$target" -- path) || die "cannot read view $target"
-[ -n "$fname" ] || die "current buffer has no file (backends key off the name)"
+[ -n "$fname" ] || skip "current buffer has no file (backends key off the name)"
 
 backend=$LVI_LINT_BACKEND
 if [ -z "$backend" ]; then
@@ -94,16 +115,16 @@ if [ -z "$backend" ]; then
     *.py)        backend=ruff ;;
     *.sh|*.bash) backend=shellcheck ;;
     *.js|*.jsx|*.ts|*.tsx|*.mjs|*.mts) backend=deno ;;
-    *) die "no backend for '$fname' (set LVI_LINT_BACKEND, or extend the table)" ;;
+    *) skip "no backend for '$fname' (set LVI_LINT_BACKEND, or extend the table)" ;;
   esac
 fi
 adapter="$DIR/lvi-lint-$backend"
-[ -x "$adapter" ] || die "no adapter for backend '$backend' ($adapter)"
+[ -x "$adapter" ] || fail "no adapter for backend '$backend'"
 
 text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
 nbytes=$(printf '%s' "$text" | wc -c)
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
-  die "${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)"
+  fail "${nbytes}B over cap ${MAXBYTES}B (raise LVI_LINT_MAXBYTES)"
 fi
 
 # Adapter normalizes; put paints, counts, and (with --focus) aims n/N.
@@ -112,7 +133,7 @@ fi
 # list -- the clean [0/0]. Captured first, so an adapter that FAILS (its
 # missing-linter guard) is an error, not an ingest of empty input.
 entries=$(printf '%s\n' "$text" | "$adapter" "$fname") ||
-  die "backend '$backend' failed (is the linter installed?)"
+  fail "backend '$backend' failed (is the linter installed?)"
 if [ -n "$entries" ]; then
   printf '%s\n' "$entries" | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
 else

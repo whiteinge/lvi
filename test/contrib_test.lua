@@ -155,6 +155,27 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    it("lvi-lint --worker under a hook skips an unconfigured buffer in silence", function()
+      local d = stub({ buffer = "x\n", path = "x.zz\n" })   -- no backend for .zz
+      local _, ok = run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                          LVI_EVENT = "change" },
+        "contrib/lvi-lint --worker")
+      expect(ok).to.equal(true)
+      expect(read(d .. "/log")).to.equal("path\n")          -- looked, said nothing
+      cleanup(d)
+    end)
+
+    it("lvi-lint --worker under a hook posts broken-setup to the status segment", function()
+      local d = stub({ buffer = "x\n", path = "x.zz\n" })
+      local _, ok = run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                          LVI_EVENT = "change", LVI_LINT_BACKEND = "no-such-linter" },
+        "contrib/lvi-lint --worker")
+      expect(ok).to.equal(false)
+      expect(read(d .. "/log"):find("status lint %[lvi%-lint:")).to.exist()
+      expect(read(d .. "/log"):find("msge")).to_not.exist()
+      cleanup(d)
+    end)
+
     it("lvi-pos save/restore round-trips through the store", function()
       local d = stub({})
       -- Not under /tmp: lvi-pos deliberately skips volatile paths there.
