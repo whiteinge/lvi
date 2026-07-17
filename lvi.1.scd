@@ -257,7 +257,10 @@ Nothing folds automatically: lvi ships the fold *mechanism* only. A tool
 computes *where* the folds go and pushes *:foldset* over the socket, exactly as
 external search feeds *:hl* -- see *contrib/lvi-fold* (by marker or by indent).
 A re-push keeps the open/closed state of every range it re-lists, so a
-recomputing tool never re-closes the folds you opened.
+recomputing tool never re-closes the folds you opened. The ranges themselves
+belong to the tool, though: a fold you deleted (*zd*, *zE*) comes back closed
+on its next push. To keep folds out of the way under a re-pushing hook, open
+them all (*zR*) or stop honoring them (*zi*); both survive any push.
 
 *zf*_motion_
 	Create a closed fold over the lines the _motion_ spans (e.g. *zf3j*, *zfG*,
