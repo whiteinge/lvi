@@ -81,12 +81,11 @@ if [ -z "$worker" ]; then
 fi
 
 # --- worker --------------------------------------------------------------------
-text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
-nbytes=$(printf '%s' "$text" | wc -c)
-if [ "$nbytes" -gt "$MAXBYTES" ]; then
-  die "${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)"
-fi
-fname=$("$LVI" -w "$target" -- path)
+# Cheap checks first, buffer read last: under `on change` this worker re-runs on
+# every settle, and for a buffer that can't be linted at all (no name, no
+# backend, no adapter) pulling the whole text over the socket each time is pure
+# churn -- every round-trip is an event the editor repaints after.
+fname=$("$LVI" -w "$target" -- path) || die "cannot read view $target"
 [ -n "$fname" ] || die "current buffer has no file (backends key off the name)"
 
 backend=$LVI_LINT_BACKEND
@@ -100,6 +99,12 @@ if [ -z "$backend" ]; then
 fi
 adapter="$DIR/lvi-lint-$backend"
 [ -x "$adapter" ] || die "no adapter for backend '$backend' ($adapter)"
+
+text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
+nbytes=$(printf '%s' "$text" | wc -c)
+if [ "$nbytes" -gt "$MAXBYTES" ]; then
+  die "${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)"
+fi
 
 # Adapter normalizes; put paints, counts, and (with --focus) aims n/N.
 # --at-cursor: an `on write` refresh mid-walk keeps your place instead of
