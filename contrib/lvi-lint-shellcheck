@@ -10,6 +10,7 @@
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+command -v shellcheck >/dev/null 2>&1 || { echo "lvi-lint-shellcheck: shellcheck not found on PATH" >&2; exit 127; }
 shellcheck -f gcc - 2>/dev/null |
   awk -v f="$1" '{
     rest = $0

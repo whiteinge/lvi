@@ -15,6 +15,7 @@
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+command -v deno >/dev/null 2>&1 || { echo "lvi-lint-deno: deno not found on PATH" >&2; exit 127; }
 ext=${1##*.}
 case "$ext" in js|jsx|ts|tsx|mjs|mts) ;; *) ext=ts ;; esac
 deno lint --compact --ext="$ext" - 2>&1 1>/dev/null |

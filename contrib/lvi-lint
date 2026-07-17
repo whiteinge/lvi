@@ -35,7 +35,9 @@
 #     hi lint bg=52 pri=10                 " un-themed = invisible, so theme it
 #     hi lint-cur bg=124 pri=11
 # The status counter doubles as the pass/fail glance: `lint [0/17]` means
-# findings, `lint [0/0]` after a run means clean.
+# findings, `lint [0/0]` after a run means clean. Failures that would make a
+# run meaningless -- linter not installed, no backend for the file, buffer over
+# the size cap -- land as a status-line error (:msge), never as a clean [0/0].
 #
 # It self-backgrounds a --worker like lvi-highlight: reading the buffer needs
 # lvi's event loop. Under `on write`/:bg the loop is live and the detach is
@@ -51,11 +53,23 @@ LVI=${LVI:-lvi}
 MAXBYTES=${LVI_LINT_MAXBYTES:-262144}
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-die() { echo "lvi-lint: $*" >&2; exit 1; }
+# Errors also go to the target's status line: the worker's stderr is discarded
+# under every documented binding, so without :msge a failure looks like [0/0].
+die() {
+  echo "lvi-lint: $*" >&2
+  [ -n "${target:-}" ] && $LVI -w "$target" --detach -- "msge lvi-lint: $*" 2>/dev/null
+  exit 1
+}
 
-worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
-want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
-focus=; [ "$1" = "--focus" ] && { focus=1; shift; }
+worker= want_wid= focus=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --worker) worker=1; shift ;;
+    -w)       want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
+    --focus)  focus=1; shift ;;
+    *)        die "unknown argument '$1' (usage: lvi-lint [-w auto|WID] [--focus])" ;;
+  esac
+done
 target=${want_wid:-${LVI_WID:-auto}}
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 
@@ -70,11 +84,10 @@ fi
 text=$($LVI -w "$target" -- '%p') || die "cannot read view $target"
 nbytes=$(printf '%s' "$text" | wc -c)
 if [ "$nbytes" -gt "$MAXBYTES" ]; then
-  echo "lvi-lint: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)" >&2
-  exit 0
+  die "${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_LINT_MAXBYTES)"
 fi
 fname=$($LVI -w "$target" -- f | sed -n 's/^"\(.*\)" [0-9]* lines$/\1/p')
-case "$fname" in ""|"[No File]"|"[No Name]")
+case "$fname" in ""|"["*"]")
   die "current buffer has no file (backends key off the name)" ;;
 esac
 
@@ -93,5 +106,12 @@ adapter="$DIR/lvi-lint-$backend"
 # Adapter normalizes; put paints, counts, and (with --focus) aims n/N.
 # --at-cursor: an `on write` refresh mid-walk keeps your place instead of
 # resetting the step index. An adapter with nothing to say yields an empty
-# list -- the clean [0/0].
-printf '%s\n' "$text" | "$adapter" "$fname" | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
+# list -- the clean [0/0]. Captured first, so an adapter that FAILS (its
+# missing-linter guard) is an error, not an ingest of empty input.
+entries=$(printf '%s\n' "$text" | "$adapter" "$fname") ||
+  die "backend '$backend' failed (is the linter installed?)"
+if [ -n "$entries" ]; then
+  printf '%s\n' "$entries" | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
+else
+  : | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
+fi
