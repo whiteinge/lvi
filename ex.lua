@@ -1191,6 +1191,30 @@ local function do_marks(ed, args)
 end
 def("marks", function(ed, c) return do_marks(ed, c.args) end)
 
+-- :hooks [event ...] -- list the registered :on hooks, one `event<TAB>cmd` row
+-- per hook, in the :marks/:registers listing mold. A DISPLAY for the human
+-- debugging their wiring ("why is this firing twice?") -- scripts must not
+-- read-modify-write hook state (the state-ownership razor); re-registering
+-- idempotently is the supported script move (:on dedups identical commands).
+def("hooks", function(ed, c)
+  local want = {}
+  for name in c.args:gmatch("%S+") do want[name] = true end
+  local all = not next(want)
+  local events = {}
+  for event in pairs(ed.hooks) do events[#events + 1] = event end
+  table.sort(events)
+  local rows = {}
+  for _, event in ipairs(events) do
+    if all or want[event] then
+      for _, cmd in ipairs(ed.hooks[event]) do
+        rows[#rows + 1] = event .. "\t" .. cmd
+      end
+    end
+  end
+  if #rows == 0 then return "no hooks", "ok" end
+  return table.concat(rows, "\n"), "ok"
+end)
+
 -- Mirror of normal.lua's mark_event (ex must NOT require normal -- normal
 -- requires ex, so that dependency runs one way only). Fires the global-mark seam
 -- for an uppercase mark; returns true when a hook consumed it, false to fall back

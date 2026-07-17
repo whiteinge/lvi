@@ -592,6 +592,12 @@ spaces and tabs included.
 	changes never fire *change*/*scroll* (only keyboard input does), so a hook's
 	own edits or a scroll pushed onto a view can't loop back.
 
+*hooks* [_event_ ...]
+	List the registered *on* hooks as _event_<TAB>_cmd_ rows, optionally
+	filtered to the named events. A display for debugging your wiring; a script
+	that wants its hook installed just re-registers it (identical
+	re-registration is a no-op).
+
 *textobj* _key_ [_cmd_]
 	Register a custom text object on the single character _key_, used after
 	*i*/*a* in operator-pending mode (*di*_key_, *ca*_key_); no _cmd_
