@@ -22,11 +22,11 @@
 #         :L1,L2bg lvi-stagediff --xfer-range ...) moves just a motion's span.
 #       - These are ordinary, undoable buffer edits -- nothing touches git. Shuffle
 #         hunks, `u` to back a move out, hand-edit the index -- then :w to stage
-#         the exact state you've arrived at. The write is the consummation.
+#         the exact state you've arrived at.
 #
-# So the model is one :w per pane, each consummating its own side: :w on the INDEX
-# pane stages (reblob); :w on the WORKING pane saves the working file to disk as
-# usual (no reblob hook there). Nothing is staged until you say so.
+# So the model is one :w per pane: :w on the INDEX pane stages (reblob); :w on
+# the WORKING pane saves the working file to disk as usual (no reblob hook
+# there). Nothing is staged until you say so.
 #
 # Why reblob-the-whole-buffer rather than `git apply --cached` a patch: it can't
 # misapply (no fuzz), composes trivially (stage another hunk = reblob again), and
@@ -54,7 +54,7 @@
 #   \dp     (working pane)    move the hunk under the cursor onto the index pane
 #   \do     (working pane)    pull the index's version of the hunk back into working
 #   g@{motion} (working pane) move the motion's line span onto the index pane
-#   :w      (index pane)      STAGE the current index text (the consummation)
+#   :w      (index pane)      STAGE the current index text
 #   :w      (working pane)    save the working file to disk (no staging)
 #   ]c / [c / zx (either)     next/prev hunk; fold unchanged (all from lvi-diff)
 #
@@ -83,7 +83,24 @@
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
-PIDDIR=${TMPDIR:-/tmp}
+
+# Index seeds carry staged file content, so they live beside the sockets in
+# lvi's private per-uid dir, never shared /tmp: $LVI_SOCK when spawned from
+# inside lvi, else a live view's socket dir, else create the dir the way
+# path.lua does (the launcher usually runs before any view exists).
+RUNDIR=${LVI_SOCK%/*}
+if [ ! -d "$RUNDIR" ]; then
+  s=$("$LVI" -l 2>/dev/null | sed -n 1p | cut -f2); RUNDIR=${s%/*}
+fi
+if ! { [ -n "$RUNDIR" ] && [ -d "$RUNDIR" ]; }; then
+  base=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
+  RUNDIR=${base%/}/lvi-$(id -u)
+  [ -d "$RUNDIR" ] || mkdir -m 700 "$RUNDIR" 2>/dev/null || RUNDIR=${TMPDIR:-/tmp}
+fi
+
+# Single-quote a value for splicing into a shell-parsed hook/map line, so a
+# path holding spaces or quotes survives the re-parse when the hook fires.
+sq() { printf "%s" "$1" | sed "s/'/'\\\\''/g"; }
 
 case "$0" in
   /*) SELF=$0 ;;
@@ -112,7 +129,9 @@ reblob() {
   blob=$(cd "$top" && git --git-dir="$gitdir" hash-object -w -- "$idxf") || return 1
   (cd "$top" && git --git-dir="$gitdir" update-index --cacheinfo "$mode,$blob,$rp") || {
     echo "lvi-stagediff: update-index failed" >&2; return 1; }
-  [ -n "$LVI_WID" ] && "$LVI" -w "$LVI_WID" -- "status stage [staged $rp]" >/dev/null 2>&1
+  # An ephemeral :msg, not a status segment -- the confirmation must not
+  # overwrite the pane's standing "[index -- ...]" label.
+  [ -n "$LVI_WID" ] && "$LVI" -w "$LVI_WID" -- "msg staged $rp" >/dev/null 2>&1
   return 0
 }
 
@@ -125,12 +144,14 @@ attach() {
   LVI="$LVI" "$DIFF" "$idx" "$work" || return 1
   # Staging is reblob-on-write: :w on the index pane stages its current text. So
   # \dp/\do (from lvi-diff) shuffle hunks as ordinary, undoable edits and nothing
-  # touches git until you :w -- edit, undo, restage first; the write consummates.
-  "$LVI" -w "$idx"  -- "on write LVI=$LVI $SELF --reblob $gitdir $top $rp" >/dev/null 2>&1
+  # touches git until you :w. The baked paths are single-quoted (sq): the hook
+  # line is re-parsed by sh when it fires, and a repo path with a space would
+  # otherwise mis-split -- silently, since hook output is discarded.
+  "$LVI" -w "$idx"  -- "on write LVI='$(sq "$LVI")' '$(sq "$SELF")' --reblob '$(sq "$gitdir")' '$(sq "$top")' '$(sq "$rp")'" >/dev/null 2>&1
   # Partial (sub-hunk) staging: arm g@ on the working pane as lvi-diff's env-aware
   # --xfer-range (dest=idx, canonical pair idx,work), for peeling two changes `diff`
   # merged into one hunk. Still just a buffer edit; :w on the index stages it.
-  "$LVI" -w "$work" -- "set operatorfunc=LVI=$LVI $DIFF --xfer-range $idx $idx $work" >/dev/null 2>&1
+  "$LVI" -w "$work" -- "set operatorfunc=LVI='$(sq "$LVI")' '$(sq "$DIFF")' --xfer-range $idx $idx $work" >/dev/null 2>&1
   "$LVI" -w "$idx"  -- 'status stage [index -- \dp/\do shuffle, :w stages]' >/dev/null 2>&1
   "$LVI" -w "$work" -- 'status stage [working -- \dp stage a hunk, \do restore it]' >/dev/null 2>&1
 }
@@ -138,7 +159,7 @@ attach() {
 # Sweep index seeds whose views are gone (no daemon to own their lifetime now).
 gc_seeds() {
   live=$("$LVI" -l 2>/dev/null | cut -f1)
-  for f in "$PIDDIR"/lvi-stage.idx.*; do
+  for f in "$RUNDIR"/lvi-stage.idx.*; do
     [ -e "$f" ] || continue
     used=""
     for w in $live; do "$LVI" -w "$w" -- f 2>/dev/null | grep -qF "$f" && { used=1; break; }; done
@@ -175,14 +196,14 @@ fi
 gc_seeds        # reap seeds from closed sessions before making a new one
 
 # Seed the index pane from the staged blob (empty for a not-yet-staged new file).
-idxtmp=$(mktemp "$PIDDIR/lvi-stage.idx.XXXXXX") || exit 1
+idxtmp=$(mktemp "$RUNDIR/lvi-stage.idx.XXXXXX") || exit 1
 (cd "$top" && git show ":$rp" 2>/dev/null) > "$idxtmp"
 
 # Open the split: index (scratch) left, working file right. Snapshot the live wids
 # first so we pick out exactly the two we just made (never trust `lvi -l | head`).
 before=$("$LVI" -l | cut -f1 | sort)
-win=$(tmux new-window -P -F '#{window_id}' "exec $LVI '$idxtmp'")
-tmux split-window -h -t "$win" "exec $LVI '$file'"
+win=$(tmux new-window -P -F '#{window_id}' "exec $LVI '$(sq "$idxtmp")'")
+tmux split-window -h -t "$win" "exec $LVI '$(sq "$file")'"
 
 # Wait for both new views to register, then map wid -> file via :f.
 idx=""; work=""

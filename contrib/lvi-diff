@@ -100,12 +100,17 @@ CTX=${LVI_DIFF_FOLDCTX:-3}
 # Map caches and buffer snapshots live beside the sockets in lvi's private
 # per-uid dir, never shared /tmp (snapshots carry buffer text, and two users'
 # identical wids must not collide): $LVI_SOCK when a hook/map spawned us, else
-# the dir of any live view's socket, else TMPDIR (no view running -- gc only).
+# the dir of any live view's socket, else create the dir the way path.lua does
+# (file mode runs before its views exist).
 RUNDIR=${LVI_SOCK%/*}
 if [ ! -d "$RUNDIR" ]; then
   s=$("$LVI" -l 2>/dev/null | sed -n 1p | cut -f2); RUNDIR=${s%/*}
 fi
-{ [ -n "$RUNDIR" ] && [ -d "$RUNDIR" ]; } || RUNDIR=${TMPDIR:-/tmp}
+if ! { [ -n "$RUNDIR" ] && [ -d "$RUNDIR" ]; }; then
+  base=${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
+  RUNDIR=${base%/}/lvi-$(id -u)
+  [ -d "$RUNDIR" ] || mkdir -m 700 "$RUNDIR" 2>/dev/null || RUNDIR=${TMPDIR:-/tmp}
+fi
 
 # Absolute path to this script, so the maps/hooks we install fire the right binary
 # regardless of the editor's PATH.
