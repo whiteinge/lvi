@@ -13,8 +13,10 @@
 # reading standard input ("-"). A dedicated rc ($LVIRC -> contrib/lvirc-man)
 # marks the buffer scratch (so :q never nags -- a man page is a throwaway view,
 # not a file), folds it by section (lvi-fold man), and highlights it as a
-# manpage (lvi-highlight lang man, bat backend). None of your ~/.lvirc hooks
-# fire here -- see contrib/lvirc-man to customize the pager environment.
+# manpage (lvi-highlight lang man, bat backend). Your own rc is layered IN
+# (lvirc-man starts with a bare :source), so your maps and colors work on a
+# man page too -- but every hook it registers is then cleared: none of your
+# ~/.lvirc hooks fire here. See contrib/lvirc-man to customize further.
 #
 # Inside: zj/zk jump heading to heading, zo/zR open folds, / searches, :q quits.
 #

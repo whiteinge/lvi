@@ -1,7 +1,26 @@
 " lvi as a man pager -- loaded via $LVIRC by contrib/lvi-man, NOT your ~/.lvirc.
-" A deliberately minimal, throwaway environment: none of your normal hooks
-" (mirror, lint, cursor-save, gitchanges, ...) fire on a man page, which is not
-" a file you are editing. Copy this file and point $LVI_MAN_RC at it to tweak.
+" Your own rc is pulled in first (bare :source reads the auto-discovery
+" locations, ignoring $LVIRC -- which names THIS file), so your maps, colors,
+" and register backends carry over; then every hook it registered is cleared,
+" because a man page is a throwaway view, not a file you are editing --
+" mirror, lint, cursor-save, gitchanges have no business firing on one. The
+" pager re-registers only what it wants below. Anything set after :source
+" overrides your rc's setting, so this file has the last word. Copy it and
+" point $LVI_MAN_RC at your copy to tweak. (If your rc lives only in $LVIRC,
+" bare :source cannot find it -- name it explicitly in your copy.)
+
+source
+on change
+on write
+on ready
+on bufenter
+on bufleave
+on bufdelete
+on complete
+on scroll
+on markset
+on markjump
+on exit
 
 set scratch          " never dirty -> :q never nags; nothing to preserve on crash
 set wrap linebreak   " wrap long lines (e.g. a wide SYNOPSIS) at word boundaries
