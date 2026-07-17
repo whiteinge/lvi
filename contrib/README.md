@@ -101,6 +101,37 @@ CMD` — doubled, since a lone `"` in the rc is a comment) is special: since `"`
 mirrors every yank and delete, its *write* is the one point they all flow
 through, so a history tool needs no key remapping. `lvi-yankring` is built on it.
 
+**Seams for tool authors.** A tool asking "what file is this?" uses `:path` —
+the path verbatim, empty for a pathless buffer, the same value hooks see in
+`$LVI_FILE`. Never parse `:f`: its wording is for humans. Cross-view discovery
+is one call: `lvi -l`'s third column carries every view's file (`lvi-mirror`
+finds its peers this way). Passing a picked or stored name to a file
+command uses the literal spelling `:e -- NAME`: no shell expansion, nothing to
+escape. A multi-command edit interleaves `:undojoin` so the whole thing
+reverts under one `u` (`lvi-diff`'s hunk moves, `lvi-mirror`'s syncs), and any
+delete a tool pushes should name the black-hole buffer (`:d _`) so a
+background edit never rotates the user's delete history or feeds a clipboard
+backend. `on exit` fires once at a clean quit, the place to save external
+state (`lvi-pos`'s last position). But the socket is closing by then, so an
+exit hook reads `$LVI_*` and the disk, never calls back. `:hooks` lists what a view has wired,
+for debugging; a script never reads hook state to decide anything —
+re-registering is idempotent (`:on` drops identical duplicates).
+
+**Errors must land where the user looks.** Every documented binding discards
+stderr (`:bg`, hooks) or repaints over it (`:silent !`), so a bare `echo >&2`
+is invisible. A one-shot failure goes to the status line with `:msge`. A
+condition that repeats on every hook fire — a buffer over the size cap, a
+missing adapter — goes in a named `:status` segment that the next successful run
+clears, so it neither nags nor outlives the problem. And a missing backend
+binary is an error (`command -v` guard, exit 127), never an empty success:
+`lint [0/0]` must always mean clean.
+
+**The scripts have headless tests.** `test/contrib_test.lua` (run by `make
+test`) checks the pure filters against golden output and the socket-driven
+scripts against `test/stub-lvi`: point `LVI=` at the stub and the script's
+whole socket conversation lands in a log file to assert on — no editor, no
+tty. A new tool should ship a case there; only picker/tty flows stay manual.
+
 **The highlighter contract**: `lvi-highlight` is a backend-agnostic harness;
 a backend is one adapter, `lvi-hl-<name>`, with a single contract: **buffer
 text on stdin, filename as `$1` (optional forced language as `$2`), emit
