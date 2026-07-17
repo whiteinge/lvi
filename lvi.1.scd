@@ -1015,8 +1015,8 @@ below, with the happy-path rc lines that turn it on:
 	the policy, folding by *marker* or *indent*:
 
 	```
-	map zi :bg lvi-fold<CR>
-	map zI :bg lvi-fold indent<CR>
+	map zx :bg lvi-fold<CR>
+	map zX :bg lvi-fold indent<CR>
 	on bufenter lvi-fold
 	```
 

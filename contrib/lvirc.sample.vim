@@ -324,14 +324,15 @@ on bufenter lvi-ftype
 
 " lvi has the fold MECHANISM (collapse a range to one row, z-keys to navigate);
 " lvi-fold computes the POLICY from the live buffer and pushes :foldset, the
-" way lvi-highlight pushes :hl. `zi` folds by marker (this rc wraps each section
-" in a marker pair, so it folds into a table of contents), `zI` by indent. New
+" way lvi-highlight pushes :hl. `zx` folds by marker (this rc wraps each section
+" in a marker pair, so it folds into a table of contents), `zX` by indent --
+" vim's re-fold keys; `zi` is off limits, it's the builtin foldenable toggle. New
 " folds arrive CLOSED; open with zo/zR -- a re-run (or a bufenter re-push) keeps
 " what you opened open. Marker mode needs a matching close per open (it nests
 " by a stack, and ignores a trailing level digit on the open marker).
 hi Folded fg=cyan italic               " the summary bar (un-themed = plain)
-map zi :bg lvi-fold<CR>                " (re)fold by marker
-map zI :bg lvi-fold indent<CR>         " (re)fold by indent
+map zx :bg lvi-fold<CR>                " (re)fold by marker
+map zX :bg lvi-fold indent<CR>         " (re)fold by indent
 " on bufenter lvi-fold                 " ...or auto-fold every marked file on entry
 
 " }}}
