@@ -520,6 +520,12 @@ function M.run(opts)
   -- ranged `:bg` supplies line1/line2, they're exported as $LVI_LINE1/$LVI_LINE2
   -- so a tool can act on a user-typed line range (the read-only sibling of `:!`);
   -- absent, the child sees them empty (cleared by export_context above).
+  --
+  -- `trap '' HUP`: the child shares lvi's process group, and when the session
+  -- leader exits the kernel HUPs that group -- under tmux, closing the pane.
+  -- Without the trap, a hook fired on the way out (`write` from :wq/:x, `exit`)
+  -- dies mid-flight; ignored dispositions survive exec, so the whole child tree
+  -- is immune. (setsid would detach harder but has no portable -f.)
   ed.spawn_bg = function(cmd, buf, line1, line2, col1, col2, kind)
     ed.export_context(buf)
     if line1 then sys.setenv("LVI_LINE1", line1); sys.setenv("LVI_LINE2", line2 or line1) end
@@ -527,7 +533,7 @@ function M.run(opts)
       sys.setenv("LVI_KIND", kind)
       if col1 then sys.setenv("LVI_COL1", col1); sys.setenv("LVI_COL2", col2 or col1) end
     end
-    os.execute("(" .. cmd .. ") >/dev/null 2>&1 &")
+    os.execute("( trap '' HUP; " .. cmd .. " ) >/dev/null 2>&1 &")
   end
   -- Command-backed registers (`:register`): a yank/delete into the register pipes
   -- its text to `write`; a put reads `read`'s stdout. Synchronous and tty-free --
