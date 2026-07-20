@@ -1566,8 +1566,12 @@ actions = {
       ed.regs[ed.recording] = { text = table.concat(chars), linewise = false }
       ed.recording, ed.macro_buf = nil, nil
     else
-      ed.recording = string.char(getkey(ed))
-      ed.macro_buf = {}
+      -- The next key names the register. It must be one lvi can hold and @ can
+      -- replay (a-z and the unnamed "); anything else -- Esc, a digit, stray
+      -- punctuation -- cancels the pending q instead of recording into a junk
+      -- register, matching vi (which drops an invalid recording register too).
+      local r = string.char(getkey(ed))
+      if r:match('[a-z"]') then ed.recording, ed.macro_buf = r, {} end
     end
   end,
   -- @{reg} replays a register's keys (count times); @@ replays the last one.

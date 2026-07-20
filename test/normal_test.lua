@@ -973,6 +973,18 @@ describe("normal-mode interpreter", function()
       feed(ed, "@b@b")                      -- apply to the next two lines
       expect(ed.buf:get()).to.equal({ "x!", "x!", "x!" })
     end)
+    it("q<Esc> cancels instead of recording", function()
+      local ed = make("a\nb\nc")
+      feed(ed, "q" .. ESC)                  -- fat-fingered q, then bail out
+      expect(ed.recording).to.equal(nil)    -- no register armed
+      feed(ed, "dd")                         -- keys go to normal mode, not a macro
+      expect(ed.buf:get()).to.equal({ "b", "c" })
+    end)
+    it("q with a non-register key (digit) cancels", function()
+      local ed = make("a\nb")
+      feed(ed, "q5")
+      expect(ed.recording).to.equal(nil)
+    end)
   end)
 
   describe(":normal send-keys", function()
