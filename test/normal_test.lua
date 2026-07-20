@@ -760,6 +760,14 @@ describe("normal-mode interpreter", function()
       expect(ed.cy).to.equal(2)
       expect(ed.cx).to.equal(3)
     end)
+    it("an uppercase register name appends to the lowercase register (POSIX)", function()
+      local ed = make("one\ntwo\nthree")
+      feed(ed, '"ayy')                            -- reg a = "one\n"
+      feed(ed, 'j"Ayy')                           -- "A appends line 2
+      expect(ed.regs['a'].text).to.equal("one\ntwo\n")
+      feed(ed, 'G"Ap')                            -- "Ap reads buffer a (append is write-side)
+      expect(ed.buf:get()).to.equal({ "one", "two", "three", "one", "two" })
+    end)
   end)
 
   describe("insert mode", function()
@@ -984,6 +992,12 @@ describe("normal-mode interpreter", function()
       local ed = make("a\nb")
       feed(ed, "q5")
       expect(ed.recording).to.equal(nil)
+    end)
+    it("qA appends to the register a already holds (POSIX)", function()
+      local ed = make("x")
+      feed(ed, "qaitick" .. ESC .. "q")   -- reg a = 'itick<Esc>'
+      feed(ed, "qAatock" .. ESC .. "q")   -- append 'atock<Esc>' to reg a
+      expect(ed.regs['a'].text).to.equal("itick" .. ESC .. "atock" .. ESC)
     end)
   end)
 
@@ -1672,6 +1686,66 @@ describe("normal-mode interpreter", function()
       feed(ed, "G");   feed(ed, "1G")             -- jump to 5, then back to 1
       feed(ed, "G")                               -- jump to 5 again (origin line 1 dup)
       expect(#ed.jumps.list).to.equal(2)          -- {5, 1}, not {1, 5, 1}
+    end)
+  end)
+
+  describe("line motions + - _ <CR> (POSIX, to first non-blank)", function()
+    local CR = "\13"
+    it("+ and <CR> go down to the first non-blank; - goes up", function()
+      local ed = make("l1\n  l2\nl3")
+      feed(ed, "+");  expect(ed.cy).to.equal(2); expect(ed.cx).to.equal(3)  -- past the indent
+      feed(ed, "-");  expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(1)
+      feed(ed, CR);   expect(ed.cy).to.equal(2)                             -- <CR> == +
+      feed(ed, "2+"); expect(ed.cy).to.equal(3)                             -- clamps at last line
+    end)
+    it("_ stays on the line; a count goes count-1 down", function()
+      local ed = make("  l1\nl2\nl3")
+      feed(ed, "l_"); expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(3)  -- this line, first non-blank
+      feed(ed, "2_"); expect(ed.cy).to.equal(2)                             -- one line down
+    end)
+    it("compose as linewise operator targets (d+ takes two lines)", function()
+      local ed = make("a\nb\nc\nd")
+      feed(ed, "d+")
+      expect(ed.buf:get()).to.equal({ "c", "d" })
+    end)
+  end)
+
+  describe("U (restore current line)", function()
+    it("reverts a run of edits on one line, then toggles", function()
+      local ed = make("hello\nworld")
+      feed(ed, "xxx")                             -- delete 'hel' -> 'lo'
+      expect(ed.buf:line(1)).to.equal("lo")
+      feed(ed, "U")                               -- restore the whole line
+      expect(ed.buf:line(1)).to.equal("hello")
+      feed(ed, "U")                               -- second U toggles back
+      expect(ed.buf:line(1)).to.equal("lo")
+    end)
+    it("only restores while the cursor stays on the line", function()
+      local ed = make("aaa\nbbb")
+      feed(ed, "x")                               -- 'aa'
+      feed(ed, "jx")                              -- leave line 1, edit line 2 -> 'bb'
+      feed(ed, "k")                               -- back to line 1
+      feed(ed, "U")                               -- nothing changed since arrival: no-op
+      expect(ed.buf:get()).to.equal({ "aa", "bb" })
+    end)
+  end)
+
+  describe("& (repeat last :s on the current line)", function()
+    local have_ex = os.execute("command -v '" .. (os.getenv("LVI_EX") or "ex")
+                               .. "' >/dev/null 2>&1") == 0
+    it("captures the last substitute and reapplies it here", function()
+      if not have_ex then return end
+      local ed = make("foo\nfoo\nfoo")
+      ex.dispatch(ed, "1s/foo/bar/")              -- substitute on line 1 only
+      expect(ed.buf:line(1)).to.equal("bar")
+      feed(ed, "j&")                              -- line 2: repeat it
+      expect(ed.buf:line(2)).to.equal("bar")
+      expect(ed.buf:line(3)).to.equal("foo")      -- untouched
+    end)
+    it("reports when there is no previous substitute", function()
+      local ed = make("x")
+      feed(ed, "&")
+      expect(ed.message).to.equal("No previous substitute")
     end)
   end)
 end)

@@ -181,6 +181,7 @@ local function reg_from_clip(text)
 end
 
 local function get_reg(ed, name)
+  if name and name:match("%u") then name = name:lower() end  -- "Ap reads buffer a (append is a write-side distinction)
   local be = name and ed.reg_backends[name]
   if be and be.read and ed.reg_read then return reg_from_clip(ed.reg_read(be.read)) end
   return ed.regs[name or '"']
@@ -1001,7 +1002,24 @@ local motions = {
   end },
   [b(")")] = { kind = "char", jump = true, move = function(ed, count) return sent_target(ed, count, true) end },
   [b("(")] = { kind = "char", jump = true, move = function(ed, count) return sent_target(ed, count, false) end },
+  -- Line motions to the first non-blank (POSIX vi): + and <CR> go count lines
+  -- down, - goes count lines up, _ goes count-1 down (so _ is "this line", 3_ is
+  -- two lines down). Linewise, so they compose as operator targets (d+, >-, y_);
+  -- not jump-class, like j/k. <CR> (13) aliases + just below the table.
+  [b("+")] = { kind = "line", move = function(ed, n)
+    local t = math.max(1, math.min(ed.cy + (n or 1), ed.buf:nlines()))
+    return t, first_nonblank(line(ed, t))
+  end },
+  [b("-")] = { kind = "line", move = function(ed, n)
+    local t = math.max(1, math.min(ed.cy - (n or 1), ed.buf:nlines()))
+    return t, first_nonblank(line(ed, t))
+  end },
+  [b("_")] = { kind = "line", move = function(ed, n)
+    local t = math.max(1, math.min(ed.cy + (n or 1) - 1, ed.buf:nlines()))
+    return t, first_nonblank(line(ed, t))
+  end },
 }
+motions[13] = motions[b("+")]   -- <CR> is a synonym for +
 
 -- The jumplist: a per-buffer rolling record of positions a "jump-class" motion
 -- (G, %, marks, {}, (), [[ ]], H/M/L -- the entries flagged jump=true) left
@@ -1555,6 +1573,29 @@ actions = {
     local l, c = ed.buf:redo()
     if l then ed.cy, ed.cx = l, c or 1; clamp(ed) else ed.message = "Already at newest change" end
   end,
+  -- U: restore the current line to its state when the cursor arrived (POSIX vi).
+  -- command() snapshots ed.usaved on every line change, so a whole run of edits
+  -- on one line reverts in one stroke. Distinct from u/Ctrl-R (the multi-level
+  -- log): U is line-scoped and self-inverse -- its own splice re-snapshots, so a
+  -- second U toggles back. A no-op when nothing changed since arrival.
+  [b("U")] = function(ed)
+    local cur, restore = line(ed, ed.cy), ed.usaved
+    if restore and restore ~= cur then
+      ed.buf:splice(ed.cy, 1, { restore })
+      ed.usaved = cur                      -- so a second U toggles
+      ed.cx = first_nonblank(restore); clamp(ed)
+      ed.changed = true
+    end
+  end,
+  -- & : repeat the last :s on the current line (POSIX vi). The substitute was
+  -- delegated to the system ex, which lvi re-runs verbatim; dispatch stashed the
+  -- un-addressed tail, and do_ex positions the cursor line so it lands here.
+  [b("&")] = function(ed)
+    if not ed.last_subst then ed.message = "No previous substitute"; return end
+    local payload, status = ex.dispatch(ed, ed.last_subst)
+    if status == "err" and payload ~= "" then ed.message = payload end
+    ed.changed = true
+  end,
   -- q{reg} starts recording keys into a register; q again stops. Recording
   -- reuses getkey's capture; the trailing 'q' that stops it is dropped. A macro
   -- is just register text, so a yanked register can be run as one too (like vi).
@@ -1563,15 +1604,23 @@ actions = {
       table.remove(ed.macro_buf) -- drop the trailing 'q' that triggered the stop
       local chars = {}
       for i = 1, #ed.macro_buf do chars[i] = string.char(ed.macro_buf[i]) end
-      ed.regs[ed.recording] = { text = table.concat(chars), linewise = false }
+      local text, name = table.concat(chars), ed.recording
+      -- qA appends to register a (POSIX uppercase buffer). Done inline rather
+      -- than via set_reg so recording never disturbs the unnamed register.
+      if name:match("%u") then
+        name = name:lower()
+        local prev = ed.regs[name]
+        if prev then text = prev.text .. text end
+      end
+      ed.regs[name] = { text = text, linewise = false }
       ed.recording, ed.macro_buf = nil, nil
     else
       -- The next key names the register. It must be one lvi can hold and @ can
-      -- replay (a-z and the unnamed "); anything else -- Esc, a digit, stray
-      -- punctuation -- cancels the pending q instead of recording into a junk
-      -- register, matching vi (which drops an invalid recording register too).
+      -- replay (a-z, A-Z for append, and the unnamed "); anything else -- Esc, a
+      -- digit, stray punctuation -- cancels the pending q instead of recording
+      -- into a junk register, matching vi (which drops an invalid one too).
       local r = string.char(getkey(ed))
-      if r:match('[a-z"]') then ed.recording, ed.macro_buf = r, {} end
+      if r:match('[a-zA-Z"]') then ed.recording, ed.macro_buf = r, {} end
     end
   end,
   -- @{reg} replays a register's keys (count times); @@ replays the last one.
@@ -1918,6 +1967,11 @@ local function command(ed)
   local k = first_key(ed)                    -- parks here; prior message stays visible
   ed.at_boundary = false
   ed.message = nil; ed.message_hl = nil      -- clear only once a new command's key arrives
+  -- U (restore-line) snapshot: whenever the cursor has settled on a new line,
+  -- remember that line as it is now, so a run of edits on one line reverts as a
+  -- unit and a second U toggles. Taken after the key arrives, so a socket edit
+  -- during the boundary park can't leave the snapshot pointing at a stale line.
+  if ed.uline ~= ed.cy then ed.uline, ed.usaved = ed.cy, line(ed, ed.cy) end
   if k == b('"') then reg = string.char(getkey(ed)); k = getkey(ed) end
   local count1
   count1, k = read_count(ed, k)

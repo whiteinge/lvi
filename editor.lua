@@ -66,6 +66,7 @@ function M.new_ed()
     last_change = nil,        -- keylog of the last buffer-changing command (for .)
     last_find = nil,          -- last f/t/F/T target (for ; and ,)
     last_macro = nil,         -- last @-run register (for @@)
+    last_subst = nil,         -- last delegated :s command tail, for normal-mode & (repeat substitute)
 
     -- shared editing state
     regs = {},                -- registers a-z + unnamed '"'
@@ -91,6 +92,8 @@ function M.new_ed()
     top = 1, topsub = 0,      -- viewport top (line, wrapped sub-row)
     leftcol = 0,              -- horizontal scroll (nowrap)
     marks = {},               -- mark char -> {line, col}
+    uline = nil,              -- U (restore-line): the line the cursor last settled on
+    usaved = nil,             -- U (restore-line): that line's text at settle time
     highlights = {},          -- :hl group -> ranges (transient overlay)
     folds = {},               -- { {s,e,open}, ... } view overlay (see fold.lua)
     jumps = { list = {}, idx = 1 },  -- Ctrl-O/Ctrl-I jumplist

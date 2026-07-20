@@ -92,6 +92,12 @@ leading count, e.g. *3dw*.
 *gj* *gk*
 	Down/up one screen row (within a wrapped line).
 
+*+* *-* *\_* *<CR>*
+	To the first non-blank of another line. *+* and *<CR>* go _count_ lines
+	down, *-* goes _count_ up, and *\_* goes _count_-1 down (so *\_* is the
+	current line, *2\_* the next). Linewise, so they double as operator targets
+	(*d+*).
+
 *N|*
 	Go to display column _N_.
 
@@ -191,8 +197,18 @@ _operator_*i*_object_, _operator_*a*_object_
 *u* *Ctrl-R*
 	Undo, redo (multi-level).
 
+*U*
+	Restore the current line to its state when the cursor moved onto it (POSIX
+	vi), so a run of edits on one line reverts in one stroke and a second *U*
+	toggles. Distinct from *u*: line-scoped and self-inverse, not the change log.
+
 *.*
 	Repeat the last change.
+
+*&*
+	Repeat the last *:s* substitute on the current line. Substitution runs
+	through the system *ex* (see *EX COMMANDS*); *&* reapplies the most recent
+	one here, so it lands where the cursor is rather than on the original range.
 
 *q*_r_ *@*_r_ *@@*
 	Record keystrokes into register _r_ until *q*; replay register _r_; replay
@@ -208,6 +224,9 @@ registers, as in vi: a whole-line or multi-line delete shifts the numbered stack
 *"1* to *"9* down one and lands in *"1* (so *"1* is the most recent, *"2* the one
 before it); a delete of less than a line goes to the small-delete register *"-*.
 Naming a register (*"a*) leaves both untouched, and yanks never touch them.
+Naming it with the *uppercase* letter appends instead of replacing (POSIX vi), so
+*"Ayy* tacks the yank onto whatever *"a* holds and *qA* appends to a recorded
+macro; reading (*"Ap*) is the same as the lowercase register.
 *"\_* is the black-hole: text deleted or yanked into it goes nowhere -- no named
 register, no unnamed mirror, no numbered stack, no clipboard backend (the ex
 spelling is *d \_*, see below).

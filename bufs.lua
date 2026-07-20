@@ -13,7 +13,8 @@ local M = {}
 
 -- Per-buffer view state (everything else -- text, path, modified, undo -- lives
 -- in the buffer object; the rest of ed is shared across buffers).
-local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "folds", "jumps", "changes" }
+local VIEW = { "cx", "cy", "top", "topsub", "leftcol", "marks", "highlights", "folds", "jumps", "changes",
+               "uline", "usaved" }   -- uline/usaved back the U (restore-line) snapshot; per-buffer, reset by a switch
 
 local function fresh(buf)
   return { buf = buf, cx = 1, cy = 1, top = 1, topsub = 0, leftcol = 0,

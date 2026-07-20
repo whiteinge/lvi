@@ -62,6 +62,15 @@ function M.set_reg(ed, name, text, linewise)
   -- one check covers every surface: :d _, and normal-mode "_d / "_y / "_c
   -- (the `"` prefix accepts any character).
   if name == "_" then return end
+  -- An UPPERCASE buffer name appends to the lowercase register rather than
+  -- replacing it (POSIX vi): "Ayy tacks the yank onto whatever "a holds. A
+  -- linewise piece keeps the whole run linewise. The unnamed mirror below then
+  -- takes the full concatenated value, so `"` reflects the register just used.
+  if name and name:match("%u") then
+    name = name:lower()
+    local prev = ed.regs[name]
+    if prev then text, linewise = prev.text .. text, (prev.linewise or linewise) end
+  end
   local r = { text = text, linewise = linewise }
   if name then ed.regs[name] = r; reg_pipe(ed, name, text) end
   ed.regs['"'] = r
@@ -1466,6 +1475,15 @@ function M.dispatch(ed, line)
   if fn then
     return fn(ed, { name = cmdword, a = a, b = b, bang = bang == "!",
                     args = args, line = line })
+  end
+
+  -- Remember a delegated substitute so normal-mode & can repeat it (POSIX vi).
+  -- cmdword being a prefix of "substitute" (s, su, ... substitute) catches every
+  -- spelling without matching :sort/:set. We stash the un-addressed tail (rest);
+  -- do_ex re-runs it against the current line -- lvi does not parse :s, so it
+  -- could not reconstruct the command from parts any other way.
+  if cmdword ~= "" and ("substitute"):sub(1, #cmdword) == cmdword then
+    ed.last_subst = rest
   end
 
   -- Anything lvi does not handle itself is delegated to the system ex, so vi's

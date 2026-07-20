@@ -62,3 +62,5 @@ Four docs, four audiences — keep content in its lane and don't duplicate acros
 ## POSIX references
 
 Consult the POSIX vi/ex specifications for exact command/addressing semantics rather than guessing. Note POSIX vi specifies no arrow keys (commands are literal characters); escape-sequence decoding is intentionally deferred.
+
+**Deviation property:** every deviation from POSIX vi must be either *additive* (something POSIX doesn't specify) or a *documented* deviation with a design reason (in the manpage, and usually a decision record in the relevant file's header). A POSIX vi feature that is silently unimplemented is a bug, not a design choice — implement it or document why not. (Vim-isms are a separate matter and may be left out freely.) The July 2026 audit closed the then-outstanding silent gaps: append-registers (uppercase buffer names), the `+`/`-`/`_`/`<CR>` line motions, `U` (restore-line), and `&` (repeat last `:s`).
