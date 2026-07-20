@@ -134,9 +134,11 @@ map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus
 map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
 map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
-" list MENU (\l): switch focus / goto within / re-center / hide / preview.
+" list MENU (\l): switch focus / goto within / skip file / re-center / hide / preview.
 map \ll :silent !lvi-list switch<CR>          " re-aim n/N: pick the focused list
 map \lg :silent !lvi-list goto<CR>            " pick+jump to an entry in the focused list
+map \lf :bg lvi-list nfile<CR>                " skip to the next FILE in the list (vim :cnfile);
+map \lF :bg lvi-list pfile<CR>                "   ...previous -- hop a file you don't care about
 map \lc :bg lvi-list current<CR>              " re-jump to the current entry (vim :cc);
 "                                               recall it after opening a fold n/N landed in
 map \lh :bg lvi-list hide<CR>                 " :nohl-style -- hide it; next n/N re-shows
