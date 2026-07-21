@@ -1,86 +1,55 @@
 #!/bin/sh
-# lvi-stagediff [FILE] -- `git add -p` by way of a side-by-side diff. Concept
-# borrowed from Fugitive (and a Vim POC of the same name): stage hunks by getting
-# them into an "index" pane, then writing that pane's whole content back as the
-# git index blob. No partial-patch math -- the index simply becomes whatever text
-# ends up in the left pane.
+# lvi-stagediff [FILE] -- stage hunks through a side-by-side diff, like `git
+# add -p`. Concept from Fugitive and a Vim proof-of-concept of the same name.
 #
-# It stands on lvi-diff (which must sit beside this script), and stands on ALL of
-# it: highlighting, scrollbind, hunk nav (]c/[c), fold-unchanged (zx), and hunk
-# MOVING (\dp/\do, g@) are lvi-diff's, unchanged. This script adds only the two
-# git-specific pieces, both daemonless (one-shot setup + one `on write` hook):
+# Two panes open. The left "index" pane holds the staged version of FILE (from
+# `git show :PATH`); the right pane holds the working tree. The diff between them
+# is exactly your unstaged changes. Move a hunk from the working pane into the
+# index pane, then :w the index pane to stage it. That :w is the one staging path:
+# it writes the index pane's whole text as a git blob and points the index at it
+# (`git hash-object -w` + `git update-index`), so it can't misapply a patch.
+# Until you :w the index pane, nothing touches git -- moving hunks, undoing, and
+# hand-editing the index are all ordinary buffer edits.
 #
-#   * SEED -- the left ("index") pane is a scratch buffer filled from
-#     `git show :PATH` (the staged version); the right pane is the working tree.
-#     So the diff between them is exactly your UNSTAGED changes.
-#   * REBLOB-ON-WRITE -- the index pane's whole text IS the staged content. :w on
-#     the index pane hashes its file into a git blob and points the index at it
-#     (`git hash-object -w` + `git update-index`). That `on write` hook is the
-#     ONE staging path. Everything else is just editing a buffer:
-#       - \dp (working pane) moves the hunk under the cursor onto the index pane;
-#         \do pulls the index's version back onto the working pane. g@{motion} (or
-#         :L1,L2bg lvi-stagediff --xfer-range ...) moves just a motion's span.
-#       - These are ordinary, undoable buffer edits -- nothing touches git. Shuffle
-#         hunks, `u` to back a move out, hand-edit the index -- then :w to stage
-#         the exact state you've arrived at.
-#
-# So the model is one :w per pane: :w on the INDEX pane stages (reblob); :w on
-# the WORKING pane saves the working file to disk as usual (no reblob hook
-# there). Nothing is staged until you say so.
-#
-# Why reblob-the-whole-buffer rather than `git apply --cached` a patch: it can't
-# misapply (no fuzz), composes trivially (stage another hunk = reblob again), and
-# falls straight out of "the index pane's text IS the staged state."
-#
-# PARTIAL / ADJACENT HUNKS. \dp moves a whole diff-hunk, and `diff` coalesces two
-# changes with no unchanged line between them into ONE hunk -- so \dp can't split
-# them (neither can `git add -p`; that's what its `e` is for). Two outs:
-#   * g@{motion} / :L1,L2bg -- move just the lines you name onto the index pane.
-#     g@ is armed as an operatorfunc (g@ip, g@}, 3g@@); the typed form rides ex's
-#     address grammar (:12,14bg lvi-stagediff --xfer-range ...). Both are lvi-diff's
-#     --xfer-range; then :w on the index stages what you moved.
-#   * Hand-edit -- the index pane is a live buffer: move the merged hunk with \dp,
-#     delete back (or edit) the part you didn't mean, and :w. The blob is whatever
-#     you leave, so any state you can type is a state you can stage.
-#
-# UNSTAGING. In-session: `u` on the index pane backs out a move you haven't :w'd
-# yet (nothing was reblobbed). Already reblobbed: edit the index pane back to the
-# version you want staged and :w (POC-style), or `git reset` out of band -- a
-# dedicated per-hunk unstage-to-HEAD would want a HEAD-vs-index second mode (below).
+# Built on lvi-diff, which must sit beside this script. The highlighting,
+# scrollbind, hunk nav (]c/[c), fold-unchanged (zx), and hunk moves (\dp/\do,
+# \dx/g@) all come from it; lvi-stagediff adds the git seed and the reblob.
 #
 # SYNOPSIS
-#   lvi-stagediff FILE        open the index|working split for FILE and wire it up
-#   lvi-stagediff             use $LVI_FILE (i.e. run it from a map inside lvi)
-#   \dp     (working pane)    move the hunk under the cursor onto the index pane
-#   \do     (working pane)    pull the index's version of the hunk back into working
-#   g@{motion} / \dx {motion}  move the motion's line span onto the index pane
-#              (working pane)   (\dx is g@ under a \d-family leaf; see below)
-#   :w      (index pane)      STAGE the current index text
-#   :w      (working pane)    save the working file to disk (no staging)
-#   ]c / [c / zx (either)     next/prev hunk; fold unchanged (all from lvi-diff)
+#   lvi-stagediff FILE         open the index|working split for FILE, wire it up
+#   lvi-stagediff              use $LVI_FILE (run it from a map inside lvi)
+#   \dp     (working pane)     move the hunk under the cursor onto the index pane
+#   \do     (working pane)     pull the index's version of the hunk back to working
+#   \dx {motion} / g@{motion}  move just the motion's span (\dx ip, g@}, g@@ line)
+#           (working pane)
+#   ]c / [c / zx  (either)     next/prev hunk; fold unchanged (all from lvi-diff)
+#   :w      (index pane)       STAGE the current index text (reblob)
+#   :w      (working pane)     save the working file to disk, no staging
 #
-# THE g@ WIRING. --attach arms g@ on the working pane as lvi-diff's --xfer-range
-# operatorfunc, with the index view + canonical pair baked in (an absolute $DIFF
-# and an LVI= prefix so a custom $LVI propagates to the spawned child):
-#     set operatorfunc=LVI=lvi /path/to/lvi-diff --xfer-range IDX IDX WORK
-# g@ exports the motion's span as $LVI_LINE1/2 and the pane as $LVI_WID, which
-# --xfer-range defaults to, so nothing is baked but the destination and the pair.
-# --attach also installs `map \dx g@` on the working pane (a bare g@ -- the
-# operatorfunc is already armed), so the sub-hunk route sits in the \d diff family
-# beside \dp/\do and needs no hand-binding (mind lvi's no-timeout maps: \dx works
-# because \d is a menu prefix, not itself bound). LVI_DIFF_NOMAP=1 omits it along
-# with lvi-diff's \dp/\do, leaving any \dx of your own intact.
+# PARTIAL HUNKS. `diff` merges two changes with no unchanged line between them
+# into one hunk, and \dp moves that whole hunk (git add -p can't split it either;
+# that's its `e`). To stage less, either move just a motion's span with \dx/g@, or
+# move the whole hunk with \dp and delete back the part you didn't mean before :w.
+# The blob is whatever the index pane holds, so any state you can type, you stage.
 #
-# Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH GITDIR
-# wires staging onto two open views; --reblob GITDIR TOP REPOPATH is the index pane's
-# `on write` hook (it hashes $LVI_FILE, the pane's just-written temp file). GITDIR is
-# resolved once by the launcher and threaded down so the hook -- which runs in a new
-# tmux window with a fresh env -- can reach a repo located only via env (bare repo +
-# detached work tree, e.g. a $GIT_DIR/$GIT_WORK_TREE dotfiles checkout).
+# UNSTAGING. Before :w, `u` on the index pane backs a move out (nothing was staged
+# yet). After :w, edit the index pane back to the version you want and :w again, or
+# `git reset` out of band. A dedicated unstage-to-HEAD would want a second mode.
+#
+# g@ AND ENV. --attach binds \dx to `map \dx g@` on the working pane, with g@'s
+# operatorfunc armed to lvi-diff's --xfer-range (destination = the index pane), so
+# the sub-hunk route needs no hand-binding. LVI_DIFF_NOMAP=1 omits \dx along with
+# lvi-diff's \dp/\do. LVI overrides the lvi binary.
+#
+# Internal (not for direct use): --attach IDX WORK TOP REPOPATH GITDIR wires
+# staging onto two open views; --reblob GITDIR TOP REPOPATH is the index pane's
+# `on write` hook. GITDIR is resolved by the launcher and passed down because the
+# hook runs in a fresh tmux env, so a repo reachable only through the environment
+# (a bare repo + detached work tree, e.g. a $GIT_DIR/$GIT_WORK_TREE dotfiles
+# checkout) would otherwise be invisible to it.
 #
 # LIMITS (MVP): one file, no directory/index browser; unstaging to HEAD is hand-
-# edit + :w (see above) until a HEAD-vs-index mode lands. Conflicts are refused up
-# front (resolve them first).
+# edit + :w until a HEAD-vs-index mode lands. Conflicts are refused up front.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
