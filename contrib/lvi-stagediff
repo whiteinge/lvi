@@ -53,7 +53,8 @@
 #   lvi-stagediff             use $LVI_FILE (i.e. run it from a map inside lvi)
 #   \dp     (working pane)    move the hunk under the cursor onto the index pane
 #   \do     (working pane)    pull the index's version of the hunk back into working
-#   g@{motion} (working pane) move the motion's line span onto the index pane
+#   g@{motion} / \dx {motion}  move the motion's line span onto the index pane
+#              (working pane)   (\dx is g@ under a \d-family leaf; see below)
 #   :w      (index pane)      STAGE the current index text
 #   :w      (working pane)    save the working file to disk (no staging)
 #   ]c / [c / zx (either)     next/prev hunk; fold unchanged (all from lvi-diff)
@@ -64,10 +65,11 @@
 #     set operatorfunc=LVI=lvi /path/to/lvi-diff --xfer-range IDX IDX WORK
 # g@ exports the motion's span as $LVI_LINE1/2 and the pane as $LVI_WID, which
 # --xfer-range defaults to, so nothing is baked but the destination and the pair.
-# To (re)bind it to a key, set operatorfunc and press g@ in one map (mind lvi's
-# no-timeout maps: pick a key that isn't a prefix clash -- \dx keeps it in the
-# \d diff family, beside \dp/\do):
-#     map \dx :set operatorfunc=lvi-diff --xfer-range IDX IDX WORK<CR>g@
+# --attach also installs `map \dx g@` on the working pane (a bare g@ -- the
+# operatorfunc is already armed), so the sub-hunk route sits in the \d diff family
+# beside \dp/\do and needs no hand-binding (mind lvi's no-timeout maps: \dx works
+# because \d is a menu prefix, not itself bound). LVI_DIFF_NOMAP=1 omits it along
+# with lvi-diff's \dp/\do, leaving any \dx of your own intact.
 #
 # Internal entry points (not for direct use): --attach IDX WORK TOP REPOPATH GITDIR
 # wires staging onto two open views; --reblob GITDIR TOP REPOPATH is the index pane's
@@ -152,6 +154,10 @@ attach() {
   # --xfer-range (dest=idx, canonical pair idx,work), for peeling two changes `diff`
   # merged into one hunk. Still just a buffer edit; :w on the index stages it.
   "$LVI" -w "$work" -- "set operatorfunc=LVI='$(sq "$LVI")' '$(sq "$DIFF")' --xfer-range $idx $idx $work" >/dev/null 2>&1
+  # ...and put g@ behind a \d-family leaf so the sub-hunk route is discoverable
+  # beside \dp/\do (operatorfunc is already set, so the map is a bare g@; gated by
+  # LVI_DIFF_NOMAP like lvi-diff's move maps so your own \dx survives if you opt out).
+  [ -z "$LVI_DIFF_NOMAP" ] && "$LVI" -w "$work" -- 'map \dx g@' >/dev/null 2>&1
   "$LVI" -w "$idx"  -- 'status stage [index -- \dp/\do shuffle, :w stages]' >/dev/null 2>&1
   "$LVI" -w "$work" -- 'status stage [working -- \dp stage a hunk, \do restore it]' >/dev/null 2>&1
 }

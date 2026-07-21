@@ -434,5 +434,9 @@ map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 "   zx        toggle the fold over the surrounding unchanged region (z = folds)
 "   \d MENU   \dp put the hunk across to the peer, \do obtain it from the peer
 "             (vim's diff-mode dp / do, on the leader so they don't shadow d).
+" \dp moves a WHOLE hunk. For a smaller span, lvi-stagediff installs \dx on the
+" working pane (a g@ operator), so \dx ip / \dx } / :12,14 move just those lines
+" onto the index pane -- like \dp/\do it is wired into the pane at launch, not an
+" rc default (it carries per-session wids the rc can't know).
 
 " }}}
