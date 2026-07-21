@@ -1,23 +1,22 @@
 #!/bin/sh
 # lvi-reflow [-w WIDTH] [WIDTH] -- reflow plain-text lists, stdin->stdout.
 #
-# The one piece of vim's `formatoptions`/`formatlistpat` machinery that has no
-# faithful CLI equivalent: rewrap a bulleted/numbered list and keep each item's
-# marker while HANGING the wrapped continuation under the item's text (not under
-# the marker). par(1) repeats the prefix (right for `> ` quotes, wrong for `- `
-# bullets); fmt(1) can't hang at all; pandoc(1) only knows Markdown. So this is a
-# small purpose-built filter -- no socket, no editor state: it reads the selected
-# lines on stdin and writes the reflowed lines on stdout, which is exactly the
+# Rewrap a bulleted/numbered list, keeping each item's marker and HANGING the
+# wrapped continuation under the item's text (not under the marker). No CLI tool
+# does this faithfully: par(1) repeats the prefix (right for `> ` quotes, wrong
+# for `- ` bullets), fmt(1) can't hang at all, pandoc(1) only knows Markdown. So
+# this is a small purpose-built filter -- no socket, no editor state: it reads
+# the selected lines on stdin and writes the reflowed lines on stdout, the
 # contract of vi's `!` operator and of `gq`.
 #
 # DRIVE IT two ways, both already in the core:
 #   * `!{motion}lvi-reflow -w 72<CR>` -- the `!` filter operator prompts with the
 #     range; you type the command. `!ip`, `!}`, `!!` (current line + count).
 #   * `set fmtprg=lvi-reflow -w 72` in ~/.lvirc -- then `gqip` / `gqq` reflow
-#     lists (gq runs fmtprg; this is the closest thing to vim's gq you get).
+#     lists (gq runs fmtprg; the closest thing to vim's gq you get).
 #
-# WHAT COUNTS AS A LIST ITEM -- a faithful port of a hand-tuned vim
-# `formatlistpat`, embedded below as one ERE (edit MARKER to taste):
+# WHAT COUNTS AS A LIST ITEM -- a port of a hand-tuned vim `formatlistpat`,
+# embedded below as one ERE (edit MARKER to taste):
 #   * ordered / roman / single-letter, with an optional opening bracket and a
 #     closing delimiter:  `1.`  `12)`  `a)`  `(iv)`  `[3]`  `A:`  `{b}`
 #   * a bullet char followed by whitespace:  `-`  `+`  `o`  `*`  en-dash  bullet
@@ -25,12 +24,12 @@
 # indented to that column (the hanging indent). A deeper-indented item is its own
 # item with its own hang, so nested lists nest. A run of non-marker, non-blank
 # lines is one paragraph, wrapped at its first line's indent. Blank lines are
-# paragraph breaks and are preserved verbatim. Trailing whitespace is trimmed;
-# adjacent words are joined with a single space (vim's nojoinspaces feel).
+# preserved verbatim as paragraph breaks. Trailing whitespace is trimmed;
+# adjacent words are joined with a single space.
 #
-# Not a formatter dispatcher (that's lvi-fmt) and not list-aware in the semantic
-# sense (that's pandoc): it does one line-shaped job -- rewrap text that may or
-# may not be a list -- so it composes with any file type, code comments included.
+# Not a formatter dispatcher (that's lvi-fmt) and not semantically list-aware
+# (that's pandoc): it does one line-shaped job, rewrap text that may or may not
+# be a list, so it composes with any file type, code comments included.
 #
 # Config (env): LVI_REFLOW_WIDTH (default 79; -w / a bare numeric arg override),
 # LVI_REFLOW_TABSTOP (tab width used when measuring indent, default 8).

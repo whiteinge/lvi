@@ -34,33 +34,28 @@
 # $wid.lists is a directory, so socket discovery (which filters `[ -S ]`) skips it.
 # Persistent lists escape this disposable tree via `save`/`load` to any path.
 #
-# THREE SPAWN DISCIPLINES (why the callbacks all use --detach):
-#   * stepping is bound to a key and runs under `:silent !` -- lvi's loop is
-#     FROZEN waiting on us, so a call that *awaited* a reply would deadlock. We
-#     never read editor state while stepping (the cursor lives in our sidecar,
-#     the cursor's world in $LVI_* env), and every jump/paint is fire-and-forget
-#     (`lvi -w --detach`): it buffers on the socket and lands the instant lvi
-#     resumes. Same shape as lvi-open.
-#   * `paint` is also run from `:on bufenter` (via spawn_bg -- loop stays live),
-#     where --detach is simply harmless.
-#   * producers that must READ the buffer (grep %p) self-background instead; see
-#     lvi-search. lvi-list never reads the buffer.
+# SPAWN DISCIPLINE: every socket call here is fire-and-forget (`lvi -w
+# --detach`). Stepping runs under `:silent !` with lvi's loop FROZEN waiting on
+# us, so a call that awaited a reply would deadlock; a detached jump/paint
+# buffers on the socket and lands when lvi resumes. lvi-list never reads the
+# buffer (the cursor lives in our sidecar, its world in $LVI_* env), so it never
+# needs a reply. `paint` also runs from `:on bufenter`, where the loop stays
+# live. Producers that must READ the buffer self-background instead; see
+# lvi-search. (contrib/README.md covers the three disciplines in full.)
 #
 # PREVIEW (two ways to read an entry): stepping echoes the current entry's TEXT
-# (its file:line[:col]: prefix stripped -- you already know where you are) to lvi's
-# message line via :msg -- ephemeral, persist-until-next-key, so your next motion
-# clears it. The FULL entry (header + body) is `lvi-list preview` on stdout, meant
-# to be bound to a tmux popup for the multi-line diagnostics:
+# (its file:line[:col]: prefix stripped) to lvi's message line via :msg --
+# ephemeral, cleared by your next motion. The FULL entry (header + body) is
+# `lvi-list preview` on stdout, meant for a tmux popup of the multi-line
+# diagnostics:
 #   map \lp :silent !tmux display-popup -E "lvi-list -w $LVI_WID preview | less -R"<CR>
-# With no name, `preview` targets the LAST-STEPPED list, not the focused one: `]e`
-# steps `lint` without stealing n/N's focus, yet one \lp should still show the lint
-# entry you just navigated to. (Falls back through focus if nothing's been stepped.)
-# Two gotchas the -E command must dodge (both bit the obvious version): the popup
-# runs under the tmux SERVER, which does NOT inherit lvi's exported $LVI_SOCK /
-# $LVI_WID -- so pass -w explicitly (the outer :silent ! shell, which DOES have
-# them, expands it). And avoid $PAGER: zsh does not word-split it, so a `less
-# -imMWR`-style value is run as one command name and fails -- name the pager plain.
-# (:msge would flag it as an error; :msg is a neutral notice.)
+# With no name, `preview` targets the LAST-STEPPED list, not the focused one, so
+# `]e` steps `lint` without stealing n/N's focus yet \lp still shows the lint
+# entry you just navigated to (falls back through focus if nothing's been
+# stepped). Two gotchas the -E command must dodge: the popup runs under the tmux
+# SERVER, which does NOT inherit lvi's exported $LVI_SOCK/$LVI_WID -- pass -w
+# explicitly. And avoid $PAGER: zsh does not word-split it, so a `less -imMWR`-
+# style value runs as one command name and fails -- name the pager plain.
 #
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
 # Run from inside lvi (a map) and $LVI_WID/$LVI_SOCK are already in the env; from

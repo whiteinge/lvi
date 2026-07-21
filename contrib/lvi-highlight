@@ -1,54 +1,57 @@
 #!/bin/sh
 # lvi-highlight [WID] -- syntax-highlight a running lvi from the outside.
 #
-# The same bet as lvi-search: no in-editor language engine. This pulls the LIVE
-# buffer over the control socket (so it highlights UNSAVED content), runs an
+# The same approach as lvi-search: no in-editor language engine. This pulls the
+# LIVE buffer over the control socket (so it highlights UNSAVED content), runs an
 # external highlighter, and paints the result through lvi's styled :hl overlay.
-# Because whole tokens (including a still-open string or block comment) come back
-# as spans, an unclosed quote colors the rest of the file until you close it.
+# Whole tokens (including a still-open string or block comment) come back as
+# spans, so an unclosed quote colors the rest of the file until you close it.
+#
+# SYNOPSIS
+#   lvi-highlight [WID]          highlight the buffer now (default $LVI_WID)
+#   lvi-highlight off|on|toggle  suppress / resume / flip highlighting (:syntax off)
+#   lvi-highlight lang [NAME]    force the highlighter's language; bare `lang` clears
+#   lvi-highlight --theme [WID]  seed group colors from a Pygments style, then exit
+#   lvi-highlight --worker WID   run the buffer-reading half in front (measure/debug)
 #
 # Bind it inside lvi (styles + a trigger key), e.g. in ~/.lvirc:
-#
 #     hi Comment  fg=cyan italic      " define the theme once
 #     hi String   fg=green
 #     hi Keyword  fg=blue bold
 #     hi Number   fg=magenta
 #     hi Function fg=yellow
 #     hi Type     fg=cyan
-#     on change   lvi-highlight           " re-highlight a beat after you stop typing
-#     on bufenter lvi-highlight           " ...and when you switch/open a buffer
-#     map \hh :bg lvi-highlight<CR>       " ...and/or force it on a key (\h menu)
-#
-# The `hi` block above is optional: `lvi-highlight --theme` seeds the group
-# colors from a Pygments built-in style (via $LVI_PYGMENTS_STYLE) in one shot,
-# so `on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme` replaces the
-# hand-written `hi` lines. Theme mode is backend-specific (pygments supports it).
-#
+#     on change   lvi-highlight       " re-highlight a beat after you stop typing
+#     on bufenter lvi-highlight       " ...and when you switch/open a buffer
+#     map \hh :bg lvi-highlight<CR>   " ...and/or force it on a key (\h menu)
+#     map \ht :bg lvi-highlight toggle<CR>   " :syntax off / on
 # `change` is keyboard-only (a hook's own socket edits can't retrigger it, so no
 # loop); pair it with `bufenter` so a socket-driven :e (e.g. lvi-open) highlights
 # the file it lands on.
 #
+# THEME. The `hi` block above is optional: `lvi-highlight --theme` seeds the
+# group colors from a Pygments built-in style (via $LVI_PYGMENTS_STYLE) in one
+# shot, so `on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme` replaces
+# the hand-written `hi` lines. It is a one-shot seed for `on ready`, not a
+# per-change hook, and is backend-specific (pygments supports it).
+#
+# RUNTIME CONTROL. `off` clears the syntax groups and suppresses the hooks (a
+# `:syntax off`), `on` re-enables, `toggle` flips. When detection guesses wrong,
+# `lang NAME` forces the highlighter's language (e.g. `lang xml` for an .html
+# buffer that is really XML) and a bare `lang` clears the override; run it from a
+# :sh under lvi, e.g. `lvi-highlight lang xml`. State is per-view (for now), kept
+# beside the socket ($LVI_SOCK.hl-off, $LVI_SOCK.hl-lang), so run these inside lvi.
+#
 # It self-backgrounds a --worker: reading the buffer needs lvi's event loop,
 # which is frozen while a foreground `:silent !` child runs, so a foreground
 # read would deadlock (the same reason lvi-open uses --detach); under :bg or a
-# hook the detach is merely harmless, so any binding is safe. A skip or a
-# config error lands in the `hl` status segment (cleared by the next
-# successful paint). Run the worker directly for measuring/debugging:
-#     lvi-highlight --worker WID
+# hook the detach is harmless, so any binding is safe. A skip or a config error
+# lands in the `hl` status segment, cleared by the next successful paint.
 #
 # Config (env): LVI (client, default `lvi`), LVI_HL_BACKEND (adapter, default
 # `pygments` -> contrib/lvi-hl-pygments), LVI_HL_MAXBYTES (skip buffers larger
 # than this; whole-buffer lex is O(size); default 262144), LVI_HL_DEBUG (a file
 # to capture the worker's stderr).
-#
-# RUNTIME CONTROL. `lvi-highlight off` clears the syntax groups and suppresses
-# the hooks (a `:syntax off`); `on` re-enables, `toggle` flips. When detection
-# guesses wrong, `lvi-highlight lang NAME` forces the highlighter's language
-# (e.g. `lang xml` for an .html buffer that is really XML) and a bare `lang`
-# clears the override. State is per-view (for now), kept beside the socket
-# ($LVI_SOCK.hl-off, $LVI_SOCK.hl-lang), so run these from inside lvi:
-#     map \ht :bg lvi-highlight toggle<CR>      " :syntax off / on (\h menu)
-#     " force a language from a :sh under lvi:  lvi-highlight lang xml
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

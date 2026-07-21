@@ -1,30 +1,34 @@
 #!/bin/sh
 # lvi-lint [-w auto|WID] [--focus] -- lint the LIVE buffer into an `lvi-list`.
 #
-# The compiler face of the list machinery: run a linter over the buffer
-# (unsaved edits included), normalize its complaints to `file:line[:col]: text`
-# entries, and hand them to `lvi-list put lint` -- stepping, painting, and the
-# status counter all come from the shared machinery. vim's makeprg/errorformat,
-# re-cut for "UNIX as IDE": there is no errorformat language; a BACKEND ADAPTER
-# normalizes each tool's output with a few lines of awk instead.
+# Run a linter over the current buffer (unsaved edits included), normalize its
+# complaints to `file:line[:col]: text` entries, and hand them to `lvi-list put
+# lint`. Stepping, painting, and the status counter all come from the shared
+# list machinery. This is vim's makeprg/errorformat re-cut for "UNIX as IDE":
+# no errorformat language, just a per-tool adapter that reshapes output in a few
+# lines of awk.
+#
+# SYNOPSIS
+#   lvi-lint                    lint the current buffer (run from a map or hook)
+#   lvi-lint -w auto|WID        target a specific view instead of $LVI_WID
+#   lvi-lint --focus            lint now and aim n/N at the results
 #
 # THE ADAPTER CONTRACT (the lvi-hl-<name> shape): an executable
 # `lvi-lint-<name>` beside this script gets the buffer text on STDIN and the
-# buffer's real filename as $1, and emits `FILE:LINE[:COL]: text` on stdout --
+# buffer's real filename as $1, and emits `FILE:LINE[:COL]: text` on stdout.
 #   * FILE is $1 VERBATIM (not `-`, not a temp name), so entries match what
-#     lvi calls the buffer and jump/paint work in place (the lvi-search trick);
-#   * severity is folded into the text as an `E: `/`W: ` prefix (one list, one
+#     lvi calls the buffer and jump/paint work in place (the lvi-search trick).
+#   * Severity folds into the text as an `E: `/`W: ` prefix (one list, one
 #     style; splitting severities into separate lists is a possible follow-up).
-# Feeding the buffer on stdin -- with the tool's --stdin-filename flag -- is
-# what makes this live-buffer: no temp file, while the real path still anchors
+# Feeding the buffer on stdin -- via the tool's --stdin-filename flag -- is what
+# makes this live-buffer: no temp file, while the real path still anchors
 # filetype detection and config resolution (ruff finds your pyproject.toml). A
 # tool with no stdin mode can lint the disk file instead; its adapter header
 # must then say "reflects your last :w" (the lvi-gitchanges caveat).
 #
-# Backend: $LVI_LINT_BACKEND if set, else picked from the file's extension
-# (table below). Ships: ruff (python), shellcheck (sh), deno (js/ts). eslint,
-# luacheck, or `gcc -fsyntax-only` are the same handful of adapter lines when
-# you want them.
+# Backend: $LVI_LINT_BACKEND if set, else picked from the file extension (table
+# below). Ships ruff (python), shellcheck (sh), deno (js/ts); eslint, luacheck,
+# or `gcc -fsyntax-only` are a few more adapter lines when you want them.
 #
 # Bindings (rc):
 #     on write lvi-lint                    " lint on every save
@@ -36,17 +40,17 @@
 #     hi lint-cur bg=124 pri=11
 # The status counter doubles as the pass/fail glance: `lint [0/17]` means
 # findings, `lint [0/0]` after a run means clean. A failure never fakes that
-# clean, but it speaks with two voices, split by how we were invoked: run BY
-# HAND, every failure lands as a status-line error (:msge). Under a HOOK
-# ($LVI_EVENT set), which re-fires on every settle of every buffer, a buffer
-# that was never lintable (no file name, no backend for its extension) is
-# skipped in silence, and configured-but-broken (linter not installed, no
-# adapter, over the size cap) posts a `lint [...]` status segment instead --
-# idempotent across re-fires, replaced by the next successful run's counter.
+# clean; how it surfaces depends on how you invoked it. Run BY HAND, every
+# failure lands as a status-line error (:msge). Under a HOOK ($LVI_EVENT set),
+# which re-fires on every settle of every buffer, a buffer that was never
+# lintable (no file name, no backend for its extension) is skipped in silence,
+# and configured-but-broken (linter not installed, no adapter, over the size
+# cap) posts a `lint [...]` status segment instead -- idempotent across
+# re-fires, replaced by the next successful run's counter.
 #
 # It self-backgrounds a --worker like lvi-highlight: reading the buffer needs
 # lvi's event loop. Under `on write`/:bg the loop is live and the detach is
-# merely harmless; under a `:silent !` binding it is what prevents the deadlock.
+# harmless; under a `:silent !` binding it is what prevents the deadlock.
 #
 # Config: LVI (client, default `lvi`), LVI_LINT_BACKEND (adapter name),
 # LVI_LINT_MAXBYTES (skip buffers larger than this, default 262144),

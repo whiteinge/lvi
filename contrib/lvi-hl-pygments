@@ -1,44 +1,36 @@
 #!/usr/bin/env python3
 # lvi-hl-pygments -- Pygments syntax-highlighting adapter for lvi-highlight.
 #
-# Adapter contract (shared by every backend): read the buffer text on stdin,
-# take the filename as argv[1] (may be empty) and an optional language name as
-# argv[2] (overrides filename detection when set), and print `hl GROUP L:C1-C2 ...`
-# ex commands on stdout -- byte columns, 1-based, one line per group. Columns
-# are BYTES so they map straight onto lvi's :hl overlay (which is byte-indexed).
+# Adapter contract (shared by every backend): read buffer text on stdin, take
+# the filename as argv[1] (may be empty) and an optional language name as argv[2]
+# (overrides filename detection when set), and print `hl GROUP L:C1-C2 ...` ex
+# commands on stdout -- one line per group, columns 1-based BYTES so they map
+# straight onto lvi's byte-indexed :hl overlay.
 #
 # It always prints EVERY canonical group, emitting a bare `hl GROUP` (no spans)
-# for the empty ones. That makes a re-highlight a clean replace of exactly the
-# syntax groups, leaving other overlay groups (e.g. `search`) untouched.
-#
-# Pygments is a natural positional backend: get_tokens_unprocessed tiles the
-# input exactly, so walking the tokens in order gives precise offsets -- and a
-# multi-line token (an unclosed string, a block comment) is split into one span
-# per line automatically, which is exactly what colors the "rest of the file" in
-# the unclosed-string case.
+# for the empty ones, so a re-highlight cleanly replaces the syntax groups and
+# leaves other overlay groups (e.g. `search`) untouched. Pygments tiles the
+# input exactly, so a multi-line token (unclosed string, block comment) splits
+# into one span per line on its own.
 #
 # THEME MODE (`--theme`): print the `hi GROUP ...` block for a Pygments built-in
-# style instead of highlighting stdin, then exit. This seeds the group colors
-# you would otherwise hand-write in your rc, so the two surfaces stay in sync.
-# The adapter only prints to stdout (positional contract); `lvi-highlight
-# --theme` is the piece that runs this and pushes the block over the socket, so
-# wire it up once at startup, NOT on every change:
+# style instead of highlighting stdin, then exit -- a starting point for the
+# group colors you would otherwise hand-write in your rc. The adapter only
+# prints to stdout; `lvi-highlight --theme` runs this and pushes the block over
+# the socket, so wire it up once at startup, NOT on every change:
 #     on ready LVI_PYGMENTS_STYLE=monokai lvi-highlight --theme
-# Because lvi owns the theme, any `hi` you set afterward in the rc still wins;
-# the emitted block is just a starting point you can override group by group.
+# lvi owns the theme, so any `hi` you set afterward in the rc still wins.
 #
 # ENVIRONMENT
 #   LVI_PYGMENTS_STYLE   Pygments style name for `--theme` (default "default";
-#                        try `pygmentize -L styles` for the full list, e.g.
-#                        monokai, solarized-dark, gruvbox-dark, nord). Ignored
-#                        outside --theme -- highlighting is positional, so the
-#                        per-change path never touches colors.
+#                        `pygmentize -L styles` lists them, e.g. monokai,
+#                        solarized-dark, gruvbox-dark, nord). Ignored outside
+#                        --theme -- highlighting is positional, never colored.
 #   LVI_PYGMENTS_DEPTH   Color depth of the `--theme` block: truecolor (default,
-#                        exact 24-bit color), 256 (nearest xterm-256 slot -- the
-#                        same one `pygmentize -f terminal256` would pick), 16 or
-#                        8 (nearest ANSI color, which then follows your terminal
-#                        palette). Only affects --theme; the positional path
-#                        emits no color at any depth.
+#                        exact 24-bit), 256 (nearest xterm-256 slot, the one
+#                        `pygmentize -f terminal256` would pick), 16 or 8
+#                        (nearest ANSI color, which then follows your terminal
+#                        palette). Only affects --theme.
 import os
 import sys
 from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, get_lexer_by_name

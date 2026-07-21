@@ -1,41 +1,35 @@
 #!/bin/sh
-# lvi-tags [-w auto|WID]
+# lvi-tags [-w auto|WID] -- a ctags outline of the current file, in a fuzzy picker.
 #
-# A ctags-driven outline of the CURRENT file: list every tag defined in it, in
-# file order, through a fuzzy picker (fzy/fzf); pick one and the view jumps to
-# its line. Two uses in one: jump straight to a function/section, or just scroll
-# the picker as a quick structural overview of the buffer.
+# Lists every tag defined in the CURRENT file, in file order, through a picker
+# (fzf/fzy/sk); pick one and the view jumps to its line. Use it to jump straight
+# to a function or section, or just scroll the picker as a structural overview.
+# It tags the IN-MEMORY buffer, so it reflects your unsaved edits -- the point of
+# driving a running editor. There is no `tags` file; ctags' stdout is read
+# directly (see contrib/README.md for why no readtags).
 #
-# LIVE BUFFER, NOT A tags FILE: it tags the in-memory buffer, so it reflects
-# your unsaved, in-progress edits -- the whole point of driving a running
-# editor. There is no `tags` file: ctags' stdout is read directly (the
-# standard tag format; see contrib/README.md for why no readtags).
+# SYNOPSIS
+#   map \t :wbuf<CR>:silent !lvi-tags<CR>   bind it inside lvi (keep the :wbuf)
+#   lvi-tags -w auto|WID                    run from another terminal
 #
-# GETTING THE BUFFER: two ways, and we can't just read `%p` on demand. A picker
-# needs the terminal, so this is bound with `:silent !` -- which FREEZES lvi's
-# event loop while we run, so a `%p` read back over the socket would deadlock
-# (lvi can't answer while it's blocked handing us the tty). So the binding dumps
-# the buffer to a file FIRST, with lvi's `:wbuf` (writes $LVI_BUFFER), then hands
-# us the tty:
-#     map \t :wbuf<CR>:silent !lvi-tags<CR>
-# Keep the :wbuf prefix in the map: without it, the picker tags whatever an
-# earlier :wbuf dumped -- a stale snapshot, possibly of a different buffer.
-# We read that file ($LVI_TAGS_DUMP overrides, else $LVI_BUFFER). Run from
-# ANOTHER terminal (`lvi-tags -w WID`), lvi is NOT frozen and $LVI_BUFFER is not
-# in our env, so we fall back to reading `%p` live over the socket.
+# GETTING THE BUFFER. A picker needs the terminal, so the map runs under
+# `:silent !`, which freezes lvi's event loop while we hold the tty -- a `%p`
+# read back over the socket would deadlock. So the map dumps the buffer FIRST
+# with lvi's `:wbuf` (writes $LVI_BUFFER), then hands us the tty; we read that
+# file ($LVI_TAGS_DUMP overrides, else $LVI_BUFFER). Keep the :wbuf prefix, or
+# the picker tags a stale snapshot -- possibly of a different buffer. Run from
+# another terminal (-w WID), lvi is not frozen and $LVI_BUFFER is unset, so we
+# read `%p` live over the socket instead.
 #
-# LANGUAGE DETECTION: ctags can't read a pipe (it skips non-regular files) and
-# the dump file's name ($LVI_BUFFER) has no useful extension, so we copy the
-# content into a temp file named with the buffer's *basename* -- that name is
-# what lets ctags pick the language, and it still reads the shebang/modeline from
-# the content. Consequence: an unnamed buffer can't be tagged (no name to detect
-# from); we bail, same as a buffer with no file.
+# LANGUAGE DETECTION. ctags can't read a pipe and the dump file's name has no
+# useful extension, so we copy the content into a temp file named with the
+# buffer's basename -- that name lets ctags pick the language (it still reads the
+# shebang/modeline from the content). An unnamed buffer can't be tagged; we bail.
 #
-# Each row shows the tag's own definition line (ctags stores it as the search
-# pattern), which is what makes the list read like an outline; rows are sorted
-# by line number (from `--fields=+n`) so file order is preserved. The jump back
-# uses --detach (fire-and-forget -- a synchronous reply would deadlock while lvi
-# is frozen on us, exactly like lvi-open).
+# Each row shows the tag's definition line (ctags' search pattern), which makes
+# the list read like an outline; rows sort by line number (`--fields=+n`) to keep
+# file order. The jump uses --detach (fire-and-forget -- a synchronous reply would
+# deadlock while lvi is frozen on us).
 #
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
 # LVI_CTAGS (ctags binary, default `ctags`; wants Universal Ctags), LVI_TAGS_DUMP

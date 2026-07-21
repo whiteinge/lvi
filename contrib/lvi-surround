@@ -1,16 +1,16 @@
 #!/bin/sh
-# lvi-surround PAIR  --  wrap the span of a g@ motion in a delimiter pair. The
-# tpope-surround reflex ("add () around this word") rebuilt on the g@ operator
-# instead of a bespoke ys/cs/ds grammar: lvi has no operatorfunc-only builtin, so
-# `:set operatorfunc=lvi-surround PAIR` arms it and g@{motion} does the rest --
-# the motion picks the text, this script wraps it.
+# lvi-surround PAIR  --  wrap the span of a g@ motion in a delimiter pair.
 #
-# It is a SPAWN-flavor operator (fired detached by g@, like :bg), so it reads the
-# span from the environment and edits back over the socket rather than filtering
-# stdin->stdout the way the ! operator's tools do (lvi-incr, lvi-reflow). That is
-# what lets it reach PART of a line: a charwise motion hands over byte columns,
-# not just whole lines. The edit is one call: the splice, a byte-exact cursor
-# restore (:pos), then `fire` so change-hook consumers see the new text.
+# The tpope-surround reflex ("add () around this word"), on the g@ operator
+# instead of a bespoke ys/cs/ds grammar: `:set operatorfunc=lvi-surround PAIR`
+# arms it and g@{motion} does the rest -- the motion picks the text, this script
+# wraps it.
+#
+# A spawn operator: g@ fires it detached (like :bg), so it reads the span from
+# the environment and edits back over the socket. That lets it wrap PART of a
+# line -- a charwise motion hands over byte columns, not just whole lines. The
+# edit is one call: the splice, a byte-exact cursor restore (:pos), then `fire`
+# so change-hook consumers see the new text.
 #
 # THE SPAN (exported by g@, see the manpage):
 #   $LVI_KIND          "char" | "line"

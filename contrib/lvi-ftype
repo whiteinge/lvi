@@ -1,10 +1,10 @@
 #!/bin/sh
 # lvi-ftype -- per-filetype options (sw, et, fmtprg, ...) on buffer entry.
 #
-# vim's ftplugin, re-cut for lvi: on entering a buffer, look at its name and push
-# the right options over the socket. No filetype-detection engine and no
-# per-buffer option store -- two `case`s and a few `set`s. Wire it as a bufenter
-# hook, which fires for the starting buffer and on every :e / switch:
+# vim's ftplugin for lvi: on entering a buffer, look at its name and push the
+# right options over the socket. No filetype-detection engine and no per-buffer
+# option store -- two `case`s and a few `set`s. Wire it as a bufenter hook, which
+# fires for the starting buffer and on every :e / switch:
 #
 #     on bufenter lvi-ftype
 #
@@ -15,30 +15,28 @@
 #
 #     on bufenter ~/.config/lvi/lvi-ftype
 #
-# Two stages keep it maintainable. CLASSIFY maps a name (or, for the
-# extensionless, a shebang) to a filetype word; CONFIGURE maps that word to
-# options. So a filetype's settings live in ONE place -- the extension list and
-# the shebang list are just two detectors feeding the same word, and `file`(1)
-# or another detector would slot in beside them. The CONFIGURE table is what you
-# tweak.
+# Two stages. CLASSIFY maps a name (or, for the extensionless, a shebang) to a
+# filetype word; CONFIGURE maps that word to options. So a filetype's settings
+# live in ONE place -- the extension list and the shebang list are two detectors
+# feeding the same word, and `file`(1) or another detector would slot in beside
+# them. The CONFIGURE table is what you tweak.
 #
 # Use ONE such hook, not several stacked. Options are view-global, not
 # per-buffer, so each rule is a TOTAL projection: it sets everything it cares
 # about and the `*)` arm resets the rest, re-applied on every switch so no buffer
-# inherits the last one's settings. Corollary, by design: a manual `:set sw=2`
-# lasts only until the next switch, when the table re-projects over it. There is
-# no per-buffer "the user touched this" bit to preserve it -- for a lasting
-# change, edit the table.
+# inherits the last one's settings. Corollary: a manual `:set sw=2` lasts only
+# until the next switch, when the table re-projects over it. There is no
+# per-buffer "the user touched this" bit -- for a lasting change, edit the table.
 #
 # Optionally, lvi-detect-indent reads the file's actual indentation and overrides
-# the table's et/sw, so editing a 2-space file does not fight it with a 4-space
-# default (content beats name; an inconclusive or absent detector leaves the
-# table's value). It is one line below -- comment it out to key indent off the
-# name alone, or drop lvi-detect-indent on your PATH to enable it.
+# the table's et/sw, so editing a 2-space file does not fight a 4-space default
+# (content beats name; an inconclusive or absent detector leaves the table's
+# value). It is one line below -- comment it out to key indent off the name
+# alone, or drop lvi-detect-indent on your PATH to enable it.
 #
-# fmtprg is the payoff: per-language `gq` / `:fmt` formatters. It (and
-# operatorfunc, and any other value bearing spaces) takes the REST of its :set
-# line, so it goes as its own command; the packable flags share one `set`.
+# fmtprg gives per-language `gq` / `:fmt` formatters. It (and operatorfunc, and
+# any other value bearing spaces) takes the REST of its :set line, so it goes as
+# its own command; the packable flags share one `set`.
 # `lvi -w -- A B` sends A and B as two commands, so both reach the view at once.
 # It is projected on every switch like the flags -- an arm with no formatter of
 # its own falls back to $default_fmt -- so the hook OWNS fmtprg: set your global

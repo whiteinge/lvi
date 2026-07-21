@@ -2,10 +2,9 @@
 # lvi-incr [-s STEP] [-b BASE]  --  increment or renumber the first number on
 # each input line. A filter, built for lvi's ! operator.
 #
-# lvi has no Ctrl-A / Ctrl-X. It does not need them: because the ! operator pipes
-# a line range through any command, one small filter recovers both the point
-# increment and vim's visual "g Ctrl-A" (an incrementing ramp down a column) --
-# the ! operator is exactly the seam a built-in Ctrl-A would have had to be.
+# lvi has no Ctrl-A / Ctrl-X; the ! operator pipes a line range through any
+# command, so this one filter recovers both the point increment and vim's visual
+# "g Ctrl-A" (an incrementing ramp down a column).
 #
 #   !!lvi-incr           bump the first number on THIS line by 1     (point Ctrl-A)
 #   !ip lvi-incr         bump line i's number by i, so a 0/0/0 column becomes

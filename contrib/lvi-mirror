@@ -2,84 +2,41 @@
 # lvi-mirror [WID] -- mirror a running lvi's live buffer into every OTHER view
 # open on the same file, so an edit in one tmux pane appears in the others.
 #
-# Same premise as lvi-search/lvi-highlight: no in-editor multi-window. tmux (or
-# any multiplexer) owns the panes -- each runs its own `lvi thefile`, a separate
-# process with its own buffer and socket. This script is the thread between them:
-# it pulls the LIVE buffer over the control socket (so UNSAVED edits propagate,
-# which a file-watch+:e never could) and writes it into the peers, also over the
-# socket.
+# lvi has no in-editor multi-window: tmux (or any multiplexer) owns the panes,
+# each running its own `lvi thefile` as a separate process with its own buffer
+# and socket. This script connects them. It pulls the LIVE buffer over the
+# control socket (so UNSAVED edits propagate, which a file-watch + :e never
+# could) and writes it into the peers, also over the socket. Peers are matched
+# by canonicalized filename.
 #
-# Bind it on BOTH change and write -- two lines in ~/.lvirc, in EVERY pane:
+# TURN IT ON. Two lines in ~/.lvirc, in EVERY pane:
 #
 #     on change lvi-mirror      " propagate edits as they settle
 #     on write  lvi-mirror      " propagate the saved/clean state on :w
 #
-# LOOP SAFETY: a `change` hook fires only after a KEYBOARD edit settles; a peer
-# receives our push over its SOCKET, and socket-sourced edits never arm the
-# change hook on their own (see editor.lua's handle_socket_command). A push does
-# end with an explicit `fire` -- so the peer's OTHER change consumers (live
-# highlighting) see the new text -- and that re-runs the peer's own
-# `on change lvi-mirror`: the ECHO. Each push records a hash of what it
-# delivered beside the destination's socket; a worker whose own content still
-# matches that record knows it is the echo and never pushes CONTENT -- a
-# dirty echo exits at once, a clean one only completes the modified-flag sync
-# to peers still in step. That is correctness, not thrift: an echo that
-# pushed would diff the origin pane, where the human may have typed on past
-# the settle, against its own older content, and push back a REVERT of the
-# newest keystrokes. Every pane can carry the identical `on change
-# lvi-mirror` and the mesh is stable by construction -- no instance needs to
-# know the topology in advance.
+# Every pane carries the identical hook; the mesh is stable by construction and
+# no instance needs to know the topology. It pushes only the changed hunks (via
+# POSIX `diff`), not the whole buffer, so a peer's untouched lines keep their
+# marks, highlights, and scroll, and its modified flag stays in sync.
 #
-# It self-backgrounds (double-fork) exactly like lvi-highlight: reading a peer's
-# buffer needs lvi's event loop, which is FROZEN if we were invoked from a
-# foreground `:silent !` map -- so we return at once and let lvi resume to
-# service our socket I/O. Under `:on change` (spawn_bg) the loop is already live
-# and the extra background is simply harmless. Run the worker directly to debug:
+# It self-backgrounds (double-fork) so a foreground `:silent !` map returns at
+# once and lvi can resume to service the worker's socket reads. Run the worker
+# directly to debug:
 #
-#     lvi-mirror --worker WID          # (LVI_MIRROR_DEBUG=/path captures stderr)
-#
-# HOW IT PUSHES -- DIFF-DRIVEN. Rather than shipping the whole buffer every
-# settle, we `diff` the peer's content against ours and apply only the changed
-# hunks, so untouched lines keep their identity (the peer's marks/highlights, and
-# its scroll, survive) and the socket carries O(diff), not O(filesize). We use
-# diff's NORMAL output (POSIX base utility, format identical on Linux/macOS/BSD --
-# no git needed), NOT `diff -e`: an ed-script's multi-line insert blocks would be
-# shredded by the socket's newline framing. Each hunk becomes lvi-native
-# single-line commands, applied BOTTOM-UP so old line numbers stay valid:
-#     delete  a,b       ->  :a,bd _
-#     append  after a   ->  :a  r !sed -n 'b1,b2p' NEWTMP   (pull new lines from us)
-#     change  a,b       ->  :a-1 r !sed -n 'b1,b2p' NEWTMP  then  :a+k,b+kd _
-# A change reads the new lines in BEFORE deleting the old (k = the insert's
-# line count): the other order, on a change spanning the whole buffer, empties
-# it -- and the >=1-line invariant then leaves a blank line the read does not
-# replace, a phantom the peer keeps forever. Deletes name the black-hole
-# buffer `_`, so a background sync never rotates the peer's delete history or
-# feeds a command-backed clipboard. The cursor: :d/:r
-# move it as a side effect, so we save the peer's position, shift it by the net
-# line-delta of the hunks ABOVE it (so it tracks its content across edits higher
-# up), and restore it last with :pos.
-#
-# THE MODIFIED FLAG comes along for free in the DIRTY direction (a mirrored edit
-# is a real splice on the peer, so the peer goes modified on its own). Only the
-# CLEAN transitions need help -- a :w changes no content, and an undo-to-saved
-# reaches the peer as forward splices, so neither would clear the peer's flag.
-# Rule: identical content against the same file has identical dirtiness, so we
-# read OUR flag (`set modified?`) and, whenever we are clean, tell each in-sync
-# peer `set nomodified`. That one push fixes both the save and the undo-to-clean
-# cases. (We never need to force a peer dirty: it already is, from the splices.)
+#     lvi-mirror --worker WID          # LVI_MIRROR_DEBUG=/path captures stderr
 #
 # LIMITS (by design, for now):
-#   * Views are matched by filename, so an unnamed ([No File]) buffer can't
-#     mirror, and two panes must have opened the SAME path (canonicalized here,
-#     so cwd differences are fine; a hardlink under two names is not).
-#   * One human, several viewports: last-writer-per-settle wins. Two panes typing
-#     into the same region inside one 150ms window can lose an update -- there is
-#     no OT/CRDT here and there won't be.
-#   * A settle's whole push is ONE undo step on the peer (`undojoin` threads the
-#     hunk commands together), and undo (a keyboard act) itself mirrors back, so
-#     undo is quasi-global. Know this before leaning on it.
-#   * `:wq`/`:x` fire write, but the pane is exiting -- its socket closes before
-#     this worker can read it back, so the FINAL save may not clear the peers'
+#   * Matched by filename, so an unnamed ([No File]) buffer can't mirror, and
+#     two panes must have opened the SAME path (cwd differences are fine; a
+#     hardlink under two names is not).
+#   * One human, several viewports: last-writer-per-settle wins. Two panes
+#     typing into the same region within one 150ms window can lose an update;
+#     there is no OT/CRDT here and there won't be.
+#   * A settle's whole push is ONE undo step on the peer, and undo (a keyboard
+#     act) itself mirrors back, so undo is quasi-global. Know this before
+#     leaning on it.
+#   * `:wq`/`:x` fire write, but the pane is exiting: its socket closes before
+#     the worker can read it back, so the FINAL save may not clear the peers'
 #     flags. A plain `:w` (pane stays open) propagates reliably; that's the norm.
 #
 # Config (env): LVI (client, default `lvi`); LVI_MIRROR_MAXBYTES (skip buffers

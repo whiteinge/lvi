@@ -1,41 +1,37 @@
 #!/bin/sh
 # lvi-fmt [-w auto|WID] -- run a formatter over the LIVE buffer, splice minimally.
 #
-# `:%!ruff format -` works today -- do_filter is one splice, one undo -- but it
-# parks the cursor at line 1, dirties the buffer even when the output is
-# identical, and makes you remember each tool's stdin incantation. lvi-fmt
-# formats OUTSIDE the buffer and only then edits: it pulls the live buffer over
-# the socket, runs the formatter picked for the file, diffs, and replaces just
-# the changed WINDOW (first..last differing line) with one command. So:
+# It formats OUTSIDE the buffer, then edits: pull the live buffer over the socket,
+# run the formatter picked for the file, diff, and replace just the changed WINDOW
+# (first..last differing line) in one command. Unlike a plain `:%!fmt -`, which is
+# one splice but parks the cursor at line 1 and dirties the buffer even when the
+# output is identical:
 #   * ONE undo reverts the whole format (the gesture you actually want);
 #   * the cursor stays put, shifted by the line-delta of changes above it;
 #   * an already-formatted buffer is a true no-op -- no splice, stays clean;
-#   * a formatter that fails (syntax error) touches nothing: the buffer is
-#     edited only after a successful run, and the failure lands in the `fmt`
-#     status segment (cleared again by the next successful format).
+#   * a formatter that fails (syntax error) touches nothing: the buffer is edited
+#     only after a successful run, and the failure lands in the `fmt` status
+#     segment (cleared by the next successful format).
 # Marks above/below the window survive; marks inside it are at the formatter's
 # mercy -- the same trade every formatter makes.
 #
-# BACKEND: $LVI_FMT_CMD if set -- a shell command reading the buffer on stdin
-# and writing the formatted text on stdout; "$fname" holds the buffer's path
-# (e.g. LVI_FMT_CMD='prettier --stdin-filepath "$fname"'). Else picked from
-# the file's extension: ruff format (py), shfmt (sh), gofmt (go), stylua
-# (lua), deno fmt (js/ts/json/md). Passing the real name via each tool's
-# --stdin-filename-style flag keeps config resolution anchored to the file
-# while the CONTENT is the unsaved buffer.
+# BACKEND: $LVI_FMT_CMD if set -- a shell command reading the buffer on stdin and
+# writing the formatted text on stdout; "$fname" holds the buffer's path (e.g.
+# LVI_FMT_CMD='prettier --stdin-filepath "$fname"'). Else picked from the file's
+# extension: ruff format (py), shfmt (sh), gofmt (go), stylua (lua), deno fmt
+# (js/ts/json/md). Each tool gets the real name via its stdin-filename flag, so
+# config resolution stays anchored to the file while the CONTENT is the buffer.
 #
 # Bind it (non-interactive -> :bg; mnemonic: vim's = operator):
 #     map \= :bg lvi-fmt<CR>
-# Deliberately NOT an `on write` suggestion: that hook fires after the file is
-# already written, so a format there would re-dirty the buffer on every save.
-# Format, then :w.
+# NOT an `on write` hook: that fires after the file is written, so formatting
+# there would re-dirty the buffer on every save. Format, then :w.
 #
-# It self-backgrounds a --worker like lvi-highlight (reading the buffer needs
-# lvi's event loop), applies the edit in one synchronous round-trip -- content,
-# cursor, status, then `fire` so change-hook consumers (live highlighting) see
-# the new text (socket edits don't arm them on their own) -- and cleans up.
-# Temp files carry buffer text, so they live beside the socket in lvi's
-# private per-uid dir, not in the shared /tmp.
+# It self-backgrounds a --worker (reading the buffer needs lvi's event loop),
+# applies the edit in one synchronous round-trip -- content, cursor, status, then
+# `fire` so change-hook consumers (live highlighting) see the new text (socket
+# edits don't arm them) -- and cleans up. Temp files carry buffer text, so they
+# live beside the socket in lvi's private per-uid dir, not shared /tmp.
 #
 # Config: LVI (client, default `lvi`), LVI_FMT_CMD (see BACKEND),
 # LVI_FMT_MAXBYTES (skip buffers larger than this, default 262144),

@@ -1,22 +1,23 @@
 #!/bin/sh
 # lvi-comment [STYLE]  --  toggle line comments over the span of a g@ motion.
-# The comment-out reflex ("gcc" / "gc{motion}" in the plugins) rebuilt on the g@
-# operator: `:set operatorfunc=lvi-comment` arms it and g@{motion} comments (or
-# un-comments) the lines the motion spans. Toggling is per-span -- if every
-# non-blank line in the span is already commented, it strips the comment;
-# otherwise it adds one. So the same key comments and un-comments.
 #
-# A SPAWN-flavor operator (fired detached by g@, like :bg): it reads the span
-# from $LVI_LINE1/$LVI_LINE2 and edits back over the socket in one call -- the
-# splice, a byte-exact cursor restore (:pos), then `fire` so change-hook
-# consumers (live highlighting) see the new text. Commenting is line-wise by
-# nature, so $LVI_KIND/$LVI_COL* are ignored -- a charwise motion still
-# comments the whole lines it touches.
+# The comment-out reflex ("gcc"/"gc{motion}" in the vim plugins), on the g@
+# operator: `:set operatorfunc=lvi-comment` arms it and g@{motion} comments the
+# lines the motion spans. It toggles per span -- if every non-blank line is
+# already commented it strips the comment, otherwise it adds one -- so the same
+# key comments and un-comments.
 #
-# STYLE picks the comment syntax. Give it explicitly, or omit it to guess from
-# the file's extension ($LVI_FILE). Shell-safe aliases are provided because the
-# operatorfunc value runs through sh (os.execute), where a bare # or <!-- would
-# be mangled -- so prefer the alias, or quote the literal:
+# A spawn operator: g@ fires it detached (like :bg), so it reads the span from
+# $LVI_LINE1/$LVI_LINE2 and edits back over the socket in one call (the splice, a
+# byte-exact cursor restore via :pos, then `fire` so change-hook consumers like
+# live highlighting see the new text). Commenting is line-wise, so $LVI_KIND and
+# $LVI_COL* are ignored -- a charwise motion still comments the whole lines it
+# touches.
+#
+# STYLE picks the comment syntax -- give it explicitly, or omit it to guess from
+# the file's extension ($LVI_FILE). The operatorfunc value runs through sh, where
+# a bare # or <!-- gets mangled, so prefer the shell-safe alias (or quote the
+# literal):
 #     //   or  c            // line comment          C, JS, Go, Rust, ...
 #     '#'  or  hash          # line comment          shell, Python, YAML, ...
 #     --   or  dash         -- line comment          Lua, SQL, Haskell

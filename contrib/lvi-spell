@@ -1,15 +1,15 @@
 #!/bin/sh
 # lvi-spell [-w auto|WID] [toggle|on|off|scan|fix|add] -- spell-check a running lvi.
 #
-# vim's `:set spell`, rebuilt outside the editor: an ispell-pipe spell checker
+# vim's `:set spell`, rebuilt outside the editor: an ispell-pipe checker
 # (aspell/hunspell) reads the LIVE buffer over the control socket, and one scan
 # feeds TWO consumers at once --
-#   * the styled :hl overlay, group `spellbad`, with exact word extents
-#     (L:C1-C2) -- the lvi-highlight posture: misspelled words are marked
-#     mid-line, not with whole-line signs;
-#   * an `lvi-list` named `spell` -- the lvi-search posture: ]s/[s step the
-#     misspellings and the status line counts them.
-# Overlay for the eyes, list for the fingers; same scan, two views of it.
+#   * the styled :hl overlay, group `spellbad`, with exact word extents (L:C1-C2)
+#     so misspellings are marked mid-line, not with whole-line signs (as
+#     lvi-highlight does);
+#   * an `lvi-list` named `spell`, so ]s/[s step the misspellings and the status
+#     line counts them (as lvi-search does).
+# Same scan, two views of it: the overlay to read, the list to step through.
 #
 #   lvi-spell [toggle]    enable/disable (the default subcommand)
 #   lvi-spell scan        re-check now (the hook target; instant no-op when off)

@@ -1,39 +1,35 @@
 #!/bin/sh
 # lvi-complete -- insert-mode word completion from the open buffers, for lvi.
 #
-# The completer half of lvi's `on complete` funnel. lvi binds Ctrl-P/Ctrl-N in
-# insert mode to the command registered with `on complete`; on the keypress it
-# runs that command, handing it the token being typed and the text of ALL open
-# buffers, and splices the command's stdout in over the token. This script is
-# that command: it turns the buffer text into a de-duplicated word list, runs it
-# through a fuzzy picker seeded with the token, and prints the chosen word.
-#
-# It reads from the environment + stdin that lvi's complete_run sets up:
-#   stdin              every open buffer's text, CURRENT BUFFER FIRST
-#   $LVI_COMPL_TOKEN   the non-blank run before the cursor, and what lvi replaces
-#                      with our output. We fuzzy-query on only its trailing word
-#                      run (so `(foo` completes `foo`) and restore the rest around
-#                      the result (so `(foo` -> `(foobar`, not `foobar`).
-#   $LVI_COMPL_LINE    the line's text up to the cursor (unused here; it's the
-#                      hook a future dispatcher would classify on -- see below)
-#   $LVI_COMPL_DIR     prev (Ctrl-P) or next (Ctrl-N); advisory, unused here
-# Current-buffer-first + a stable de-dupe (awk keeps the first sighting) is what
-# makes this buffer's own words sort ahead of the others -- no extra work.
+# The completer behind lvi's `on complete` funnel. lvi binds Ctrl-P/Ctrl-N in
+# insert mode to the `on complete` command; on the keypress it runs that command
+# with the token being typed and the text of ALL open buffers, and splices the
+# command's stdout in over the token. This script is that command: it turns the
+# buffer text into a de-duplicated word list, runs it through a fuzzy picker
+# seeded with the token, and prints the chosen word.
 #
 # Turn it on in your rc:
 #   on complete lvi-complete
 #
-# A NON-JARRING POPUP: by default the picker takes the whole terminal for a beat.
-# Set LVI_COMPL_POPUP=1 and, inside tmux, it runs in a `display-popup` drawn OVER
-# the editor instead (lvi stays on its alt screen under it -- see complete_run's
-# keep=true). Any other overlay mechanism is a drop-in: the contract is just
-# "read a list on stdin, print one line."
+# It reads the environment + stdin that lvi's complete_run sets up:
+#   stdin              every open buffer's text, CURRENT BUFFER FIRST
+#   $LVI_COMPL_TOKEN   the non-blank run before the cursor, which lvi replaces
+#                      with our output. We fuzzy-query on only its trailing word
+#                      run (so `(foo` completes `foo`) and restore the rest
+#                      around the result (`(foo` -> `(foobar`, not `foobar`).
+#   $LVI_COMPL_LINE    the line up to the cursor; unused here, exported so a
+#                      smarter `on complete` script can pick a completion SOURCE
+#                      by context (`/` in the token -> paths, `word.word` ->
+#                      members, bare identifier -> this). Each source is another
+#                      command with this same stdin/stdout contract.
+#   $LVI_COMPL_DIR     prev (Ctrl-P) or next (Ctrl-N); advisory, unused here
+# Current-buffer-first + a stable de-dupe (awk keeps the first sighting) sorts
+# this buffer's own words ahead of the others.
 #
-# A FUTURE DISPATCHER: because lvi exports $LVI_COMPL_LINE and the token carries
-# its own shape, a smarter `on complete` script can pick a SOURCE by context with
-# no menu -- a `/` in the token -> a path completer, `word.word` -> members, a
-# bare identifier -> this. Each source is just another command with this same
-# stdin/stdout contract; core never changes.
+# POPUP: by default the picker takes the whole terminal. Set LVI_COMPL_POPUP=1
+# and, inside tmux, it runs in a `display-popup` drawn over the editor instead
+# (lvi stays on its alt screen under it). Any overlay that reads a list on stdin
+# and prints one line is a drop-in.
 #
 # Config: LVI_PICKER (fzf/fzy/sk, default fzf), LVI_COMPL_MIN (drop words shorter
 # than this; default 2), LVI_COMPL_POPUP (tmux popup when set and $TMUX).

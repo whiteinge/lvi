@@ -1,20 +1,19 @@
 #!/bin/sh
 # lvi-yankring [-w auto|WID] push | get | cycle prev|next | pick | list | clear
 #
-# A yank/delete history you cycle through at paste time -- vim's YankRing /
-# yanky.nvim, built from the pieces lvi already has: a register backend for
-# capture, a read-backed register for the entry to paste, and one map that
-# undoes a paste and re-puts the next entry. lvi grows no ring; this script owns
-# it, driven entirely by the socket and a couple of files.
+# A yank/delete history you cycle through at paste time, like vim's YankRing or
+# yanky.nvim. lvi grows no ring; this script owns it over the socket and a few
+# files, reusing three pieces lvi already has: a register backend for capture, a
+# read-backed register for the entry to paste, and one map that undoes a paste
+# and re-puts the next entry.
 #
 # THE MODEL. Backing the unnamed register's `write` (`register " write
-# lvi-yankring push`) fires on EVERY yank and delete -- the single chokepoint
-# they all flow through -- so `push` sees them all with no key remapping and no
-# per-operator wiring. You paste normally with `p`/`P` (the most-recent entry,
-# straight from the unnamed register). Then a cycle key walks that paste back
+# lvi-yankring push`) fires `push` on EVERY yank and delete, so it captures them
+# all with no key remapping. You paste normally with `p`/`P` (the newest entry,
+# straight from the unnamed register). A cycle key then walks that paste back
 # through older entries: it steps our cursor and sends `u"~p` -- undo the paste,
-# put the now-current ring entry -- so each press replaces the pasted text with
-# the next one down. A picker (`pick`) jumps to any entry directly.
+# put the now-current entry -- so each press swaps in the next entry down. A
+# picker (`pick`) jumps to any entry directly.
 #
 #   push          stdin -> a new ring entry (register `write` backend). Dedups a
 #                 consecutive repeat; resets the cycle cursor to the newest.
@@ -28,34 +27,32 @@
 #   list          the ring as `index<TAB>first-line`, newest first (debug/peek).
 #   clear         forget the whole ring.
 #
-# STORAGE is a directory of one-file-per-entry (no encoding: an entry is raw
-# bytes, newlines and all, in its own file), per view beside the socket so it
-# dies with the view -- YankRing's per-instance history, not a persistent store.
-# Files are named by a monotonic counter (`.seq`), higher = newer, so order is
-# arithmetic: no `ls`/`sort`, and `push` (which runs SYNCHRONOUSLY on the yank
-# keystroke, like a clipboard copy) is a handful of syscalls -- write one file,
-# drop the one that fell past the cap, reset the cursor.
+# STORAGE is one file per entry (raw bytes, newlines and all), per view beside
+# the socket so it dies with the view -- YankRing's per-instance history, not a
+# persistent store. Files are named by a monotonic counter (`.seq`), higher =
+# newer, so ordering is arithmetic (no `ls`/`sort`) and `push` (which runs
+# SYNCHRONOUSLY on the yank keystroke, like a clipboard copy) is a few syscalls:
+# write one file, drop the one past the cap, reset the cursor.
 #   $LVI_SOCK.yankring/<n>     entry n (raw text)         (per view)
 #   $LVI_SOCK.yankring/.seq    last counter (newest = .seq)
 #   $LVI_SOCK.yankring/.cur    the cycle cursor (0 = newest)
 # The directory hangs off $LVI_SOCK, so socket discovery (which filters `[ -S ]`)
 # skips it. LVI_YANKRING_DIR relocates it -- point several views at one path for
-# a shared ring (the cursor rides along, so they share the cycle position too).
-# Sharing is best-effort, not synchronized: two views yanking in the same
-# instant can race the counter and one entry wins.
+# a shared ring (they share the cursor, so the cycle position too). Sharing is
+# best-effort: two views yanking at once can race the counter, and one wins.
 #
-# SPAWN DISCIPLINE. `push`/`get` are register backends: lvi runs them inline
-# (yank/put are synchronous) with $LVI_* exported, so they only touch files --
-# no socket call, nothing to deadlock. `cycle` is bound with `:bg` (detached,
-# loop stays live, no alt-screen flash): it updates the cursor file, THEN sends
-# `u"~p` with --detach, so the file write happens-before the put and `get` reads
-# the stepped cursor. `pick` needs the picker's tty (`:silent !`, loop frozen),
-# so its socket put is --detach too, landing when lvi resumes.
+# SPAWN DISCIPLINE. `push`/`get` are register backends, run inline (yank/put are
+# synchronous) with $LVI_* exported, so they only touch files -- no socket call
+# to deadlock. `cycle` is bound with `:bg` (detached, no alt-screen flash): it
+# writes the cursor file, THEN sends `u"~p` with --detach, so the write
+# happens-before the put and `get` reads the stepped cursor. `pick` needs the
+# picker's tty (`:silent !`), so its socket put is --detach too, landing when
+# lvi resumes.
 #
 # FIDELITY. The `write` backend gets only text, not the linewise flag, so `get`
-# is read back the way the clipboard is: text with a newline pastes linewise,
+# reads back like the clipboard: text with a trailing newline pastes linewise,
 # without one charwise. A linewise yank round-trips; a charwise multi-line yank
-# comes back linewise. Same tradeoff `"+` already makes.
+# comes back linewise. Same tradeoff `"+` makes.
 #
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
 # LVI_YANKRING_MAX (entries kept, default 50), LVI_YANKRING_REG (the read-backed

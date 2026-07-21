@@ -1,63 +1,34 @@
 #!/bin/sh
 # lvi-diff [WID_A WID_B] -- a two-way vimdiff, assembled from lvi's primitives.
-# Highlights the differences between two running views and SCROLLBINDS them, so
-# the two tmux panes scroll together with corresponding lines side by side.
+# It highlights the differences between two running views and SCROLLBINDS them,
+# so the two tmux panes scroll together with corresponding lines side by side.
 #
-# Same premise as lvi-mirror/lvi-search: no in-editor split. You
-# open the two files in two tmux panes -- `lvi old` | `lvi new` -- each its own
-# process and socket; this script is the thread between them. It owns NO editor
-# code, and -- as of the rewrite below -- NO running process either: it's a
-# one-shot that wires the two views up with maps and hooks, then exits. Everything
-# after is driven by lvi firing those hooks. Four primitives carry it:
+# Like lvi-mirror and lvi-search, it uses no in-editor split: open the two files
+# in two tmux panes (`lvi old` | `lvi new`), each its own process and socket, and
+# this script threads them. It owns no editor code and no running process -- a
+# one-shot that wires the views up with maps and hooks, then exits; lvi drives
+# everything after by firing those hooks. Five primitives:
 #
-#   * DIFF HIGHLIGHTING is the `:hl` overlay (same mechanism as lvi-search): we
-#     diff the two buffers and paint DiffChange/DiffDelete on the OLD view and
-#     DiffChange/DiffAdd on the NEW view. Re-painted by an `on change` hook so it
-#     tracks edits -- no polling; it fires only when a buffer actually settles.
-#   * SCROLLBIND rides on the `on scroll` hook + `:top`. lvi fires `on scroll`
-#     (with the new viewport top in $LVI_TOP) the instant a KEYBOARD action moves
-#     a view's top -- catching every scroll path (^E/^Y/^F/^B, j/k at the edge, G,
-#     /search) because it hooks the top itself, not specific keys. Our handler
-#     translates that top through the diff line map and sets the peer's top. It's
-#     ABSOLUTE (map-based), so it never drifts; the map is looked up from a cache
-#     we write on each (re)diff. Socket-driven :top doesn't fire `on scroll`
-#     (keyboard-gated in the editor), so the two panes can't echo each other.
-#   * HUNK NAV (]c / [c) jumps to the next/prev hunk and top-anchors BOTH panes
-#     (a socket :top wouldn't fire the peer's scroll hook, so we set both here).
-#   * HUNK MOVING (diffput/diffget): \dp puts the hunk under the cursor onto the
-#     other view, \do obtains the other's hunk here -- a read+delete splice whose
-#     deletes name the black-hole buffer (:d _), so a move never rotates the
-#     destination's registers, and which puts the destination's cursor back
-#     (:pos) and ends with a `fire` there: the wired `on change` re-diff
-#     repaints, and any other change consumers (live highlighting) see the moved
-#     text (a socket edit refreshes nothing on its own). An armed g@
-#     operatorfunc moves just a motion's line span -- the partial-hunk sibling
-#     (lvi-stagediff wires it for staging).
+#   * HIGHLIGHTING is the `:hl` overlay (as in lvi-search): diff the two buffers
+#     and paint DiffChange/DiffDelete on the OLD view, DiffChange/DiffAdd on the
+#     NEW. An `on change` hook repaints when a buffer settles, so it tracks edits.
+#   * SCROLLBIND rides `on scroll` + `:top`. lvi fires `on scroll` (new top in
+#     $LVI_TOP) whenever a KEYBOARD action moves a view's top, catching every
+#     scroll path because it hooks the top itself, not specific keys. The handler
+#     maps that top through the diff line map onto the peer -- absolute, so it
+#     never drifts. Socket :top doesn't fire `on scroll`, so the panes don't echo.
+#   * HUNK NAV (]c / [c) jumps to the next/prev hunk and top-anchors both panes.
+#   * HUNK MOVING: \dp puts the hunk under the cursor onto the other view, \do
+#     obtains the other's hunk here. Deletes go to the black-hole register (:d _)
+#     so a move never rotates the destination's registers; the move ends with a
+#     `fire` so the destination's `on change` re-diffs and repaints. An armed g@
+#     operatorfunc moves just a motion's span -- the partial-hunk sibling that
+#     lvi-stagediff wires for staging.
 #   * FOLD UNCHANGED (zx) collapses the matched regions between hunks to a summary
-#     row (keeping LVI_DIFF_FOLDCTX context lines each side), leaving only the
-#     changes and their surroundings -- vimdiff's `foldmethod=diff`. It rides
-#     lvi's core fold overlay (:foldset): build() derives the unchanged gaps from
-#     the SAME diff the map comes from and pushes them to both views. The gaps are
-#     1:1 matched, so they have identical line counts on both sides; folding them
-#     symmetrically compresses each pane by the same rows, so the (line-based,
-#     map-driven) scrollbind stays aligned -- and because :top snaps off a hidden
-#     line to the fold head, a scroll that lands in a fold aligns on both heads.
-#     Off by default; zx toggles, or launch with LVI_DIFF_FOLD=1. Re-applied on
-#     every re-diff, so it tracks edits -- and a gap you opened (zo) to peek at
-#     context stays open across those re-applies (:foldset keeps the open state
-#     of a range that survives the replace).
-#
-# WHY NO DAEMON: scrollbind is push, not poll. The editor fires `on scroll` with
-# the new top -- one small, generic notification -- and all the diff-specific
-# logic (the map, the translation) stays out here. No process to manage, no
-# polling, no flicker; the wiring lives as hooks/maps inside each view and dies
-# with it. (The history of the polling design this replaced is in
-# contrib/README.md.)
-#
-# HUNK DRIFT: without vimdiff's filler lines two panes can't align row-for-row
-# THROUGH a lopsided hunk, but the map snaps to the hunk's start and re-aligns at
-# the next context line -- and because scrollbind is absolute (not a running
-# delta) it's self-correcting, never accumulating down the file.
+#     row (keeping LVI_DIFF_FOLDCTX context lines each side), like vimdiff's
+#     foldmethod=diff. Off by default; zx toggles, LVI_DIFF_FOLD=1 starts folded.
+#     Re-applied on each re-diff so it tracks edits, and a gap you opened (zo) to
+#     peek at context stays open across the re-applies.
 #
 # SYNOPSIS
 #   lvi-diff WID_A WID_B      diff+bind those two live views (A = "old", B = "new")
@@ -66,33 +37,38 @@
 #                             them, blocking until you quit A -- a vimdiff-alike
 #   lvi-diff LOCAL REMOTE OUT as above, and on accept (:x) copy the resolved A to
 #                             OUT -- the git mergetool form (see contrib/README.md)
-#   lvi-diff --stop           sweep stale map caches (there's no process to kill --
-#                             a session ends when you close a pane)
+#   lvi-diff --stop           sweep stale map caches (no process to kill -- a
+#                             session ends when you close a pane)
 #   (Installed in both views: ]c/[c jump hunks; \dp/\do move a hunk across; zx
 #    folds/unfolds the unchanged regions.)
 #
-# SUGGESTED BINDING (~/.lvirc, or run by hand). Launch it once per diff session.
-# Theme the groups to taste (it sets readable defaults; LVI_DIFF_NOSTYLE=1
-# skips). Keep the pri= -- overlay overlaps resolve per cell by group priority,
-# and at the default 0 the diff bands TIE with a syntax highlighter's groups
-# (lvi-highlight), so each token flips arbitrarily between the two and the
-# hunk shows as patches. pri lifts the whole band above them:
+# SUGGESTED BINDING (~/.lvirc, or run by hand): launch it once per diff session.
+# Theme the groups to taste (it sets readable defaults; LVI_DIFF_NOSTYLE=1 skips).
+# Keep the pri= -- at the default 0 the diff bands tie with a syntax highlighter's
+# groups (lvi-highlight) and each token flips between the two, showing the hunk as
+# patches; pri lifts the whole band above them:
 #     hi DiffChange bg=yellow fg=black pri=20
 #     hi DiffDelete bg=red    fg=black pri=20
 #     hi DiffAdd    bg=green  fg=black pri=20
 #
 # Config (env): LVI (client, default `lvi`); LVI_DIFF_MAXBYTES (skip a buffer
 # larger than this; default 4194304 = 4 MiB -- over it, both views show a
-# "[lvi-diff off: ...]" status instead of silently doing nothing); LVI_DIFF_NOMAP=1
-# leaves the \dp/\do move maps off; LVI_DIFF_NOSTYLE=1 keeps
-# your rc's colors; LVI_DIFF_FOLD=1 starts with the unchanged regions folded (zx
-# toggles it); LVI_DIFF_FOLDCTX sets the context lines kept around each hunk
-# (default 3).
+# "[lvi-diff off: ...]" status); LVI_DIFF_NOMAP=1 leaves the \dp/\do move maps
+# off; LVI_DIFF_NOSTYLE=1 keeps your rc's colors; LVI_DIFF_FOLD=1 starts with the
+# unchanged regions folded (zx toggles); LVI_DIFF_FOLDCTX sets the context lines
+# kept around each hunk (default 3).
 #
-# LIMITS (by design): two-way only, no directories, no filler lines. Setting a
-# view's `:top` parks its cursor at the top line, so the follower pane's cursor
-# jumps to its top as you scroll the other -- fine for reading, surprising if you
-# then edit the pane you weren't driving.
+# Internal (socket-fired, not for direct use): --xfer put|get PEER A B (\dp/\do);
+# --xfer-range PEER A B (the g@ partial-hunk operatorfunc); --hunk next|prev PEER
+# (]c/[c); --scrollsync PEER (on scroll); --foldtoggle A B (zx); --refresh A B
+# (on change).
+#
+# LIMITS (by design): two-way only, no directories, no filler lines, so two panes
+# can't align row-for-row through a lopsided hunk -- the map snaps to the hunk
+# start and re-aligns at the next context line. Setting a view's `:top` parks its
+# cursor at the top line, so the follower's cursor jumps to its top as you scroll
+# the other -- fine for reading, surprising if you then edit the pane you weren't
+# driving.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

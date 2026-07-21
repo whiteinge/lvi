@@ -1,12 +1,11 @@
 #!/bin/sh
 # lvi-fold [-w auto|WID] [MODE] -- fold a running lvi from the outside.
 #
-# The same bet as lvi-highlight and lvi-search: no fold engine inside the editor.
-# lvi owns the *mechanism* (collapsing a range to one row, navigating it -- see
-# `Folding` in lvi.1); this computes the *policy* (where the folds are) from the
-# LIVE buffer over the control socket and pushes it back as `:fold` commands, the
-# same way lvi-highlight pushes `:hl`. Because it reads the buffer via `%p` it
-# folds UNSAVED content, and the line numbers map straight back.
+# lvi owns the fold mechanism (collapse a range to one row, navigate it -- see
+# `Folding` in lvi.1); this computes WHERE the folds go, reading the live buffer
+# over the control socket and pushing ranges back as `:fold` commands (the way
+# lvi-highlight pushes `:hl`). It reads the buffer with `%p`, so it folds UNSAVED
+# content and the line numbers map straight back.
 #
 # MODE selects how ranges are found (default `marker`):
 #   marker  -- vim-style {{{ ... }}} fold markers, nested by a simple stack. The
@@ -22,16 +21,16 @@
 #              orientation sections read on open. Feed it man output with
 #              overstrike stripped (see contrib/lvi-man).
 #
-# It replaces the view's folds each run (one `:foldset` carrying every range),
-# so re-running after an edit re-folds cleanly -- and a range you already had
-# keeps its open/closed state, so a re-run (or an `on bufenter` re-push after a
-# buffer switch) never re-closes what you opened. NEW folds arrive CLOSED; open
-# what you want with zo/zR, or bind zR to reveal-all.
+# It replaces the view's folds each run (one `:foldset` with every range), so
+# re-running after an edit re-folds cleanly and a range you already had keeps its
+# open/closed state -- a re-run, or an `on bufenter` re-push after a buffer
+# switch, never re-closes what you opened. NEW folds arrive CLOSED; open them with
+# zo/zR, or bind zR to reveal-all.
 #
-# Bind it inside lvi (WID comes from $LVI_WID). It reads the buffer, so it must
-# not run in the foreground of a `:silent !` (that freezes lvi's event loop while
-# the child waits on the socket -> deadlock); use `:bg` (detached, no tty
-# handover) or let it self-background a --worker. In ~/.lvirc:
+# Bind it inside lvi (WID comes from $LVI_WID). It reads the buffer, so it can't
+# run in the foreground of a `:silent !` -- that freezes lvi's event loop while
+# the child waits on the socket (deadlock). Use `:bg` (detached, no tty handover),
+# or let it self-background a --worker. In ~/.lvirc:
 #
 #     hi Folded fg=cyan italic          " optional: theme the summary bar
 #     map zx :bg lvi-fold<CR>           " (re)fold by marker
