@@ -29,6 +29,7 @@
 "       \l  lists     \ll switch    \lg goto   \lc current   \lh hide   \lp preview
 "       \h  highlight \hh refresh   \ht toggle
 "       \y  yankring  \yy pick      \yp older  \yn newer
+"       \i  invis     \ii toggle    \ip page (exact bytes in less)
 "       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
 "
 " Motions/operators that mirror a vim key stay OFF the leader and on that key: /
@@ -277,6 +278,23 @@ map [s :bg lvi-list prev spell<CR>
 map z= :silent !lvi-spell fix<CR>      " pick a suggestion for the word under
 map zg :bg lvi-spell add<CR>           " the cursor / add it to the dictionary
 hi spellbad underline pri=20           " the word marks themselves
+
+" }}}
+" ---- invisible characters ---------------------------------------------- {{{
+
+" lvi-invis is a toggle (vim's :set list): while on, tab runs, trailing
+" whitespace, and no-break spaces re-paint as you type through three :hl
+" groups. \ip instead drops the buffer into less as `cat -vet` output,
+" centered on the cursor line: exact byte notation, including what the
+" overlay can't style (a stray CR, zero-width characters). The toggle
+" installs its own change/bufenter hooks once per view, so do NOT add them
+" here. The `:wbuf` in the \ip map snapshots the buffer first: a `:silent !`
+" child can't read the socket (see the lvi-invis header).
+map \ii :bg lvi-invis<CR>              " toggle the overlay
+map \ip :wbuf<CR>:silent !lvi-invis page<CR>   " exact bytes in less
+hi invistab   bg=236 pri=15            " theme the groups (un-themed = invisible);
+hi invistrail bg=88  pri=15            " pri lifts the marks above syntax and
+hi invisnbsp  bg=130 pri=15            " list paint, or they lose the cell
 
 " }}}
 " ---- formatting -------------------------------------------------------- {{{

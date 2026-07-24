@@ -281,6 +281,19 @@ Whole-buffer for simplicity and by design — spell-checking code will
 mean some unwanted visual noise so toggle it on and off as needed. See the
 `lvi-spell` header for the ispell-protocol details and caveats.
 
+### `lvi-invis` — see invisible characters
+
+Vim's `:set list`, in two halves. The **toggle** paints tab runs, trailing
+whitespace, and no-break spaces through three `:hl` groups (`invistab`,
+`invistrail`, `invisnbsp`), re-scanning as you type, so a stray tab shows
+while you edit next to it. **`page`** pipes the live buffer (unsaved edits
+included) through `cat -vet` into less, opened
+centered on the cursor line — exact glyph notation for every byte, including
+what the overlay can't style (a stray CR, zero-width characters). Theme the
+groups or nothing shows — with a `pri=` above your syntax theme, or the
+slower repaint takes the cells; the `lvi-invis` header has the bindings and
+the byte-column caveats.
+
 ### `lvi-fmt` — format the buffer, minimally
 
 `:%!ruff format -` works today — the ex filter is one splice, one undo — but it

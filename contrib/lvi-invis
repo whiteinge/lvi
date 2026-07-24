@@ -1,0 +1,192 @@
+#!/bin/sh
+# lvi-invis [-w auto|WID] [toggle|on|off|scan|page] -- see invisible characters.
+#
+# vim's `:set list`, in two halves, neither grown into the renderer:
+#   * OVERLAY (`toggle`, the default): while on, the buffer re-scans as you
+#     type and invisible characters take styled :hl marks in place -- tab
+#     runs, trailing whitespace, no-break spaces.
+#   * PAGER (`page`): the live buffer -- unsaved edits and all -- through
+#     `cat -vet | less`, opened centered on the cursor line. Exact glyph
+#     notation for every byte (^I tabs, $ line ends, M- escapes), including
+#     the classes the overlay can't style.
+# The overlay answers "is there a tab or trailing junk near my edit?"; `page`
+# answers "what exactly is this byte?".
+#
+#   lvi-invis [toggle]    enable/disable the overlay (the default subcommand)
+#   lvi-invis scan        re-paint now (the hook target; instant no-op when off)
+#   lvi-invis page        the whole buffer in less, every byte notated
+#
+# OVERLAY GROUPS -- un-themed = invisible, so theme them in your rc:
+#   invistab     each tab run; the mark covers the tab's full expanded width
+#   invistrail   trailing whitespace, whitespace-only lines included
+#   invisnbsp    each no-break space (U+00A0)
+# A trailing tab lands in invistrail only -- lvi-invis's own groups never
+# overlap. The pri= below is against OTHER painters: syntax tokens and list
+# marks repaint on the same change settle, one group wins each cell outright
+# (no merging), and an un-pri'd group ties at 0 -- the marks would appear,
+# then lose their cells a beat later when the slower painter lands.
+#
+# TOGGLE OWNS THE HOOKS, NOT THE RC: `:on` hooks compose by appending and a
+# bare `:on change` clears EVERYONE's, so a toggle cannot uninstall just its
+# own. Instead the first `on` installs `on change lvi-invis scan` (and its
+# bufenter twin, so the overlay follows a buffer switch) ONCE per view, and
+# the hooks stay; `scan` gates on the enabled flag and exits instantly while
+# off. Do NOT also add these hooks to your rc -- the toggle owns them. State
+# lives beside the socket, disposable with the view (the lvi-list pattern):
+#   $LVI_SOCK.invis          the enabled flag
+#   $LVI_SOCK.invis.hooked   the once-per-view hook marker
+#
+# Bindings (rc) -- \i is a menu, the toggle doubled as \ii:
+#     map \ii :bg lvi-invis<CR>                      " toggle the overlay
+#     map \ip :wbuf<CR>:silent !lvi-invis page<CR>   " exact bytes in less
+#     hi invistab   bg=236 pri=15                    " theme it, or nothing shows;
+#     hi invistrail bg=88  pri=15                    " pri lifts the marks above
+#     hi invisnbsp  bg=130 pri=15                    " syntax and list paint
+#
+# PAGE reads the BUFFER, not the file -- unsaved edits are where the question
+# comes up. Inside lvi it is a `:silent !` child, and lvi's loop is frozen
+# while it runs, so it cannot read the socket: the binding above snapshots
+# the buffer first (`:wbuf` -> $LVI_BUFFER, the lvi-tags pattern). Keep both
+# keystrokes in one map so the snapshot is never stale. From an outside shell
+# (`lvi-invis -w WID page`) the loop is live and it reads `%p` directly.
+#
+# SPAWN DISCIPLINES: `toggle`/`scan` self-background a --worker (reading the
+# buffer needs lvi's event loop -- same reason as lvi-highlight), so any
+# binding is safe. `page` needs the tty: bind it `:silent !`, after `:wbuf`.
+#
+# CAVEATS (v1): extents are byte columns; among the unicode space zoo only
+# U+00A0 is scanned. Zero-width characters take no screen cell and a stray
+# control byte (CR, ESC) reaches the terminal raw -- the overlay can't make
+# either visible; that class is what `page` is for. The overlay repaints on
+# keyboard edits and buffer switches; a socket-side edit (lvi-fmt, a filter)
+# shows on your next keystroke. `cat -vet` is the portable spelling of GNU
+# `cat -A` (GNU and BSD both take -vet); `page` marks the last line's end
+# with `$` even on a noeol buffer.
+#
+# Config: LVI (client, default `lvi`), LVI_INVIS_MAXBYTES (skip buffers larger
+# than this, default 262144), LVI_INVIS_DEBUG (file to capture worker stderr).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_INVIS_MAXBYTES:-262144}
+
+# Errors also land on the target's status line: stderr is discarded (:bg) or
+# repainted over (:silent !) under every documented binding.
+die() {
+  echo "lvi-invis: $*" >&2
+  [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "msge lvi-invis: $*" 2>/dev/null
+  exit 1
+}
+
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
+sub=${1:-toggle}
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# The socket path anchors our state files; resolve it the way lvi-list does.
+if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK                      # inside lvi: trust the exported socket
+elif [ "$target" = auto ]; then
+  n=$("$LVI" -l | grep -c .)
+  [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+  sock=$("$LVI" -l | cut -f2)
+else
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || die "no running view '$target'"
+fi
+flag="$sock.invis"
+hooked="$sock.invis.hooked"
+
+send() { "$LVI" -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
+
+# ---- worker: the actual scan (runs with lvi's loop live) ---------------------
+if [ -n "$worker" ]; then
+  [ -f "$flag" ] || exit 0            # toggled off while we were queued
+  text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
+  nbytes=$(printf '%s' "$text" | wc -c)
+  if [ "$nbytes" -gt "$MAXBYTES" ]; then
+    echo "lvi-invis: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_INVIS_MAXBYTES)" >&2
+    send "status invis [lvi-invis off: over ${MAXBYTES}B cap]"
+    exit 0
+  fi
+
+  # Byte-column scan (LC_ALL=C). Trailing whitespace claims its run first;
+  # tab runs are scanned only up to it, so the two groups never overlap. The
+  # NBSP needle is built with sprintf -- awk has no portable \x escapes.
+  set --
+  while IFS= read -r cmd; do [ -n "$cmd" ] && set -- "$@" "$cmd"; done <<EOF
+$(printf '%s\n' "$text" | LC_ALL=C awk '
+    BEGIN { nb = sprintf("%c%c", 194, 160) }        # U+00A0, as raw UTF-8
+    {
+      n = length($0)
+      t0 = 0
+      if (match($0, /[ \t]+$/)) {
+        t0 = RSTART
+        trail = trail sprintf(" %d:%d-%d", NR, RSTART, n)
+      }
+      s = substr($0, 1, t0 ? t0 - 1 : n); base = 0
+      while (match(s, /\t+/)) {
+        tabs = tabs sprintf(" %d:%d-%d", NR, base + RSTART, base + RSTART + RLENGTH - 1)
+        base = base + RSTART + RLENGTH - 1
+        s = substr(s, RSTART + RLENGTH)
+      }
+      p = 1
+      while (i = index(substr($0, p), nb)) {
+        nbs = nbs sprintf(" %d:%d-%d", NR, p + i - 1, p + i)
+        p = p + i + 1
+      }
+    }
+    END { printf "hl invistab%s\nhl invistrail%s\nhl invisnbsp%s\n", tabs, trail, nbs }')
+EOF
+  # One round-trip: the paint (empty specs = clear -- one branch), plus
+  # clearing any earlier over-cap segment.
+  "$LVI" -w "$target" -- "$@" "status invis"
+  exit 0
+fi
+
+# ---- subcommands -------------------------------------------------------------
+invis_scan() {
+  [ -f "$flag" ] || exit 0                  # the gate that makes the hooks no-ops
+  ( "$0" --worker $wflag >"${LVI_INVIS_DEBUG:-/dev/null}" 2>&1 & )
+}
+
+invis_on() {
+  : > "$flag"
+  if [ ! -f "$hooked" ]; then               # once per view; the hooks then stay
+    send 'on change lvi-invis scan' 'on bufenter lvi-invis scan'
+    : > "$hooked"
+  fi
+  send 'msg invis on'                       # visible even before the theme is
+  invis_scan
+}
+
+invis_off() {
+  rm -f "$flag"                             # first: gates any in-flight scan
+  send 'hl invistab' 'hl invistrail' 'hl invisnbsp' 'status invis' 'msg invis off'
+}
+
+invis_page() {
+  [ -t 1 ] || die "page needs the terminal; bind it :wbuf<CR>:silent !lvi-invis page<CR>"
+  if [ -n "${LVI_WID:-}" ] && [ -z "$want_wid" ]; then
+    # A `:silent !` child: lvi's loop is frozen, so read the :wbuf snapshot.
+    [ -n "${LVI_BUFFER:-}" ] && [ -f "$LVI_BUFFER" ] \
+      || die "no buffer snapshot; bind page as :wbuf<CR>:silent !lvi-invis page<CR>"
+    cat -vet -- "$LVI_BUFFER" | less "+${LVI_LINE:-1}g" -j.5
+  else
+    # An outside shell: the loop is live, read over the socket.
+    text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
+    line=$("$LVI" -w "$target" -- pos | cut -f1)
+    printf '%s\n' "$text" | cat -vet | less "+${line:-1}g" -j.5
+  fi
+}
+
+case "$sub" in
+  toggle) if [ -f "$flag" ]; then invis_off; else invis_on; fi ;;
+  on)     invis_on ;;
+  off)    invis_off ;;
+  scan)   invis_scan ;;
+  page)   invis_page ;;
+  *)      die "unknown subcommand '$sub' (toggle|on|off|scan|page)" ;;
+esac
