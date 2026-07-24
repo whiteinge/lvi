@@ -306,6 +306,75 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
+  -- POSIX vi's "current column": j/k aim at the column you last CHOSE, not the
+  -- one the cursor happens to occupy, so a short line in the way doesn't
+  -- permanently shorten your column.
+  describe("sticky column", function()
+    it("restores the column after crossing a short line", function()
+      local ed = make("abcdefgh\nxy\nabcdefgh")
+      feed(ed, "5l"); expect(ed.cx).to.equal(6)
+      feed(ed, "j");  expect(ed.cy).to.equal(2); expect(ed.cx).to.equal(2)  -- clamped
+      feed(ed, "j");  expect(ed.cy).to.equal(3); expect(ed.cx).to.equal(6)  -- restored
+    end)
+    it("passes through an empty line without losing it", function()
+      local ed = make("abcdefgh\n\nabcdefgh")
+      feed(ed, "5lj"); expect(ed.cx).to.equal(1)
+      feed(ed, "j");   expect(ed.cx).to.equal(6)
+    end)
+    it("k restores it going back up", function()
+      local ed = make("abcdefgh\nxy\nabcdefgh")
+      feed(ed, "G5l"); expect(ed.cy).to.equal(3); expect(ed.cx).to.equal(6)
+      feed(ed, "kk");  expect(ed.cy).to.equal(1); expect(ed.cx).to.equal(6)
+    end)
+    it("a horizontal motion chooses a new column", function()
+      local ed = make("abcdefgh\nxy\nabcdefgh")
+      feed(ed, "5lj"); expect(ed.cx).to.equal(2)
+      feed(ed, "0");   expect(ed.cx).to.equal(1)
+      feed(ed, "j");   expect(ed.cx).to.equal(1)   -- the 0 stuck, not the 5l
+    end)
+    it("an edit adopts the column it leaves the cursor in", function()
+      local ed = make("abcdefgh\nxy\nabcdefgh")
+      feed(ed, "5lj"); expect(ed.cx).to.equal(2)
+      feed(ed, "x");   expect(ed.cx).to.equal(1)   -- "xy" -> "x"
+      feed(ed, "j");   expect(ed.cx).to.equal(1)
+    end)
+    it("a command that doesn't move the cursor leaves it alone", function()
+      local ed = make("abcdefgh\nxy\nabcdefgh")
+      feed(ed, "5lj"); expect(ed.cx).to.equal(2)
+      feed(ed, "zz");  expect(ed.cx).to.equal(2)   -- scrolls in place
+      feed(ed, "j");   expect(ed.cx).to.equal(6)   -- still aiming at column 5
+    end)
+    it("$ sticks to the end of every line", function()
+      local ed = make("abcdefgh\nxy\nabcd\nlonger line")
+      feed(ed, "$"); expect(ed.cx).to.equal(8)
+      feed(ed, "j"); expect(ed.cx).to.equal(2)
+      feed(ed, "j"); expect(ed.cx).to.equal(4)
+      feed(ed, "0"); expect(ed.cx).to.equal(1)     -- a real column again
+      feed(ed, "j"); expect(ed.cx).to.equal(1)
+    end)
+    it("counts display columns, so tabs don't shift the cursor sideways", function()
+      local ed = make("\tabc\nxyz\n\tabc")         -- tabstop 8: 'a' is display col 8
+      feed(ed, "l"); expect(ed.cx).to.equal(2)
+      feed(ed, "j"); expect(ed.cx).to.equal(3)     -- "xyz" has no column 8
+      feed(ed, "j"); expect(ed.cx).to.equal(2)     -- back onto 'a', not byte 8
+    end)
+    it("gj/gk restore the column across a short screen row", function()
+      local ed = make("abcdefgh\nx\nabcdefgh")
+      ed.opts.wrap = true; ed.cols = 4             -- "abcdefgh" -> abcd/efgh
+      feed(ed, "2l");  expect(ed.cx).to.equal(3)   -- 'c', screen row 0 col 2
+      feed(ed, "gj");  expect(ed.cx).to.equal(7)   -- 'g', screen row 1 col 2
+      feed(ed, "gj");  expect(ed.cy).to.equal(2); expect(ed.cx).to.equal(1)
+      feed(ed, "gj");  expect(ed.cy).to.equal(3); expect(ed.cx).to.equal(3)
+    end)
+    it("gj down a wrapped line holds its screen column instead of drifting", function()
+      local ed = make(("abcdefghijkl"))            -- 3 screen rows at cols = 4
+      ed.opts.wrap = true; ed.cols = 4
+      feed(ed, "2l"); expect(ed.cx).to.equal(3)    -- row 0 col 2
+      feed(ed, "gj"); expect(ed.cx).to.equal(7)    -- row 1 col 2
+      feed(ed, "gj"); expect(ed.cx).to.equal(11)   -- row 2 col 2, not col 0
+    end)
+  end)
+
   describe("cross-line word motion", function()
     it("w crosses to the next line", function()
       local ed = make("foo\nbar")

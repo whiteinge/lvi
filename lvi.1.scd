@@ -72,10 +72,15 @@ leading count, e.g. *3dw*.
 ## Motions
 
 *h* *j* *k* *l*
-	Left, down, up, right (character- and line-wise).
+	Left, down, up, right (character- and line-wise). *j* and *k* aim at the
+	column you last chose, not the one the cursor sits in, so short lines and
+	empty lines on the way past don't shorten it. The column is measured in
+	display columns, so tabs don't drag the cursor sideways.
 
 *0* *^* *$*
-	First column, first non-blank, end of line.
+	First column, first non-blank, end of line. After *$* it's the end of the
+	line that sticks: *j* and *k* follow each line's last character until some
+	other motion picks a real column.
 
 *w* *b* *e*
 	Next word, previous word, end of word (cross line boundaries). As an
@@ -90,7 +95,8 @@ leading count, e.g. *3dw*.
 	Last line, first line (or line _count_ with a count).
 
 *gj* *gk*
-	Down/up one screen row (within a wrapped line).
+	Down/up one screen row (within a wrapped line), holding the screen column
+	the same way *j* and *k* hold theirs.
 
 *+* *-* *\_* *<CR>*
 	To the first non-blank of another line. *+* and *<CR>* go _count_ lines

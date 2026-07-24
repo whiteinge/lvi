@@ -185,6 +185,25 @@ describe("socket-key boundary discipline", function()
     assert(coroutine.resume(ed.interp))
   end
 
+  -- A tool that jumps the cursor should leave the next j/k aiming where it
+  -- landed, not at a column the user chose before the jump.
+  it("a socket command that moves the cursor restates the sticky column", function()
+    local ed = ed_live("abcdefgh\nabcdefgh\nabcdefgh")
+    keys(ed, "5l")                                   -- choose column 5
+    expect(ed.want_col).to.equal(5)
+    editor.handle_socket_command(ed, "pos 2 1")      -- a tool jumps us to column 1
+    expect(ed.want_col).to.equal(0)
+    keys(ed, "j"); expect(ed.cx).to.equal(1)         -- follows the jump, not the old column
+  end)
+
+  it("a socket command that leaves the cursor put keeps the sticky column", function()
+    local ed = ed_live("abcdefgh\nabcdefgh")
+    keys(ed, "5l")
+    editor.handle_socket_command(ed, "echo hi")
+    expect(ed.want_col).to.equal(5)
+    keys(ed, "j"); expect(ed.cx).to.equal(6)
+  end)
+
   it("defers socket keys that arrive while a command is half-typed", function()
     local ed = ed_live("aaa bbb\nccc")
     expect(ed.at_boundary).to.be(true)               -- parked between commands

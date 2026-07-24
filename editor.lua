@@ -67,6 +67,7 @@ function M.new_ed()
     last_find = nil,          -- last f/t/F/T target (for ; and ,)
     last_macro = nil,         -- last @-run register (for @@)
     last_subst = nil,         -- last delegated :s command tail, for normal-mode & (repeat substitute)
+    want_col = 0,             -- sticky column j/k aim at: 0-based DISPLAY col, math.huge == $ (see normal.lua)
 
     -- shared editing state
     regs = {},                -- registers a-z + unnamed '"'
@@ -169,7 +170,13 @@ end
 local function handle_socket_command(ed, line)
   local safe = ed.at_boundary ~= false
   if safe then ed.buf:undo_checkpoint() end -- each socket command is its own undo unit
+  local oy, ox = ed.cy, ed.cx
   local payload, status = ex.dispatch(ed, line)
+  -- A socket command that MOVED the cursor restates the sticky column, so a tool
+  -- jumping the user elsewhere (lvi-search, lvi-list) doesn't leave the next j/k
+  -- aiming at a column chosen before the jump. Before the pump, so any :normal
+  -- keys the command queued still fall to normal.lua's own rule.
+  if ed.cy ~= oy or ed.cx ~= ox then normal.set_want_col(ed) end
   if #ed.inject > 0 then
     if safe then
       pump(ed)

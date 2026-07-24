@@ -117,6 +117,36 @@ function M.clamp(ed)
 end
 local clamp = M.clamp
 
+-- ---- the sticky column (j/k) ------------------------------------------------
+-- POSIX vi keeps the *current column* across line motions: j/k aim at the column
+-- you last chose, not the one the cursor happens to occupy, so crossing a short
+-- (or empty) line doesn't permanently shorten your column. It needs a field of
+-- its own precisely because clamp writes the truncated column back into ed.cx --
+-- the only copy -- so without a second store the intent is destroyed, not merely
+-- hidden, and no amount of re-deriving from ed.cx can recover it.
+--
+-- ed.want_col is a 0-based DISPLAY column, not a byte, so a line's tabs cannot
+-- drag the cursor sideways as you move down through mixed indentation. The
+-- sentinel math.huge is `$`: POSIX makes end-of-line sticky, and clamp's cap
+-- turns "unreachably far right" into "this line's last char" for free.
+--
+-- The split of duties: EVERY command writes it, once, at the tail of command()
+-- (the one funnel every keyboard command passes through -- see the rule there),
+-- and only j/k/gj/gk read it. Nothing else needs to know it exists.
+local function want_byte(ed, l)
+  if ed.want_col == math.huge then return disp.last_char(line(ed, l)) end
+  return disp.byte_at_dispcol(line(ed, l), ed.opts.tabstop, ed.want_col)
+end
+
+-- Restate the desired column from where the cursor now is. Exported for the
+-- driver, which calls it after a SOCKET command that moved the cursor: a tool
+-- jumping you across the file (lvi-search, lvi-list) should leave the next j/k
+-- aiming at the column it landed on, not one chosen before the jump.
+function M.set_want_col(ed)
+  ed.want_col = disp.dispcol(line(ed, ed.cy), ed.opts.tabstop, ed.cx)
+end
+local set_want_col = M.set_want_col
+
 local function char_class(c)
   if not c or c == "" then return "none" end
   if c:match("%s") then return "blank" end
@@ -858,12 +888,24 @@ local function g_motion_move(ed, k2, count)
   if k2 ~= b("j") and k2 ~= b("k") then return ed.cy, ed.cx end
   local down, n = (k2 == b("j")), (count or 1)
   if not ed.opts.wrap then           -- no wrapping: gj == j
-    return ed.cy + (down and n or -n), ed.cx
+    local t = ed.cy + (down and n or -n)
+    return t, want_byte(ed, t)
   end
-  -- Move by screen (display) rows, holding the current visual column.
+  -- Move by screen (display) rows, holding the current visual column. gj/gk are
+  -- SCREEN-row motions, so the column they hold is the one within the row, while
+  -- the sticky column is absolute within the line: on the first row those are the
+  -- same number, on a later row they are not (the row's base -- the absolute
+  -- column of its first cell -- separates them, and tabs and linebreak mean the
+  -- base is not simply row*width). So the sticky column is allowed to RESTORE the
+  -- offset but never to reduce it: a short row that clamp truncated reads back the
+  -- column the truncation took, while a full row past the first keeps the cursor's
+  -- own offset instead of drifting left one row per keypress.
   local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
   local N, l = ed.buf:nlines(), ed.cy
-  local sub, ccol = disp.locate(line(ed, l), W, ts, ed.cx, lb)
+  local cur = line(ed, l)
+  local sub, ccol = disp.locate(cur, W, ts, ed.cx, lb)
+  if ed.want_col == math.huge then ccol = math.huge     -- `$`: stick to each row's end
+  else ccol = math.max(ccol, ed.want_col - (disp.dispcol(cur, ts, ed.cx) - ccol)) end
   for _ = 1, n do
     if down then
       if sub + 1 < disp.nsegs(line(ed, l), W, ts, lb) then sub = sub + 1
@@ -955,17 +997,20 @@ local motions = {
     local ts = ed.opts.tabstop
     return ed.cy, disp.byte_at_dispcol(line(ed, ed.cy), ts, (count or 1) - 1)
   end },
+  -- j/k aim at the sticky column (want_byte), not at ed.cx -- see the sticky
+  -- column notes above. As operator targets they are linewise, so the column
+  -- they return is discarded and this costs the operator path nothing.
   [b("j")] = { kind = "line", move = function(ed, n)
-    if not has_folds(ed) then return ed.cy + (n or 1), ed.cx end
+    if not has_folds(ed) then local t = ed.cy + (n or 1); return t, want_byte(ed, t) end
     local l = ed.cy                          -- step over closed folds (one row each)
     for _ = 1, (n or 1) do local nl = nextv(ed, l); if nl then l = nl else break end end
-    return l, ed.cx
+    return l, want_byte(ed, l)
   end },
   [b("k")] = { kind = "line", move = function(ed, n)
-    if not has_folds(ed) then return ed.cy - (n or 1), ed.cx end
+    if not has_folds(ed) then local t = ed.cy - (n or 1); return t, want_byte(ed, t) end
     local l = ed.cy
     for _ = 1, (n or 1) do local pl = prevv(ed, l); if pl then l = pl else break end end
-    return l, ed.cx
+    return l, want_byte(ed, l)
   end },
   [b("G")] = { kind = "line", jump = true, move = function(ed, n)
     local t = n or ed.buf:nlines()
@@ -1953,6 +1998,14 @@ local operators = { [b("d")] = "d", [b("c")] = "c", [b("y")] = "y",
                     [b(">")] = "shift_r", [b("<")] = "shift_l" }
 
 -- ---- the command loop -------------------------------------------------------
+-- The sticky column's consumers, keyed by the bare-motion key that ends the
+-- command (gj/gk are handled inline, since their key is g). Everything absent
+-- from this table is a setter -- including the POSIX line motions G/+/-/_/<CR>
+-- and H/M/L, which go to a line's first non-blank and so choose a column
+-- outright, and the scroll keys, which lvi deliberately keeps on the same screen
+-- row rather than preserving a column across the jump.
+local COLMODE = { [b("j")] = "keep", [b("k")] = "keep", [b("$")] = "eol" }
+
 local function command(ed)
   ed.buf:undo_checkpoint() -- one undo reverts one user-level command
   ed.keylog = {}
@@ -1972,6 +2025,12 @@ local function command(ed)
   -- unit and a second U toggles. Taken after the key arrives, so a socket edit
   -- during the boundary park can't leave the snapshot pointing at a stale line.
   if ed.uline ~= ed.cy then ed.uline, ed.usaved = ed.cy, line(ed, ed.cy) end
+  local sy, sx = ed.cy, ed.cx                -- where this command started (sticky column)
+  -- Whether this command's form leaves the sticky column alone ("keep") or pins
+  -- it to end-of-line ("eol"); nil means "restate it from where we land". Set on
+  -- the bare-motion paths only, so d$ and dj take their column from the landing
+  -- site like vi, and only the motion itself is a consumer.
+  local colmode
   if k == b('"') then reg = string.char(getkey(ed)); k = getkey(ed) end
   local count1
   count1, k = read_count(ed, k)
@@ -2004,12 +2063,28 @@ local function command(ed)
     elseif k2 == b("@") then apply_opfunc(ed, count1)
     elseif k2 == b(";") then change_nav(ed, count1 or 1, true)   -- g;: older change
     elseif k2 == b(",") then change_nav(ed, count1 or 1, false)  -- g,: newer change
-    else do_motion(ed, { kind = "line", move = function(e, c) return g_motion_move(e, k2, c) end }, count1) end
+    else
+      do_motion(ed, { kind = "line", move = function(e, c) return g_motion_move(e, k2, c) end }, count1)
+      if k2 == b("j") or k2 == b("k") then colmode = "keep" end
+    end
   elseif motions[k] then
     do_motion(ed, motions[k], count1)
+    colmode = COLMODE[k]
   elseif actions[k] then
     actions[k](ed, count1, reg)
   end
+  -- Sticky column: every command restates the desired column from where it left
+  -- the cursor, EXCEPT the four that consume it (j/k/gj/gk) and `$`, which pins
+  -- it to end-of-line. Doing it here, once, is why no motion, operator or action
+  -- carries a set-the-column line of its own: command() is the only place every
+  -- keyboard command is guaranteed to pass, and `.` and macros replay through it
+  -- too. The moved-or-changed guard keeps a command that leaves the cursor alone
+  -- -- zz/zt/zb, a :w typed at the prompt -- from restating a column the user
+  -- never chose, which would otherwise quietly discard a column truncation had
+  -- already shortened. (`$` skips the guard: pressing it on a line where the
+  -- cursor already sits at the end still means "stick to the end from now on".)
+  if colmode == "eol" then ed.want_col = math.huge
+  elseif colmode ~= "keep" and (ed.cy ~= sy or ed.cx ~= sx or ed.changed) then set_want_col(ed) end
 end
 
 -- The coroutine body: parse commands forever. Quit is the driver noticing
