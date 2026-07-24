@@ -1160,7 +1160,9 @@ below, with the happy-path rc lines that turn it on:
 	Rewrap a bulleted or numbered list through *gq*, keeping each item's marker
 	and hanging the wrapped lines under its text -- the *formatlistpat* job
 	*fmt*(1) can't do (ordered, roman, letter, and bullet markers; nested lists
-	nest). Point *fmtprg* at it and *gqip* / *gqq* reflow lists:
+	nest). When every line of the range shares a leader (*# *, *> *, *// *) it
+	strips that, reflows, and puts it back, so comment blocks and mail quotes
+	rewrap too. Point *fmtprg* at it and *gqip* / *gqq* reflow lists:
 
 	```
 	set fmtprg=lvi-reflow -w 79

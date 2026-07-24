@@ -630,6 +630,16 @@ hand-tuned vim `formatlistpat`, embedded as one regex you can edit. Reflowing
 twice is a fixpoint. Like that pattern, a paragraph-leading `e.g. ` reads as a
 list item — tighten the regex if it bites.
 
+It does `par`(1)'s job too, where `par`(1) is the right answer. When every
+non-blank line in the range opens with the same leader — `# `, `> `, `// `,
+nested `> > ` — the leader comes off, the contents reflow, and it goes back on
+each output line. The strip happens first, so a list inside a comment block
+still hangs under its own marker. A bullet is never a leader: `- ` on every line
+is a list, and the list wins. If one line breaks the pattern the range reflows
+unprefixed and says nothing, because a filter's stdout is the buffer. `-p` names
+a prefix a block can't declare for itself, `* ` C comments being the case that
+needs it.
+
 ### `lvi-surround` — wrap a span in a delimiter pair
 
 Where `lvi-incr` and `lvi-reflow` ride the `!` filter, these two ride `g@` — the

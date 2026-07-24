@@ -63,6 +63,52 @@ describe("contrib", function()
       expect(out).to.equal("\226\128\162 aa bb\n  cc dd\n  ee\n")
     end)
 
+    it("lvi-reflow strips a common prefix, reflows, and puts it back", function()
+      local out = run({}, "printf '# alpha beta gamma delta epsilon zeta eta\\n# theta iota\\n'"
+        .. " | contrib/lvi-reflow -w 24")
+      expect(out).to.equal("# alpha beta gamma delta\n# epsilon zeta eta theta\n# iota\n")
+    end)
+
+    it("lvi-reflow hangs a list nested inside a comment block", function()
+      local out = run({}, "printf '# - alpha beta gamma delta\\n#   epsilon\\n'"
+        .. " | contrib/lvi-reflow -w 20")
+      expect(out).to.equal("# - alpha beta gamma\n#   delta epsilon\n")
+    end)
+
+    -- The collision that makes a naive longest-common-prefix wrong: every line
+    -- of a bullet list shares `- `, and repeating it would destroy the hang.
+    it("lvi-reflow treats a shared bullet as a list, not a prefix", function()
+      local out = run({}, "printf -- '- alpha beta gamma delta epsilon\\n- zeta eta\\n'"
+        .. " | contrib/lvi-reflow -w 20")
+      expect(out).to.equal("- alpha beta gamma\n  delta epsilon\n- zeta eta\n")
+    end)
+
+    it("lvi-reflow keeps a bare quote line inside a nested quote", function()
+      local out = run({}, "printf '> > aa bb cc dd ee ff\\n> >\\n> > gg hh\\n'"
+        .. " | contrib/lvi-reflow -w 14")
+      expect(out).to.equal("> > aa bb cc\n> > dd ee ff\n> >\n> > gg hh\n")
+    end)
+
+    it("lvi-reflow falls back when one line lacks the prefix", function()
+      local out = run({}, "printf '# alpha beta\\noops gamma\\n# delta\\n'"
+        .. " | contrib/lvi-reflow -w 40")
+      expect(out).to.equal("# alpha beta oops gamma # delta\n")
+    end)
+
+    -- A leader must be blank-terminated, or ordinary prose that happens to open
+    -- with the same punctuation gets torn apart.
+    it("lvi-reflow does not treat a shared quote character as a prefix", function()
+      local out = run({}, [[printf '"Hello," she said.\n"Bye," he replied.\n']]
+        .. " | contrib/lvi-reflow -w 60")
+      expect(out).to.equal('"Hello," she said. "Bye," he replied.\n')
+    end)
+
+    it("lvi-reflow -p forces the prefix an ambiguous '* ' block can't declare", function()
+      local out = run({}, "printf ' * alpha beta gamma delta epsilon\\n * zeta\\n'"
+        .. " | contrib/lvi-reflow -w 22 -p ' *'")
+      expect(out).to.equal(" * alpha beta gamma\n * delta epsilon zeta\n")
+    end)
+
     it("lvi-incr ramps by STEP down the selection", function()
       local out = run({}, "printf '1\\n1\\n1\\n' | contrib/lvi-incr -s 5")
       expect(out).to.equal("6\n11\n16\n")

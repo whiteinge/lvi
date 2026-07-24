@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-reflow [-w WIDTH] [WIDTH] -- reflow plain-text lists, stdin->stdout.
+# lvi-reflow [-w WIDTH] [-p PREFIX] [WIDTH] -- reflow plain-text lists, stdin->stdout.
 #
 # Rewrap a bulleted/numbered list, keeping each item's marker and HANGING the
 # wrapped continuation under the item's text (not under the marker). No CLI tool
@@ -27,24 +27,48 @@
 # preserved verbatim as paragraph breaks. Trailing whitespace is trimmed;
 # adjacent words are joined with a single space.
 #
+# COMMON PREFIX -- when EVERY non-blank line in the range opens with the same
+# leader, the leader is stripped, the contents reflow, and it goes back on each
+# output line. That is the par(1) behaviour, applied only where it is right:
+# `# ` comment blocks, `> ` mail quotes, `// `, `-- `, `;;; `, nested `> > `.
+# Because the strip happens first, a list INSIDE a comment still hangs:
+#     # - alpha beta gamma        # - alpha beta
+#     #   delta                   #   gamma delta
+# A leader is indentation plus a run of non-blank, non-alphanumeric characters,
+# and two rules keep it from firing on text that only looks prefixed:
+#   * it must be followed by a blank (or end the line), so the shared `"` of
+#     `"Hello," she said.` is not a prefix -- at the cost of not seeing `#foo`
+#     with no space, which just reflows normally. A missed prefix is a non-event;
+#     a wrong one mangles the text, so the doubt resolves that way.
+#   * if it would match MARKER it is a list bullet, and the list wins -- `- ` is
+#     an item, not a prefix. `* ` C-comment blocks are the one real casualty
+#     (indistinguishable from a `* ` bullet); name it with -p to override.
+# If any non-blank line lacks the leader the whole range reflows unprefixed --
+# no warning, since a filter's stdout is the buffer. Blank lines are exempt (a
+# paragraph break); a leader-only line stays one.
+#
 # Not a formatter dispatcher (that's lvi-fmt) and not semantically list-aware
 # (that's pandoc): it does one line-shaped job, rewrap text that may or may not
 # be a list, so it composes with any file type, code comments included.
 #
 # Config (env): LVI_REFLOW_WIDTH (default 79; -w / a bare numeric arg override),
-# LVI_REFLOW_TABSTOP (tab width used when measuring indent, default 8).
+# LVI_REFLOW_TABSTOP (tab width used when measuring indent, default 8),
+# LVI_REFLOW_PREFIX (force this prefix instead of detecting one; -p overrides).
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 
 width=${LVI_REFLOW_WIDTH:-79}
 tab=${LVI_REFLOW_TABSTOP:-8}
+prefix=${LVI_REFLOW_PREFIX-}
 while [ $# -gt 0 ]; do
   case $1 in
     -w)      width=${2:-}; shift 2 ;;
     -w*)     width=${1#-w}; shift ;;
+    -p)      prefix=${2:-}; shift 2 ;;
+    -p*)     prefix=${1#-p}; shift ;;
     [0-9]*)  width=$1; shift ;;
-    *) echo "lvi-reflow: unknown argument '$1' (usage: lvi-reflow [-w WIDTH])" >&2; exit 2 ;;
+    *) echo "lvi-reflow: unknown argument '$1' (usage: lvi-reflow [-w WIDTH] [-p PREFIX])" >&2; exit 2 ;;
   esac
 done
 case $width in ''|*[!0-9]*) echo "lvi-reflow: width must be a positive integer" >&2; exit 2 ;; esac
@@ -54,13 +78,16 @@ case $width in ''|*[!0-9]*) echo "lvi-reflow: width must be a positive integer" 
 # string escapes are undefined by POSIX and gawk/mawk already disagree on them,
 # and sprintf("%c", n) yields a code point, not a byte, under gawk in a UTF-8
 # locale.
-exec awk -v width="$width" -v tab="$tab" \
+exec awk -v width="$width" -v tab="$tab" -v forced="$prefix" \
   -v endash="$(printf '\342\200\223')" -v bullet="$(printf '\342\200\242')" '
 # One ERE for a list marker, anchored at start: (ordered|bullet) + trailing ws.
 # The ordered branch is optional-open-bracket, then digits / roman / one letter,
 # then one of ] : . ) } -- the closing set leads with ] so it is a literal.
 BEGIN {
   MARKER = "^[ \t]*(([[({]?([0-9]+|[iIvVxXlLcCdDmM]+|[a-zA-Z])[]:.)}])|([-+o*]|" endash "|" bullet "))[ \t]+"
+  # Indentation plus a run of leader characters -- non-blank and non-alphanumeric
+  # -- repeatable across blanks so `> > ` reads as one leader, not two.
+  LEAD   = "^[ \t]*([^ \t0-9A-Za-z]+[ \t]*)+"
 }
 
 # Display columns of s, counting a tab as advancing to the next multiple of tab.
@@ -86,9 +113,9 @@ function emit(pfx, cont, text,   n, words, i, line, lw, ww, first) {
     ww = dispwidth(words[i])
     if (first)                       { line = line words[i]; lw += ww; first = 0 }
     else if (lw + 1 + ww <= width)   { line = line " " words[i]; lw += 1 + ww }
-    else { print rstrip(line); line = cont words[i]; lw = dispwidth(cont) + ww }
+    else { out(line); line = cont words[i]; lw = dispwidth(cont) + ww }
   }
-  print rstrip(line)   # first==1 (empty content) prints the bare marker
+  out(line)            # first==1 (empty content) prints the bare marker
 }
 function flush() {
   if (!have) return
@@ -96,29 +123,84 @@ function flush() {
   have = 0; bpfx = ""; bcont = ""; btext = ""
 }
 
-/^[ \t]*$/ { flush(); print ""; next }        # blank line: paragraph break
-
-match($0, MARKER) {                            # a new list item
-  flush()
-  have = 1
-  bpfx = substr($0, 1, RLENGTH)
-  bcont = spaces(dispwidth(bpfx))
-  btext = substr($0, RLENGTH + 1)
-  next
-}
-
-{                                              # non-marker, non-blank line
-  if (have) {                                  # ... continues the open paragraph
-    s = $0; sub(/^[ \t]+/, "", s)
-    btext = btext " " s
-  } else {                                     # ... starts a plain paragraph
-    have = 1
-    match($0, /^[ \t]*/)
-    bpfx = substr($0, 1, RLENGTH)
-    bcont = bpfx                               # plain text keeps its indent verbatim
-    btext = substr($0, RLENGTH + 1)
+# The leader every non-blank line shares, or "" for none. See the COMMON PREFIX
+# note in the header for why the two rejections (blank-terminated, and MARKER
+# wins) are there rather than taking any longest common prefix.
+function detect(   i, s, p, m, seen) {
+  # The block-wide common prefix first, then trim it back to a leader. Taken
+  # across all the lines at once, NOT matched per line: on its own, `# - alpha`
+  # reads as the leader `# - `, and only the sibling line `#   epsilon` shows
+  # that the `- ` is a list bullet inside a `# ` block. Each line is compared
+  # with a trailing blank appended, so a bare `>` among `> ` quotes still agrees
+  # with them instead of shortening the prefix to an unterminated `>`.
+  for (i = 1; i <= N; i++) {
+    if (L[i] ~ /^[ \t]*$/) continue                   # blank lines are exempt
+    s = L[i] " "
+    if (!seen) { p = s; seen = 1; continue }
+    m = 0
+    while (m < length(p) && m < length(s) && substr(p, m + 1, 1) == substr(s, m + 1, 1)) m++
+    p = substr(p, 1, m)
+    if (p == "") return ""
   }
+  if (!seen) return ""                                # nothing but blank lines
+  if (!match(p, LEAD)) return ""                      # no leader, or indentation alone
+  p = substr(p, 1, RLENGTH)                           # drop any shared CONTENT past it
+  if (p !~ /[ \t]$/) return ""                        # must be blank-terminated
+  sub(/[ \t]+$/, "", p)
+  if (match(p " ", MARKER)) return ""                 # it is a list bullet: the list wins
+  return p
 }
 
-END { flush() }
+# Drop the leader and the single blank that separates it from the content. Only
+# ONE blank, so indentation inside the comment survives to steer the reflow --
+# that is what lets a list nested in a `# ` block keep its hanging indent.
+function strip(s,   c) {
+  s = substr(s, length(LEADER) + 1)
+  c = substr(s, 1, 1)
+  if (c == " " || c == "\t") s = substr(s, 2)
+  return s
+}
+function out(s) { print rstrip(PFX s) }
+
+# One line into the paragraph builder, already stripped of any common prefix.
+function feed(s,   t) {
+  if (s ~ /^[ \t]*$/) { flush(); out(""); return }    # a leader-only line
+  if (match(s, MARKER)) {                             # a new list item
+    flush()
+    have = 1
+    bpfx = substr(s, 1, RLENGTH)
+    bcont = spaces(dispwidth(bpfx))
+    btext = substr(s, RLENGTH + 1)
+    return
+  }
+  if (have) {                                         # continues the open paragraph
+    t = s; sub(/^[ \t]+/, "", t)
+    btext = btext " " t
+    return
+  }
+  have = 1                                            # starts a plain paragraph
+  match(s, /^[ \t]*/)
+  bpfx = substr(s, 1, RLENGTH)
+  bcont = bpfx                                        # plain text keeps its indent verbatim
+  btext = substr(s, RLENGTH + 1)
+}
+
+{ L[++N] = $0 }                                       # buffered: detection needs every line
+
+END {
+  LEADER = forced
+  sub(/[ \t]+$/, "", LEADER)
+  if (LEADER == "") LEADER = detect()
+  if (LEADER != "") {
+    PFX = LEADER " "
+    width -= dispwidth(PFX)                           # the content wraps in what is left
+    if (width < 1) width = 1
+  }
+  for (i = 1; i <= N; i++) {
+    s = L[i]
+    if (s ~ /^[ \t]*$/) { flush(); print ""; continue }   # a truly blank line, verbatim
+    feed(PFX == "" ? s : strip(s))
+  }
+  flush()
+}
 '
