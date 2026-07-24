@@ -12,6 +12,11 @@
 # The overlay answers "is there a tab or trailing junk near my edit?"; `page`
 # answers "what exactly is this byte?".
 #
+# The core already draws control bytes as one-column stand-ins (␛, ␇) so they
+# cannot drive the terminal. That is a safety floor, not notation: it says a
+# control byte is here, not which whitespace is which, and says nothing about
+# tabs or trailing blanks. Both halves below still have their jobs.
+#
 #   lvi-invis [toggle]    enable/disable the overlay (the default subcommand)
 #   lvi-invis scan        re-paint now (the hook target; instant no-op when off)
 #   lvi-invis page        the whole buffer in less, every byte notated

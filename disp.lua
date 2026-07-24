@@ -62,6 +62,28 @@ local function cpwidth(cp)
   return 1
 end
 
+-- ---- control bytes ----------------------------------------------------------
+-- A control byte must never reach the terminal raw. An ESC read from a file (an
+-- ANSI-coloured capture) would be obeyed as a control sequence and take the rest
+-- of the screen with it; a BEL would ring on every repaint; a ^L page break --
+-- ordinary in older sources -- would clear it. So every render path substitutes
+-- Unicode's Control Pictures (U+2400 + b, U+2421 for DEL) at EMISSION time only.
+--
+-- Each picture is exactly one column, which is the width charinfo has always
+-- reported for a byte below 0x80 -- so no width, wrap, cursor, highlight or
+-- scroll arithmetic changes, and the substitution stays a display concern that
+-- the rest of the editor never sees. That is the whole design: the buffer holds
+-- the real byte, the screen shows a safe stand-in.
+--
+-- This is the safety floor, not `:set list`. Exact notation (^I for tab, $ for
+-- line ends, M- for meta) belongs to contrib/lvi-invis, which pages the live
+-- buffer through `cat -vet`.
+local CTRL = {}
+for bb = 0, 31 do CTRL[bb] = "\226\144" .. string.char(0x80 + bb) end -- U+2400 + bb
+CTRL[9] = nil                                    -- tab is expanded, never substituted
+CTRL[127] = "\226\144\161"                       -- U+2421 SYMBOL FOR DELETE
+M.CTRL = CTRL
+
 -- Display width + byte length of the char at byte i, given running display col
 -- (needed only for tab).
 local function charinfo(s, i, col, ts)
@@ -195,12 +217,12 @@ end
 -- ---- rendering --------------------------------------------------------------
 -- Tab-expanded display form of a whole line (multibyte chars pass through).
 function M.expand(s, ts)
-  if not s:find("\t", 1, true) then return s end
+  if not s:find("[%z\1-\31\127]") then return s end   -- tabs and control bytes both
   local out, col, i, n = {}, 0, 1, #s
   while i <= n do
     local b = s:byte(i)
     if b == 9 then local w = ts - (col % ts); out[#out + 1] = string.rep(" ", w); col = col + w; i = i + 1
-    else local dw, len = charinfo(s, i, col, ts); out[#out + 1] = s:sub(i, i + len - 1); col = col + dw; i = i + len end
+    else local dw, len = charinfo(s, i, col, ts); out[#out + 1] = CTRL[b] or s:sub(i, i + len - 1); col = col + dw; i = i + len end
   end
   return table.concat(out)
 end
@@ -250,7 +272,7 @@ function M.slice(s, ts, startcol, W, ivs)
     local b = s:byte(i)
     local dw, len, glyph
     if b == 9 then dw, len = ts - (col % ts), 1
-    elseif b < 0x80 then dw, len, glyph = 1, 1, s:sub(i, i)
+    elseif b < 0x80 then dw, len, glyph = 1, 1, CTRL[b] or s:sub(i, i)
     else local cp; cp, len = decode(s, i); dw = cpwidth(cp); glyph = s:sub(i, i + len - 1) end
     if col + dw > startcol then
       if b == 9 then

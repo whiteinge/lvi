@@ -68,6 +68,12 @@ function M.new_ed()
     last_macro = nil,         -- last @-run register (for @@)
     last_subst = nil,         -- last delegated :s command tail, for normal-mode & (repeat substitute)
     want_col = 0,             -- sticky column j/k aim at: 0-based DISPLAY col, math.huge == $ (see normal.lua)
+    -- Autoindent bookkeeping. POSIX scopes insert-mode Ctrl-D to *autoindent*
+    -- characters (hand-typed indent is untouched), so the editor has to know
+    -- which leading blanks it inserted itself rather than guess from a regex.
+    ai_text = "",             -- the autoindent lvi put on the line being inserted into
+    ai_next = nil,            -- indent to force onto the NEXT line (set by ^ Ctrl-D)
+    last_insert = nil,        -- text of the last completed insert (POSIX input-mode NUL)
 
     -- shared editing state
     regs = {},                -- registers a-z + unnamed '"'

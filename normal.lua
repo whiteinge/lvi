@@ -266,14 +266,42 @@ local function insert_tab(ed)
   for _ = 1, sw - dcol % sw do insert_char(ed, 32) end
 end
 
+-- Ctrl-V / Ctrl-Q: insert the next char with no special meaning. Multibyte via
+-- read_char_from, so a UTF-8 char pasted behind a Ctrl-V arrives whole.
+local function insert_literal(ed, byte_)
+  local s, ch = line(ed, ed.cy), read_char_from(ed, byte_)
+  ed.buf:set(ed.cy, s:sub(1, ed.cx - 1) .. ch .. s:sub(ed.cx))
+  ed.cx = ed.cx + #ch
+end
+
+-- Ctrl-T (POSIX): blanks up to the column after the next shiftwidth boundary.
+-- The blanks land exactly as <Tab> would lay them, because lvi's Tab already
+-- means "indent one unit" (see insert_tab) rather than POSIX's plain tab
+-- character, so the two agree byte for byte instead of spelling one indent two
+-- ways.
+--
+-- When Ctrl-T is extending the indent, its blanks JOIN the autoindent, so
+-- Ctrl-D takes them back. POSIX reads them as ordinary typed text, which would
+-- leave Ctrl-D unable to undo a Ctrl-T; every historical vi pairs the two, and a
+-- pair that only works in one direction is the worse deviation. In the manpage.
+local function insert_shift(ed)
+  local indenting = ed.cx == #ed.ai_text + 1
+  insert_tab(ed)
+  if indenting then ed.ai_text = line(ed, ed.cy):sub(1, ed.cx - 1) end
+end
+
 local function split_line(ed) -- <CR> in insert mode
   local s = line(ed, ed.cy)
   local head, tail = s:sub(1, ed.cx - 1), s:sub(ed.cx)
   local indent = ""
   if ed.opts.autoindent then
-    indent = s:match("^[ \t]*")                 -- carry the split line's indent onto the next
-    if head:match("^[ \t]*$") then head = "" end -- ...and drop it from a line that was only indent
+    -- ^ Ctrl-D asked for this line's indent to be dropped but the NEXT line's to
+    -- come from wherever this one's did, so a forced indent outranks re-deriving.
+    indent = ed.ai_next or s:match("^[ \t]*")   -- carry the split line's indent onto the next
+    if head == ed.ai_text then head = "" end    -- ...and drop it from a line that was only indent
   end
+  ed.ai_next = nil
+  ed.ai_text = indent
   ed.buf:set(ed.cy, head)
   ed.buf:insert(ed.cy + 1, { indent .. tail })
   ed.cy = ed.cy + 1
@@ -315,24 +343,110 @@ local function kill_to_bol(ed)
   ed.cx = 1
 end
 
-local function insert_mode(ed)
+-- Ctrl-D (POSIX): erase back through the AUTOINDENT, and only the autoindent.
+-- The spec is explicit that Ctrl-D has no special meaning unless the cursor
+-- follows autoindent characters, optionally with a '0' or '^' typed after them.
+-- Indentation you typed by hand is not its business, which is where it parts
+-- company with vim's Ctrl-D. That is why ed.ai_text exists: the erase has to
+-- know which blanks the editor inserted, and no inspection of the line can tell.
+--
+--   Ctrl-D    back to the column after the previous shiftwidth boundary
+--   0 Ctrl-D  drop the whole indent
+--   ^ Ctrl-D  drop it here, but indent the next line as this one would have been
+--
+-- Returns false when none of that applies; the key is then simply ignored.
+local function erase_autoindent(ed)
+  local cur, ts = line(ed, ed.cy), ed.opts.tabstop
+  local ai = #ed.ai_text
+  if ai == 0 or not cur:sub(1, ai):match("^[ \t]*$") then return false end
+  local pfx = cur:sub(ed.cx - 1, ed.cx - 1)
+  if ed.cx == ai + 2 and (pfx == "0" or pfx == "^") then
+    if pfx == "^" then ed.ai_next = ed.ai_text end -- the next line still gets it
+    ed.buf:set(ed.cy, cur:sub(ed.cx))              -- the 0/^ goes with the indent
+    ed.cx, ed.ai_text = 1, ""
+    return true
+  end
+  if ed.cx ~= ai + 1 then return false end         -- cursor is past the indent: not ours
+  -- POSIX's column arithmetic, (column-1) - ((column-2) % shiftwidth), in the
+  -- 0-based display columns disp speaks. Rebuilt from the indent's own bytes so
+  -- a tabbed indent stays tabbed, padded out with spaces when the boundary falls
+  -- inside a tab.
+  local d = disp.dispcol(cur, ts, ed.cx)
+  if d == 0 then return false end
+  local target = d - ((d - 1) % ed.opts.shiftwidth) - 1
+  local head = cur:sub(1, disp.byte_at_dispcol(cur, ts, target) - 1)
+  local w = disp.width(head, ts)
+  if w < target then head = head .. string.rep(" ", target - w) end
+  ed.buf:set(ed.cy, head .. cur:sub(ed.cx))
+  ed.cx, ed.ai_text = #head + 1, head
+  return true
+end
+
+-- POSIX input-mode NUL: re-enter the previously inserted text literally (no
+-- interpretation, no macro expansion), then leave insert mode. Fed through the
+-- buffer rather than ed.inject precisely because inject would re-interpret it.
+local function reinsert_last(ed)
+  local first = true
+  for part in (ed.last_insert .. "\n"):gmatch("(.-)\n") do
+    if not first then split_line(ed) end
+    local s = line(ed, ed.cy)
+    ed.buf:set(ed.cy, s:sub(1, ed.cx - 1) .. part .. s:sub(ed.cx))
+    ed.cx = ed.cx + #part
+    first = false
+  end
+end
+
+-- The text a completed insert added, read back off the buffer rather than
+-- accumulated keystroke by keystroke -- backspace, Ctrl-W and Ctrl-U would each
+-- need their own bookkeeping otherwise, and the buffer already knows the answer.
+-- Nothing is recorded when the cursor ended up before where it started (the
+-- non-POSIX Ctrl-A, or backspacing past the entry point), since there is then no
+-- well-defined inserted text.
+local function capture_insert(ed, sy, sx)
+  if ed.cy < sy or (ed.cy == sy and ed.cx < sx) then return end
+  if ed.cy == sy then ed.last_insert = line(ed, sy):sub(sx, ed.cx - 1); return end
+  local parts = { line(ed, sy):sub(sx) }
+  for l = sy + 1, ed.cy - 1 do parts[#parts + 1] = line(ed, l) end
+  parts[#parts + 1] = line(ed, ed.cy):sub(1, ed.cx - 1)
+  ed.last_insert = table.concat(parts, "\n")
+end
+
+-- `ai` is the autoindent this insert opened with -- only o/O have one to declare.
+-- Every other entry point resets it here, so a stale indent from an earlier o
+-- can never make Ctrl-D eat blanks the user typed by hand.
+local function insert_mode(ed, ai)
   ed.changed = true
   ed.mode = "insert"
   ed.message = "-- INSERT --"
+  ed.ai_text, ed.ai_next = ai or "", nil
   clamp(ed)
+  local sy, sx = ed.cy, ed.cx
+  local fresh = true                                 -- nothing typed yet (NUL's window)
   while true do
     local k = getkey(ed)
     if k == 27 then                                    -- ESC
       -- vi's autoindent rule: a line left holding only its auto-inserted indent
       -- (nothing typed) is trimmed back to empty, so no trailing whitespace.
-      if ed.opts.autoindent and line(ed, ed.cy):match("^[ \t]+$") then
+      -- Compared against ai_text, not a blanks-only pattern: blanks the user
+      -- typed are text they meant to type, and only lvi's own indent is scratch.
+      if ed.ai_text ~= "" and line(ed, ed.cy) == ed.ai_text then
         ed.buf:set(ed.cy, ""); ed.cx = 1
       end
       break
+    elseif k == 0 and fresh and ed.last_insert then    -- NUL: replay the last insert, then leave
+      reinsert_last(ed); break
     elseif k == 13 or k == 10 then split_line(ed)      -- CR
     elseif k == 127 or k == 8 then backspace(ed)       -- Backspace / Ctrl-H
     elseif k == 23 then kill_word(ed)                  -- Ctrl-W: erase word (POSIX vi)
     elseif k == 21 then kill_to_bol(ed)                -- Ctrl-U: erase to line start
+    -- Ctrl-V / Ctrl-Q quote the next character. POSIX exempts the newline: a
+    -- quoted CR still breaks the line (which is also lvi's buffer invariant --
+    -- a line never contains one), and the Ctrl-V is dropped.
+    elseif k == 22 or k == 17 then
+      local k2 = getkey(ed)
+      if k2 == 13 or k2 == 10 then split_line(ed) else insert_literal(ed, k2) end
+    elseif k == 20 then insert_shift(ed)               -- Ctrl-T: indent one shiftwidth
+    elseif k == 4 then erase_autoindent(ed)            -- Ctrl-D: un-indent (autoindent only)
     -- Ctrl-A / Ctrl-E move to line ends. Not POSIX vi (readline muscle memory);
     -- vi's answer is <Esc> then I / A. Included by request.
     elseif k == 1 then ed.cx = 1                       -- Ctrl-A: start of line
@@ -342,8 +456,10 @@ local function insert_mode(ed)
     elseif k == 9 then insert_tab(ed)                  -- Tab: literal, or spaces if expandtab
     elseif k >= 32 and k ~= 127 then insert_char(ed, k) -- printable + UTF-8 bytes
     end
+    fresh = false
     clamp(ed)
   end
+  capture_insert(ed, sy, sx)
   ed.mode = "normal"
   ed.message = nil; ed.message_hl = nil
   ed.cx = math.max(1, ed.cx - 1) -- vi steps left on leaving insert
@@ -1376,6 +1492,12 @@ local function run_prompt(ed, seed)
         hidx = hidx + 1
         ed.cmdline = (hidx > #ed.cmdhist) and (stash or "") or ed.cmdhist[hidx]
       end
+    -- Ctrl-V / Ctrl-Q quote the next character here too. POSIX exempts only
+    -- Ctrl-D and Ctrl-T from line-oriented commands, and a literal control byte
+    -- is exactly what a delegated :s needs to carry one into its replacement.
+    elseif k == 22 or k == 17 then
+      local k2 = getkey(ed)
+      if k2 ~= 13 and k2 ~= 10 then ed.cmdline = ed.cmdline .. read_char_from(ed, k2) end
     -- Printable ASCII, tab, and UTF-8 bytes (>= 128) -- the same set insert
     -- mode accepts, so :e on a non-ASCII filename or a UTF-8 :s pattern is
     -- typeable at the prompt, not only over the socket.
@@ -1695,11 +1817,13 @@ actions = {
   -- leading whitespace (trimmed by the ESC rule if you type nothing).
   [b("o")] = function(ed)
     local indent = ed.opts.autoindent and line(ed, ed.cy):match("^[ \t]*") or ""
-    ed.buf:insert(ed.cy + 1, { indent }); ed.cy = ed.cy + 1; ed.cx = #indent + 1; insert_mode(ed)
+    ed.buf:insert(ed.cy + 1, { indent }); ed.cy = ed.cy + 1; ed.cx = #indent + 1
+    insert_mode(ed, indent)                          -- the indent Ctrl-D may erase
   end,
   [b("O")] = function(ed)
     local indent = ed.opts.autoindent and line(ed, ed.cy):match("^[ \t]*") or ""
-    ed.buf:insert(ed.cy, { indent }); ed.cx = #indent + 1; insert_mode(ed)
+    ed.buf:insert(ed.cy, { indent }); ed.cx = #indent + 1
+    insert_mode(ed, indent)
   end,
   -- '.' repeats the last change by replaying its recorded keys: prepend them to
   -- the funnel so they run as the next command(s). '.' itself makes no change,

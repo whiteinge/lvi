@@ -344,6 +344,37 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 *Ctrl-U*
 	Erase from the cursor to the start of the line.
 
+*Ctrl-V*, *Ctrl-Q*
+	Insert the next character literally, stripping whatever meaning it has
+	here: a tab under *expandtab*, an *Esc*, any byte you need. A quoted
+	_Enter_ still breaks the line, since POSIX exempts it and an lvi line never
+	holds a newline. It works at the *:* prompt too, which is how a control
+	character reaches a delegated *:s* replacement. POSIX asks for a *^* on
+	screen while it waits for the character; lvi shows nothing, because the
+	renderer has no way to draw a glyph that isn't in the buffer.
+
+	Control bytes in a buffer display as one-column stand-ins (*␛*, *␇*), so a
+	file full of escape sequences can't take the terminal over. This keeps the
+	screen safe, and is not *:set list*: for exact notation (*^I*, *$*, *M-*)
+	use *contrib/lvi-invis*.
+
+*Ctrl-T*, *Ctrl-D*
+	Indent / un-indent by one *shiftwidth*. *Ctrl-D* is scoped to indentation
+	the editor inserted, so it never eats blanks you typed by hand. Two
+	prefixed forms: *0 Ctrl-D* drops the whole indent, and *^ Ctrl-D* drops it
+	on this line while the next line is still indented as this one would have
+	been.
+
+	Two deviations. POSIX counts *Ctrl-T*'s blanks as ordinary typed text, which
+	would leave *Ctrl-D* unable to undo a *Ctrl-T*; lvi folds them into the
+	indent so the pair works both ways, as historical vi does. And lvi skips
+	POSIX's rewrite of leading indentation to the fewest possible blanks on
+	*Esc*, which would undo *expandtab*.
+
+*NUL* (*Ctrl-@*)
+	As the first character of an insert, re-enter the text of the previous
+	insert literally and return to normal mode.
+
 *Ctrl-A*, *Ctrl-E*
 	Move to the start / end of the line (a readline convenience; not POSIX vi).
 

@@ -129,6 +129,31 @@ describe("disp", function()
       expect(disp.slice("hello", 8, 0, 20, nil)).to.equal("hello")
     end)
   end)
+
+  -- A control byte in the buffer (an ANSI-coloured capture, a ^L page break)
+  -- must never reach the terminal raw; the stand-in is one column, so no width
+  -- or cursor arithmetic shifts around it.
+  describe("control bytes", function()
+    local ESCPIC, BELPIC, DELPIC = "\226\144\155", "\226\144\135", "\226\144\161"
+    it("slice substitutes a one-column picture, never the raw byte", function()
+      local out = disp.slice("a\27b\7c\127d", 8, 0, 20, nil)
+      expect(out).to.equal("a" .. ESCPIC .. "b" .. BELPIC .. "c" .. DELPIC .. "d")
+      expect(out:find("\27", 1, true)).to.be(nil)
+    end)
+    it("expand substitutes them too (the multi-line output pager)", function()
+      expect(disp.expand("a\27b", 8)).to.equal("a" .. ESCPIC .. "b")
+      expect(disp.expand("plain", 8)).to.equal("plain")   -- fast path still returns as-is
+    end)
+    it("counts one column each, so the width math is unchanged", function()
+      expect(disp.width("a\27b\7c", 8)).to.equal(5)
+      expect(disp.dispcol("a\27b", 8, 3)).to.equal(2)     -- 'b' is at column 2
+      expect(disp.byte_at_dispcol("a\27b", 8, 1)).to.equal(2)
+    end)
+    it("clips at a window edge like any other char", function()
+      expect(disp.slice("ab\27cd", 8, 0, 3, nil)).to.equal("ab" .. ESCPIC)
+      expect(disp.slice("ab\27cd", 8, 3, 2, nil)).to.equal("cd")
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)
