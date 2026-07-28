@@ -517,6 +517,14 @@ function M.run(opts)
     sys.setenv("LVI_COL", ed.cx)
     sys.setenv("LVI_TOP", ed.top)          -- viewport top line, for `on scroll`
     sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
+    -- This buffer's state as the flags field :ls prints (bufs.flags): one format
+    -- for a hook and for the listing, and one var instead of a var per attribute
+    -- -- a slot added there arrives here for free. Chiefly it lets a hook tell a
+    -- throwaway view from a file: `paint` or a linter fired on bufenter has no
+    -- business acting on a man page or the command window, and no other var says
+    -- so (a scratch buffer can have a real path). The slots are blank-padded, so
+    -- a child tests them with a glob -- `case $LVI_FLAGS in *s*)` -- not equality.
+    sys.setenv("LVI_FLAGS", bufs.flags(ed, buf))
     -- The A-Z char behind a `markset`/`markjump` fire (the global-mark seam);
     -- empty for every other spawn, so no child sees a stale mark. Set transiently
     -- by normal.lua right around the fire, same discipline as the range vars below.

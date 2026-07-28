@@ -281,6 +281,50 @@ describe("bufs", function()
     end)
   end)
 
+  describe("the flags field (:ls, $LVI_FLAGS)", function()
+    it("blanks every slot for a clean, non-current buffer", function()
+      local ed = make_ed(); bufs.init(ed, buffer.new("a"))
+      local other = buffer.new("b"); bufs.add(ed, other)
+      local one = ed.buffers[1].buf
+      expect(bufs.flags(ed, one)).to.equal("    ")   -- not current, clean, no flags
+      expect(bufs.flags(ed, other)).to.equal("%   ") -- current only
+    end)
+
+    it("fills each slot in its own fixed position", function()
+      local ed = make_ed(); bufs.init(ed, buffer.new("a"))
+      local buf = ed.buf
+      buf:set(1, "dirty")
+      expect(bufs.flags(ed, buf)).to.equal("%+  ")
+      buf.readonly = true
+      expect(bufs.flags(ed, buf)).to.equal("%+ =")
+      buf.scratch = true; buf.modified = false       -- scratch is never modified
+      expect(bufs.flags(ed, buf)).to.equal("% s=")   -- the + slot empties in place
+      buf.readonly = false
+      expect(bufs.flags(ed, buf)).to.equal("% s ")
+    end)
+
+    it("shows a scratch buffer that has a real path, which the name cannot", function()
+      -- The case the flag exists for: `set scratch` on an ordinary file buffer
+      -- looks like any other file in the listing, yet the walk skips it.
+      local ed = make_ed()
+      local p = tmpfile("man page")
+      bufs.init(ed, buffer.open(p))
+      ex.dispatch(ed, "set scratch")
+      local list = (ex.dispatch(ed, "ls"))
+      expect(list:find("\t% s \t" .. p, 1, true)).to.exist()
+      os.remove(p)
+    end)
+
+    it(":ls embeds the same field it reports for one buffer", function()
+      local ed = make_ed(); bufs.init(ed, buffer.new("a"))
+      local p = tmpfile("b"); bufs.open(ed, p)
+      ed.buf:set(1, "dirty")
+      local list = (ex.dispatch(ed, "ls"))
+      expect(list:find("2\t" .. bufs.flags(ed, ed.buf), 1, true)).to.exist()
+      os.remove(p)
+    end)
+  end)
+
   describe("ex wiring", function()
     it(":e opens/switches and :ls lists", function()
       local ed = make_ed(); bufs.init(ed, buffer.new("orig"))

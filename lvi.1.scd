@@ -466,6 +466,13 @@ spaces and tabs included.
 	scratch buffer still works, and a list of nothing but scratch buffers steps
 	plainly rather than wedging.
 
+	*ls* is machine-readable: one buffer per line as _index_<TAB>_flags_<TAB>_path_.
+	_flags_ holds one fixed slot per attribute, blank where the attribute is off:
+	*%* current, *+* modified, *s* scratch, *=* readonly. The *s* slot is how you
+	tell which buffers the walk above skips. Slots are positional, so read one by
+	index or match it with a glob; a later release may append a slot, but will not
+	move one. The same field reaches a hook as *$LVI_FLAGS* (see *ENVIRONMENT*).
+
 *n* [_file_...], *N*, *rew*, *last*, *args*
 	The ex file-walk commands, which in lvi are the buffer walk above: *n* (also
 	*next*) and *N* (*prev*, *previous*) are *bn* and *bp*, *rew* (*rewind*,
@@ -477,7 +484,7 @@ spaces and tabs included.
 	you never asked for; lvi has the walk skip scratch buffers instead. Two
 	deviations from POSIX: the walk is cyclic, where ex stops with an error at the
 	end of the list, and it skips those scratch views. *args*, being *ls*, still
-	lists them.
+	lists them, flagged *s*.
 
 	*n* _file_... opens the named files as buffers and goes to the first. That is
 	POSIX's "replace the argument list, edit the first file" minus the discard:
@@ -1231,6 +1238,20 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	*:!ctags* _--_ *"${LVI_FILE%/\*}"* for the directory or *"${LVI_FILE##\*/}"*
 	for the basename. *LVI_CWORD* uses the same word definition as *w*/*b*/*e*
 	and is empty when the cursor is not on a word character.
+
+*LVI_FLAGS*
+	The buffer's state as the same flags field *ls* prints for it: *%* current,
+	*+* modified, *s* scratch, *=* readonly, blank in the slot of each attribute
+	that is off. One variable rather than one per attribute, and one format to
+	learn for the listing and the environment both. Mostly it tells a hook a
+	throwaway view from a file, which no other variable does: a *bufenter* linter
+	or repaint should not act on a man page or the command window, and *set
+	scratch* is user-facing, so a scratch buffer may well have a real path. The slots are blank-padded, so test one with a glob and not for
+	equality:
+
+	```
+	case $LVI_FLAGS in *s*) exit 0 ;; esac
+	```
 
 *LVI_EVENT*
 	The event name (*change*, *write*, ...) while an *:on* hook's command runs;

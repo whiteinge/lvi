@@ -211,12 +211,31 @@ function M.find(ed, substr)
   end
 end
 
--- Machine-parseable listing: index<TAB>flags<TAB>path (flags: % current, + modified).
+-- One buffer's state as a flags field: `%` current, `+` modified, `s` scratch,
+-- `=` readonly (vim's char for it), with a blank in the slot of each attribute
+-- that is off. The slots are POSITIONAL and fixed-width, so a reader can index
+-- them as readily as glob them, and appending a slot later never moves an
+-- existing one.
+--
+-- Shared by :ls and by $LVI_FLAGS (editor.export_context) so a hook and the
+-- listing speak one format instead of a var per attribute, and a slot added
+-- later reaches both without either caller changing. `scratch` is the one that
+-- needs the exposure: it decides whether the :bn/:n walk skips a buffer, and
+-- nothing else in the listing reveals it -- `set scratch` is user-facing, so a
+-- scratch buffer can have a real path and otherwise look like any other file.
+function M.flags(ed, buf)
+  return ((buf == ed.buf) and "%" or " ")
+      .. (buf.modified and "+" or " ")
+      .. (buf.scratch and "s" or " ")
+      .. (buf.readonly and "=" or " ")
+end
+
+-- Machine-parseable listing: index<TAB>flags<TAB>path.
 function M.list(ed)
   local out = {}
   for i, rec in ipairs(ed.buffers) do
-    local flags = ((i == ed.bufidx) and "%" or " ") .. (rec.buf.modified and "+" or " ")
-    out[#out + 1] = ("%d\t%s\t%s"):format(i, flags, rec.buf.path or rec.buf.name or "[No Name]")
+    out[#out + 1] = ("%d\t%s\t%s"):format(i, M.flags(ed, rec.buf),
+                                          rec.buf.path or rec.buf.name or "[No Name]")
   end
   return table.concat(out, "\n")
 end
