@@ -1,6 +1,6 @@
 #!/usr/bin/env luajit
 --- lvi -- entry point. Dual-role, like tmux:
----   lvi [file]                 launch the editor (optionally on a file)
+---   lvi [file...]              launch the editor (each file a buffer, first current)
 ---   lvi -w <wid> -- <cmds...>  send ex commands to a running view's socket
 ---   lvi -w auto -- <cmds...>   ... to the sole running view
 ---   lvi -l                     list running views
@@ -14,7 +14,7 @@ package.path = dir .. "/?.lua;" .. dir .. "/vendor/argparse/src/?.lua;" .. packa
 local argparse = require("argparse")
 
 local parser = argparse("lvi", "A minimal vi with a control socket.")
-parser:argument("args", "file to edit, or ex commands (after --) in client mode")
+parser:argument("args", "files to edit (first one current), or ex commands (after --) in client mode")
       :args("*")
 parser:option("-w --wid", "send ex commands to this view's socket ('auto' = sole view)")
 parser:flag("-d --detach", "client mode: send without waiting for replies (fire-and-forget)")

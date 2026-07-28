@@ -165,8 +165,44 @@ function M.close(ed, force, idx)
   return true
 end
 
-function M.next(ed) M.switch(ed, ed.bufidx % #ed.buffers + 1) end
-function M.prev(ed) M.switch(ed, (ed.bufidx - 2) % #ed.buffers + 1) end
+-- The file walk (:bn/:bp, and their POSIX spellings :n/:N) steps the list
+-- cyclically but SKIPS scratch buffers. Rationale: lvi has one list where vim
+-- has two -- the command-line files ARE the buffer list -- so this walk plays
+-- the role of vim's argument list, and an ephemeral view (the command window, a
+-- man page under `set scratch`) has no business interrupting a walk over the
+-- files you are editing. Reach those with :b, :b N, or :b# instead.
+--
+-- Two escape hatches keep the skip from ever trapping the cursor: stepping FROM
+-- a scratch buffer still moves (so the walk itself gets you out), and a list
+-- with no non-scratch buffer at all falls back to a plain cyclic step.
+local function step(ed, delta)
+  local n = #ed.buffers
+  for k = 1, n - 1 do
+    local i = (ed.bufidx - 1 + delta * k) % n + 1
+    if not ed.buffers[i].buf.scratch then return M.switch(ed, i) end
+  end
+  return M.switch(ed, (ed.bufidx - 1 + delta) % n + 1)
+end
+
+function M.next(ed) step(ed, 1) end
+function M.prev(ed) step(ed, -1) end
+
+-- The ends of that same walk (:rewind/:first, :last), so they name the first and
+-- last FILE rather than whatever scratch view happens to sit at an end. An
+-- all-scratch list falls back to the literal end, as step() does.
+function M.first(ed)
+  for i = 1, #ed.buffers do
+    if not ed.buffers[i].buf.scratch then return M.switch(ed, i) end
+  end
+  return M.switch(ed, 1)
+end
+
+function M.last(ed)
+  for i = #ed.buffers, 1, -1 do
+    if not ed.buffers[i].buf.scratch then return M.switch(ed, i) end
+  end
+  return M.switch(ed, #ed.buffers)
+end
 
 -- Index of the first buffer whose path contains `substr` (for :b <name>).
 function M.find(ed, substr)

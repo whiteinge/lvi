@@ -409,6 +409,29 @@ local function expand_file(ed, s)
   return out
 end
 
+-- expand_file's sibling for the one command that takes SEVERAL names (:next).
+-- Same expansion contract, with the one difference that several output lines are
+-- the point rather than an ambiguity error -- so `:n *.c` opens every match, as
+-- a vi user expects. With no metacharacter to hand the shell we split on blanks
+-- ourselves, mirroring expand_file's verbatim path; a name containing a blank is
+-- quoted, and the quote puts it back on the shell path where it belongs.
+-- Returns a list (empty for no argument), or nil + an error message.
+local function expand_files(ed, s)
+  if s == "" then return {} end
+  local lit = s:match("^%-%- (.*)$")
+  if lit then return lit ~= "" and { lit } or {} end
+  local files = {}
+  if not s:find("[~{%[%*%?%$\"'`\\]") then
+    for w in s:gmatch("%S+") do files[#files + 1] = w end
+    return files
+  end
+  local out, code, err = run_capture(ed, "printf '%s\\n' " .. s)
+  if code ~= 0 then return nil, "expansion failed: " .. fail_reason(err, code) end
+  for line in out:gmatch("[^\n]+") do files[#files + 1] = line end
+  if #files == 0 then return nil, "expansion gave no file name: " .. s end
+  return files
+end
+
 -- Run a shell command. On a tty (ed.shell present) it runs interactively with
 -- the real terminal; otherwise (socket/headless) its stdout is captured and
 -- returned as the payload. ed._silent suppresses the interactive "Press ENTER".
@@ -815,6 +838,41 @@ end)
 def("bn bnext", function(ed) bufs.next(ed); return "", "ok" end)
 def("bp bprev bprevious", function(ed) bufs.prev(ed); return "", "ok" end)
 
+-- The POSIX ex file-walk commands, which in lvi are the buffer walk. lvi has ONE
+-- list where vim has two: the files named on the command line ARE the buffer
+-- list, in order (editor.run), and :e appends to it, so ex's argument list and
+-- vim's buffer list are the same object here -- :n IS :bn, and there is no
+-- second list for :args to show that :ls does not already show. Vim needs the
+-- split because its buffer list fills up with views you never asked for; lvi has
+-- the walk skip scratch buffers instead (see bufs.step). Two deviations from
+-- POSIX, both documented in the manpage: the walk is cyclic (ex stops with an
+-- error at the end of the list), and it skips those scratch views.
+--
+-- :n FILE... opens the named files as buffers and goes to the first, which is
+-- ex's "replace the argument list, edit the first file" minus the discard: with
+-- no separate list to replace, emulating the discard would mean closing resident
+-- buffers and throwing away modified text.
+def("n next", function(ed, c)
+  if c.args == "" then bufs.next(ed); return "", "ok" end
+  local files, xerr = expand_files(ed, c.args)
+  if xerr then return xerr, "err" end
+  -- Open in order (each switches), then come back to the first one named. We
+  -- track it as a buffer OBJECT, not an index, since opening the rest may find
+  -- them already resident and leave the list in any order.
+  local first
+  for _, f in ipairs(files) do
+    bufs.open(ed, f)
+    first = first or ed.buf
+  end
+  local i = first and bufs.index_of(ed, first)
+  if i then bufs.switch(ed, i) end
+  return "", "ok"
+end)
+
+def("N prev previous", function(ed) bufs.prev(ed); return "", "ok" end)
+def("rew rewind first", function(ed) bufs.first(ed); return "", "ok" end)
+def("last", function(ed) bufs.last(ed); return "", "ok" end)
+
 def("b buffer", function(ed, c)
   if c.args == "#" then                               -- :b # -- the alternate buffer
     if bufs.alt(ed) then return "", "ok" end
@@ -907,7 +965,13 @@ def("sh shell", function(ed)
   return do_shell(ed, os.getenv("SHELL") or "sh")
 end)
 
-def("ls buffers files", function(ed) return bufs.list(ed), "ok" end)
+-- `args`/`ar` are POSIX ex's "write the argument list, current entry marked".
+-- With one list that is exactly this listing, current entry marked `%`, so they
+-- are spellings of :ls rather than a second command showing a second list.
+-- Unlike the file walk this shows scratch buffers too: they are resident, and
+-- the walk skipping them is no reason to hide them from the one command that
+-- says what is open.
+def("ls buffers files args ar", function(ed) return bufs.list(ed), "ok" end)
 
 -- :cmdwin [seed] -- open the command window (see the helpers above). An optional
 -- seed becomes the trailing/current line, so Ctrl-F at the ':' prompt can carry

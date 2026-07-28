@@ -459,7 +459,31 @@ spaces and tabs included.
 
 *bn*, *bp*, *b* {_N_|_name_|*#*}, *ls*, *bd*[*!*]
 	Next/previous buffer, switch to buffer _N_, by name, or the alternate (*#*),
-	list buffers, delete the current buffer.
+	list buffers, delete the current buffer. *bn* and *bp* step cyclically and skip
+	scratch buffers (see *set scratch*), so the walk covers the files you are
+	editing and an ephemeral view like the command window or a man page never
+	interrupts it. Reach one of those with *b* _N_ or *b#*. Stepping out of a
+	scratch buffer still works, and a list of nothing but scratch buffers steps
+	plainly rather than wedging.
+
+*n* [_file_...], *N*, *rew*, *last*, *args*
+	The ex file-walk commands, which in lvi are the buffer walk above: *n* (also
+	*next*) and *N* (*prev*, *previous*) are *bn* and *bp*, *rew* (*rewind*,
+	*first*) and *last* go to the first and last file, and *args* (*ar*) is *ls*.
+	lvi keeps one list where vim keeps two. The files named on the command line
+	*are* the buffer list, in order, and *e* appends to it, so ex's argument list
+	and vim's buffer list are the same object here. There is no second list for
+	*args* to show. Vim needs the split because its buffer list fills up with views
+	you never asked for; lvi has the walk skip scratch buffers instead. Two
+	deviations from POSIX: the walk is cyclic, where ex stops with an error at the
+	end of the list, and it skips those scratch views. *args*, being *ls*, still
+	lists them.
+
+	*n* _file_... opens the named files as buffers and goes to the first. That is
+	POSIX's "replace the argument list, edit the first file" minus the discard:
+	with no separate list to replace, discarding would mean closing resident
+	buffers and throwing away modified text. The names expand as in *e*, so *n*
+	\*.c opens every match.
 
 *cmdwin*
 	Open the command window: a scratch buffer holding recent command history, one

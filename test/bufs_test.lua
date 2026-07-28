@@ -195,6 +195,92 @@ describe("bufs", function()
     end)
   end)
 
+  describe("the file walk (:bn/:bp, :n/:N, :rewind/:last)", function()
+    -- Three real buffers plus one scratch view parked in the middle, so a walk
+    -- that failed to skip it would be caught by position, not just by identity.
+    local function make_walk()
+      local ed = make_ed()
+      local pa, pb = tmpfile("A"), tmpfile("B")
+      bufs.init(ed, buffer.open(pa))
+      bufs.scratch(ed, "[Command Line]")     -- buffer 2
+      bufs.open(ed, pb)                      -- buffer 3
+      bufs.switch(ed, 1)
+      return ed, pa, pb
+    end
+
+    it("steps cyclically, skipping scratch buffers", function()
+      local ed, pa, pb = make_walk()
+      bufs.next(ed)
+      expect(ed.bufidx).to.equal(3)          -- 2 is scratch: skipped
+      bufs.next(ed)
+      expect(ed.bufidx).to.equal(1)          -- and it wraps
+      bufs.prev(ed)
+      expect(ed.bufidx).to.equal(3)          -- backwards skips too
+      os.remove(pa); os.remove(pb)
+    end)
+
+    it("steps out of a scratch buffer it is sitting in", function()
+      local ed, pa, pb = make_walk()
+      bufs.switch(ed, 2)                     -- in the scratch view
+      bufs.next(ed)
+      expect(ed.bufidx).to.equal(3)          -- the walk gets us out
+      os.remove(pa); os.remove(pb)
+    end)
+
+    it("falls back to a plain step when every buffer is scratch", function()
+      local ed = make_ed()
+      bufs.init(ed, buffer.new("one"))
+      ed.buf.scratch = true
+      bufs.scratch(ed, "[two]")
+      bufs.switch(ed, 1)
+      bufs.next(ed)
+      expect(ed.bufidx).to.equal(2)          -- never wedges
+    end)
+
+    it(":rewind/:last name the first and last file, not a scratch end", function()
+      local ed, pa, pb = make_walk()
+      -- Make the ends scratch: the walk's ends should move inward past them.
+      bufs.switch(ed, 1); ed.buf.scratch = true
+      local p3 = tmpfile("C"); bufs.open(ed, p3); ed.buf.scratch = true
+      bufs.switch(ed, 2)
+      ex.dispatch(ed, "rewind")
+      expect(ed.bufidx).to.equal(3)          -- 1 is scratch, 2 is the cmdwin
+      ex.dispatch(ed, "last")
+      expect(ed.bufidx).to.equal(3)          -- 4 is scratch
+      os.remove(pa); os.remove(pb); os.remove(p3)
+    end)
+
+    it(":n/:N are the POSIX spellings of the same walk", function()
+      local ed, pa, pb = make_walk()
+      local _, s = ex.dispatch(ed, "n")
+      expect(s).to.equal("ok")
+      expect(ed.bufidx).to.equal(3)
+      expect((select(2, ex.dispatch(ed, "N")))).to.equal("ok")
+      expect(ed.bufidx).to.equal(1)
+      os.remove(pa); os.remove(pb)
+    end)
+
+    it(":n FILE... opens the files and lands on the first", function()
+      local ed = make_ed(); bufs.init(ed, buffer.new("orig"))
+      local pa, pb = tmpfile("AAA"), tmpfile("BBB")
+      local _, s = ex.dispatch(ed, "n " .. pa .. " " .. pb)
+      expect(s).to.equal("ok")
+      expect(#ed.buffers).to.equal(3)        -- both opened, none discarded
+      expect(ed.buf:line(1)).to.equal("AAA") -- current is the FIRST one named
+      os.remove(pa); os.remove(pb)
+    end)
+
+    it(":args lists like :ls", function()
+      local ed = make_ed(); bufs.init(ed, buffer.new("a"))
+      local p = tmpfile("b"); bufs.open(ed, p)
+      local list, s = ex.dispatch(ed, "args")
+      expect(s).to.equal("ok")
+      expect(list).to.equal((ex.dispatch(ed, "ls")))
+      expect(list:find("2\t%%")).to.exist()
+      os.remove(p)
+    end)
+  end)
+
   describe("ex wiring", function()
     it(":e opens/switches and :ls lists", function()
       local ed = make_ed(); bufs.init(ed, buffer.new("orig"))
