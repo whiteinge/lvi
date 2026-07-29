@@ -354,7 +354,10 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 	renderer has no way to draw a glyph that isn't in the buffer.
 
 	Control bytes in a buffer display as one-column stand-ins (*␛*, *␇*), so a
-	file full of escape sequences can't take the terminal over. This keeps the
+	file full of escape sequences can't take the terminal over. A byte that is
+	not part of a valid UTF-8 character draws as *�*, one stand-in per byte, so
+	damage shows on screen instead of reading as a blank; the bytes are left
+	alone in the buffer, so *x* deletes them one at a time. This keeps the
 	screen safe, and is not *:set list*: for exact notation (*^I*, *$*, *M-*)
 	use *contrib/lvi-invis*.
 

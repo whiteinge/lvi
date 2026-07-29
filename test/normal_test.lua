@@ -262,6 +262,22 @@ describe("normal-mode interpreter", function()
       feed(ed, "lx")
       expect(ed.buf:line(1)).to.equal("ab")
     end)
+    -- Damaged text is a normal thing to open. Each bad byte is its own char, and
+    -- h/l agree on that (prev_char once walked the whole run back to the good
+    -- char, so l stopped on a byte h then refused to come back to).
+    it("h and l cross a damaged char one byte at a time", function()
+      local ed = make("since\128\148 local")     -- em-dash minus its lead byte
+      feed(ed, "5l"); expect(ed.cx).to.equal(6)  -- first bad byte
+      feed(ed, "l");  expect(ed.cx).to.equal(7)  -- second
+      feed(ed, "l");  expect(ed.cx).to.equal(8)  -- the space
+      feed(ed, "h");  expect(ed.cx).to.equal(7)
+      feed(ed, "h");  expect(ed.cx).to.equal(6)
+    end)
+    it("x deletes one bad byte per press", function()
+      local ed = make("since\128\148 local")
+      feed(ed, "5lx"); expect(ed.buf:line(1)).to.equal("since\148 local")
+      feed(ed, "x");   expect(ed.buf:line(1)).to.equal("since local")
+    end)
     it("inserts a multibyte char typed as its bytes", function()
       local ed = make("ab")
       feed(ed, "i" .. E .. "\27")

@@ -31,7 +31,40 @@ local function charlen(b)
 end
 M.charlen = charlen   -- byte count of the char a lead byte opens (f/t target read)
 
--- Decode the codepoint at byte i; returns codepoint, byte length.
+-- Byte length of the VALID UTF-8 char starting at byte i, or nil if the byte
+-- there does not open one: a stray continuation byte, a lead byte whose
+-- continuation bytes are missing or truncated, or an encoding no decoder should
+-- accept (C0/C1 overlongs, F5-FF past U+10FFFF, and the E0/ED/F0/F4 second-byte
+-- cases -- overlongs and UTF-16 surrogates). charlen answers "how many bytes does
+-- this lead byte PROMISE", which is all the keyboard can know when reading a typed
+-- char one byte at a time (read_char_from); seqlen answers "how many are actually
+-- THERE and well-formed", which is what a string already in the buffer needs. Both
+-- exist because damaged text is a normal thing to open, not an error case: a
+-- truncated char must count as one byte so a cursor steps over it and the renderer
+-- draws one stand-in, instead of charlen's promise swallowing the good chars after
+-- it. Every measurement, navigation and emission path here goes through seqlen.
+local function seqlen(s, i)
+  local b = s:byte(i)
+  if not b then return nil end
+  if b < 0x80 then return 1 end
+  if b < 0xC2 or b > 0xF4 then return nil end        -- continuation, C0/C1 overlong, F5+
+  local b2 = s:byte(i + 1)
+  if not b2 or b2 < 0x80 or b2 > 0xBF then return nil end
+  if (b == 0xE0 and b2 < 0xA0)                       -- overlong 3-byte
+    or (b == 0xED and b2 > 0x9F)                     -- UTF-16 surrogate half
+    or (b == 0xF0 and b2 < 0x90)                     -- overlong 4-byte
+    or (b == 0xF4 and b2 > 0x8F) then return nil end -- past U+10FFFF
+  local len = charlen(b)
+  for k = 2, len - 1 do
+    local c = s:byte(i + k)
+    if not c or c < 0x80 or c > 0xBF then return nil end
+  end
+  return len
+end
+M.seqlen = seqlen
+
+-- Decode the codepoint at byte i; returns codepoint, byte length. Assumes a
+-- sequence seqlen has already accepted.
 local function decode(s, i)
   local b = s:byte(i) or 0
   if b < 0x80 then return b, 1 end
@@ -75,6 +108,15 @@ end
 -- the rest of the editor never sees. That is the whole design: the buffer holds
 -- the real byte, the screen shows a safe stand-in.
 --
+-- A byte that is not part of a well-formed UTF-8 char gets the same treatment,
+-- for the same reason plus one more: it is UNREADABLE raw. A terminal shown a
+-- stray continuation byte draws nothing, a blank, or eats the next byte trying to
+-- complete a sequence -- so damage looked like a space, which is the worst way for
+-- corruption to present (it hid an editor bug that sliced the lead byte off an
+-- em-dash). One stand-in per bad BYTE, not per damaged run: the buffer holds those
+-- bytes separately and `x` deletes them one at a time, so the screen showing two
+-- glyphs for two bytes is the honest report of what it takes to clean up.
+--
 -- This is the safety floor, not `:set list`. Exact notation (^I for tab, $ for
 -- line ends, M- for meta) belongs to contrib/lvi-invis, which pages the live
 -- buffer through `cat -vet`.
@@ -83,6 +125,8 @@ for bb = 0, 31 do CTRL[bb] = "\226\144" .. string.char(0x80 + bb) end -- U+2400 
 CTRL[9] = nil                                    -- tab is expanded, never substituted
 CTRL[127] = "\226\144\161"                       -- U+2421 SYMBOL FOR DELETE
 M.CTRL = CTRL
+local BAD = "\239\191\189"                       -- U+FFFD, one column, for a bad byte
+M.BAD = BAD
 
 -- Display width + byte length of the char at byte i, given running display col
 -- (needed only for tab).
@@ -90,23 +134,33 @@ local function charinfo(s, i, col, ts)
   local b = s:byte(i)
   if b == 9 then return ts - (col % ts), 1 end
   if b < 0x80 then return 1, 1 end
-  local cp, len = decode(s, i)
-  return cpwidth(cp), len
+  local len = seqlen(s, i)
+  if not len then return 1, 1 end   -- one bad byte, one column: the U+FFFD stand-in
+  return cpwidth(decode(s, i)), len
 end
 
 -- ---- character navigation (for cursor motion) -------------------------------
+-- Both step by seqlen, so a damaged byte is one char: `l` never lands mid-char and
+-- a truncated lead byte never lets the cursor jump the good chars behind it.
 function M.next_char(s, i)
   local b = s:byte(i)
-  return b and (i + charlen(b)) or (i + 1)
+  return b and (i + (seqlen(s, i) or 1)) or (i + 1)
 end
 
+-- Walk back over at most 3 continuation bytes to the earliest plausible start,
+-- then accept it only if a valid char there really reaches i-1; otherwise byte i-1
+-- stands alone (damaged). The `>=` also snaps a mid-char i to its enclosing char.
 function M.prev_char(s, i)
   local j = i - 1
-  while j > 1 do
-    local b = s:byte(j)
-    if b and b >= 0x80 and b < 0xC0 then j = j - 1 else break end
+  if j < 1 then return 1 end
+  local k, lo = j, math.max(1, j - 3)
+  while k > lo do
+    local b = s:byte(k)
+    if b and b >= 0x80 and b < 0xC0 then k = k - 1 else break end
   end
-  return math.max(1, j)
+  local len = seqlen(s, k)
+  if len and k + len - 1 >= j then return k end
+  return j
 end
 
 -- Byte index of the last char's start (1 if empty) -- the normal-mode cursor cap.
@@ -215,14 +269,21 @@ function M.byteat(s, W, ts, tsub, tcol, lb)
 end
 
 -- ---- rendering --------------------------------------------------------------
--- Tab-expanded display form of a whole line (multibyte chars pass through).
+-- Tab-expanded display form of a whole line (well-formed multibyte chars pass
+-- through; control and bad bytes get their stand-ins). The fast path is pure
+-- printable ASCII -- a high byte has to be walked now, since a damaged one is
+-- substituted and only seqlen can tell it from a good char.
 function M.expand(s, ts)
-  if not s:find("[%z\1-\31\127]") then return s end   -- tabs and control bytes both
+  if not s:find("[^\32-\126]") then return s end
   local out, col, i, n = {}, 0, 1, #s
   while i <= n do
     local b = s:byte(i)
     if b == 9 then local w = ts - (col % ts); out[#out + 1] = string.rep(" ", w); col = col + w; i = i + 1
-    else local dw, len = charinfo(s, i, col, ts); out[#out + 1] = CTRL[b] or s:sub(i, i + len - 1); col = col + dw; i = i + len end
+    else
+      local dw, len = charinfo(s, i, col, ts)
+      out[#out + 1] = CTRL[b] or (b >= 0x80 and not seqlen(s, i) and BAD) or s:sub(i, i + len - 1)
+      col = col + dw; i = i + len
+    end
   end
   return table.concat(out)
 end
@@ -273,7 +334,11 @@ function M.slice(s, ts, startcol, W, ivs)
     local dw, len, glyph
     if b == 9 then dw, len = ts - (col % ts), 1
     elseif b < 0x80 then dw, len, glyph = 1, 1, CTRL[b] or s:sub(i, i)
-    else local cp; cp, len = decode(s, i); dw = cpwidth(cp); glyph = s:sub(i, i + len - 1) end
+    else
+      local n2 = seqlen(s, i)
+      if not n2 then dw, len, glyph = 1, 1, BAD          -- damaged byte: one stand-in
+      else dw, len, glyph = cpwidth(decode(s, i)), n2, s:sub(i, i + n2 - 1) end
+    end
     if col + dw > startcol then
       if b == 9 then
         for c = math.max(col, startcol), math.min(col + dw, endcol) - 1 do put(" ", c) end

@@ -154,6 +154,46 @@ describe("disp", function()
       expect(disp.slice("ab\27cd", 8, 3, 2, nil)).to.equal("cd")
     end)
   end)
+
+  -- Bytes that are not part of a well-formed char get the same stand-in
+  -- treatment: raw, a terminal draws them as nothing or a blank, so damage read
+  -- as whitespace. One picture per bad BYTE -- that is how many x it takes.
+  describe("invalid UTF-8 bytes", function()
+    local FFFD = "\239\191\189"
+    local DMG  = "since\128\148 local"      -- an em-dash with its lead byte sliced off
+    it("seqlen accepts well-formed chars and rejects the rest", function()
+      expect(disp.seqlen(E, 1)).to.equal(2)
+      expect(disp.seqlen(CJK, 1)).to.equal(3)
+      expect(disp.seqlen("a", 1)).to.equal(1)
+      expect(disp.seqlen("\128", 1)).to.be(nil)        -- stray continuation byte
+      expect(disp.seqlen("\226b", 1)).to.be(nil)       -- lead byte, no continuation
+      expect(disp.seqlen("\226\128", 1)).to.be(nil)    -- truncated 3-byte char
+      expect(disp.seqlen("\192\175", 1)).to.be(nil)    -- overlong '/'
+      expect(disp.seqlen("\237\160\128", 1)).to.be(nil)-- UTF-16 surrogate half
+      expect(disp.seqlen("\248\128\128\128", 1)).to.be(nil) -- F8: never a lead byte
+    end)
+    it("slice draws one U+FFFD per bad byte, never the raw byte", function()
+      expect(disp.slice(DMG, 8, 0, 40, nil)).to.equal("since" .. FFFD .. FFFD .. " local")
+      expect(disp.slice("a\226bc", 8, 0, 40, nil)).to.equal("a" .. FFFD .. "bc")
+    end)
+    it("expand substitutes them too (the multi-line output pager)", function()
+      expect(disp.expand(DMG, 8)).to.equal("since" .. FFFD .. FFFD .. " local")
+      expect(disp.expand("a" .. E .. "b", 8)).to.equal("a" .. E .. "b")  -- good text intact
+    end)
+    it("counts one column per bad byte", function()
+      expect(disp.width(DMG, 8)).to.equal(13)             -- 'since' 5 + 2 + ' local' 6
+      expect(disp.dispcol(DMG, 8, 8)).to.equal(7)         -- the space sits past both
+    end)
+    it("navigates a bad byte as one char, in both directions", function()
+      expect(disp.next_char(DMG, 6)).to.equal(7)          -- over the first bad byte
+      expect(disp.next_char(DMG, 7)).to.equal(8)
+      expect(disp.prev_char(DMG, 8)).to.equal(7)          -- back onto the second, not to 'e'
+      expect(disp.prev_char(DMG, 7)).to.equal(6)
+      -- A truncated lead byte must not let a step jump the good chars behind it.
+      expect(disp.next_char("a\226bc", 2)).to.equal(3)
+      expect(disp.last_char("ab\226")).to.equal(3)
+    end)
+  end)
 end)
 
 os.exit(lust.errors == 0 and 0 or 1)
