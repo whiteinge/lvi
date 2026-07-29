@@ -102,6 +102,29 @@ describe("normal-mode interpreter", function()
       feed(ed, "ct" .. EM); feed(ed, "XY"); feed(ed, "\27")
       expect(ed.buf:line(1)).to.equal("XY" .. EM .. "cd")   -- em-dash preserved verbatim
     end)
+    -- Same bug one step further in: the motion read the target whole, but the
+    -- operator's INCLUSIVE end column was a byte, so it cut the em-dash's lead
+    -- byte off and left <80><94> orphaned in the line (and in the register).
+    it("an inclusive charwise operator never cuts a multibyte char in half", function()
+      local EM = "\226\128\148"
+      local ed = make("abc " .. EM .. " def")
+      feed(ed, "df" .. EM); expect(ed.buf:line(1)).to.equal(" def")
+      ed = make("abc " .. EM .. " def")
+      feed(ed, "yf" .. EM); expect(ed.regs['"'].text).to.equal("abc " .. EM)
+      ed = make("abc " .. EM .. " def")
+      feed(ed, "cf" .. EM); feed(ed, "Z"); feed(ed, "\27")
+      expect(ed.buf:line(1)).to.equal("Z def")
+    end)
+    it("ct stops after a whole multibyte char before the target", function()
+      local EM = "\226\128\148"
+      local ed = make("a" .. EM .. EM .. "b")   -- target is the 2nd dash; the 1st goes
+      feed(ed, "dt" .. EM); expect(ed.buf:line(1)).to.equal(EM .. "b")
+    end)
+    it("; repeats a find without slicing the target (inclusive)", function()
+      local EM = "\226\128\148"
+      local ed = make("a" .. EM .. "b" .. EM .. "c")
+      feed(ed, "f" .. EM .. "d;"); expect(ed.buf:line(1)).to.equal("ac")
+    end)
   end)
 
   describe("gg and marks", function()

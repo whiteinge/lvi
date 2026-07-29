@@ -569,6 +569,14 @@ end
 -- word of a line stop at the newline instead of joining, matching vi). Besides
 -- d/c/y it also serves the case operators (op = upper/lower/toggle): same range
 -- extraction, but it rewrites the span in place instead of deleting it.
+--
+-- An end column names a CHAR, not a byte, so the inclusive end must be widened
+-- through the whole (possibly multibyte) char it opens. Motions hand back the
+-- START byte of the target char -- `f`/`;` land on the found char itself, `t`
+-- steps back with disp.prev_char -- so without the widening `cf<em-dash>` (or
+-- `ct<em-dash>` where the char before the target is multibyte) sliced off one
+-- lead byte and left the two continuation bytes orphaned in the buffer and in
+-- the register: the corruption is invisible until something else reads the file.
 local function op_chars_range(ed, op, sl, sc, tl, tc, inclusive, reg)
   if not pos_le(sl, sc, tl, tc) then sl, sc, tl, tc = tl, tc, sl, sc end
   local el, ec = tl, tc
@@ -579,6 +587,9 @@ local function op_chars_range(ed, op, sl, sc, tl, tc, inclusive, reg)
   if el < sl or (el == sl and ec < sc) then return end -- empty range
   local first, last = line(ed, sl), line(ed, el)
   ec = math.min(ec, #last)
+  -- next_char is a no-op on ASCII and on a stray continuation byte, so this only
+  -- ever widens a real multibyte tail; the min keeps a truncated char in bounds.
+  if inclusive then ec = math.min(disp.next_char(last, ec) - 1, #last) end
   local text
   if sl == el then
     text = first:sub(sc, ec)
@@ -2113,6 +2124,10 @@ local function apply_opfunc(ed, total)
   if not inc then
     c2 = c2 - 1
     if c2 < 1 and l2 > l1 then l2 = l2 - 1; c2 = math.max(1, #line(ed, l2)) end
+  else
+    -- Widen through the target char, same as op_chars_range: the tool is handed a
+    -- byte span and must not be told to cut a multibyte char in half.
+    local s = line(ed, l2); c2 = math.min(disp.next_char(s, c2) - 1, math.max(1, #s))
   end
   ed.spawn_bg(cmd, nil, l1, l2, c1, c2, "char")
   ed.changed = true
