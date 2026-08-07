@@ -56,6 +56,10 @@
 # (bind that to a tmux popup; see the lvi-list header). Stepping still echoes only
 # the one-line header text. The diff is -U0, so a body is the changed lines and
 # nothing around them; the context you would want is the buffer you jumped into.
+# The indent is load-bearing: a diff line like `-foo:12: bar` has the shape of an
+# entry header, and lvi-list ends an entry at the next line that does. It reads a
+# LEADING BLANK as "not a header" -- the two halves of one contract, so a producer
+# that indents and a consumer that checks are both required.
 #
 # PATHS: entries name files ABSOLUTELY. git reports paths relative to the repo
 # top, which is not necessarily where lvi was launched from, and lvi-list matches
@@ -172,12 +176,12 @@ entries=$(printf '%s\n' "$diff" | awk '
     if (ctx != "") label=label "  " ctx
     printf "%s:%s:%s\n", f, s, label
     inh=1; next }
-  inh { print " " $0 }                            # indent: a body line must never
-')                                                # look like a `file:line:` header
+  inh { print " " $0 }                            # indent: see BODIES -- a body
+')                                                # line must not look like a header
 
 # Deletions were skipped silently above; count them so the run can say so.
 deleted=$(printf '%s\n' "$diff" | grep -c '^+++ /dev/null')
-hunks=$(printf '%s\n' "$entries" | grep -c '^[^:]*:[0-9]')
+hunks=$(printf '%s\n' "$entries" | grep -c '^[^:[:space:]][^:]*:[0-9]')
 # The note rides along with the EMPTY answer too: "no changes" when a staged
 # deletion is the only change would be the very gap this is here to close.
 skipped=; [ "$deleted" -gt 0 ] && skipped=" ($deleted deleted file(s) skipped)"

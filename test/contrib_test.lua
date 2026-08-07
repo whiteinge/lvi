@@ -388,6 +388,24 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    it("lvi-list does not read an indented body line as a new entry", function()
+      -- The body of a diff hunk can carry `-foo:12: bar`, which has a header's
+      -- shape. Only the leading blank tells them apart, so one entry with a
+      -- two-line body must count as 1, not 3.
+      local d = stub({ path = "/cur/f.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.txt",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.txt:2:+1 -1\n -foo:12: bar\n +foo:99: baz\n']]
+        .. [[ | contrib/lvi-list put qq --focus]])
+      expect(read(d .. "/log"):find("status qq %[0/1%] qq")).to.exist()
+      run(env, "contrib/lvi-list preview qq")
+      -- ...and the body still belongs to it: preview prints header + both lines.
+      local out = run(env, "contrib/lvi-list next && contrib/lvi-list preview qq")
+      expect(out:find("/cur/f%.txt:2:%+1 %-1\n %-foo:12: bar\n %+foo:99: baz\n")).to.exist()
+      cleanup(d)
+    end)
+
     it("lvi-gitchanges emits absolute entries with bodies, minus deletions", function()
       local r = gitrepo()
       -- Run from a SUBDIRECTORY: git names files relative to the repo top, so
