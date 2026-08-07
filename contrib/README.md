@@ -266,6 +266,25 @@ and the `on ready` line in `lvirc.sample.vim` loads it. That flag is the bridge
 for any outside-in producer, not just this one: a compiler run, a `grep -Hn`,
 your own script.
 
+Worth an alias, since that is how you will actually reach for it:
+
+```gitconfig
+[alias]
+	qf = "!f() { t=$(mktemp); trap 'rm -f \"$t\"' EXIT INT TERM; lvi-gitchanges --print \"$@\" > \"$t\" && lvi -q \"$t\"; }; f"
+```
+
+`git qf` steps your uncommitted changes, `git qf HEAD~3..` a range, `git qf
+--staged` the index. Three details earn their keep. The `f() { ...; }; f`
+wrapper is there because git appends the alias's arguments *in addition to* any
+`$*` you write, so a bare command sees them twice. `--print` is explicit rather
+than implied, so running `git qf` from a `:!` shell inside lvi doesn't push into
+that view *and* open a second editor. And the `&&` is what the exit status is
+for: no changes, no editor.
+
+A temp file, not `lvi -q <(lvi-gitchanges ...)` — git runs `!` aliases under
+`/bin/sh`, where process substitution may not exist at all, and a substitution
+has no exit status for the `&&` to read.
+
 ### `lvi-lint` — any linter, as a list
 
 The producer behind "a compiler is a quickfix": run a linter over
