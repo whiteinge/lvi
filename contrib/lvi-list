@@ -34,6 +34,23 @@
 # $wid.lists is a directory, so socket discovery (which filters `[ -S ]`) skips it.
 # Persistent lists escape this disposable tree via `save`/`load` to any path.
 #
+# MATCHING AN ENTRY TO THE BUFFER: "is this entry in the file I'm looking at?"
+# decides whether `jump` needs an :e and which lines `paint` lights, and the two
+# sides rarely agree on spelling. lvi calls the buffer whatever was on its command
+# line; git names files relative to the repo top; a grep run in a subdirectory
+# names them relative to that. So both sides are compared CANONICAL, not raw --
+# absolutised against $PWD and with `.`/`..`/`//` collapsed. $PWD is the right
+# anchor because a script lvi spawned inherits lvi's cwd, which is the same
+# directory the buffer names are relative to. Single-file producers that emit
+# $LVI_FILE verbatim (lvi-search, lvi-lint) matched before this and still do; it
+# is cross-file lists -- a project grep, git changes across a repo -- that need it.
+#
+# The collapse is LEXICAL, deliberately not `realpath`: resolving symlinks would
+# make a buffer opened through one stop matching an entry that names the real
+# file (and the reverse), and it would cost a fork per entry inside awk's scan.
+# The consequence is honest -- two genuinely different spellings of one file
+# THROUGH a symlink still read as different files.
+#
 # SPAWN DISCIPLINE: every socket call here is fire-and-forget (`lvi -w
 # --detach`). Stepping runs under `:silent !` with lvi's loop FROZEN waiting on
 # us, so a call that awaited a reply would deadlock; a detached jump/paint
@@ -126,6 +143,29 @@ curfile() {
   else "$LVI" -w "$target" -- path 2>/dev/null; fi
 }
 
+# Canonicalise a path for comparison (see MATCHING AN ENTRY TO THE BUFFER). The
+# algorithm lives in awk and is shared INTO the shell rather than written twice:
+# the per-entry scans below need it inside their loop, where a fork per line
+# would be the whole cost of a paint. Read $PWD from ENVIRON, not -v: awk expands
+# backslash escapes in a -v value, and a path may contain one.
+PWD=${PWD:-$(pwd)}; export PWD
+CANON_AWK='
+function canon(p,   a, n, i, j, out, s) {
+  if (p == "") return ""
+  if (substr(p, 1, 1) != "/") p = ENVIRON["PWD"] "/" p
+  n = split(p, a, "/")
+  j = 0
+  for (i = 1; i <= n; i++) {
+    if (a[i] == "" || a[i] == ".") continue          # "//" and "/./" collapse
+    if (a[i] == "..") { if (j > 0) j--; continue }   # "/.." at the root eats nothing
+    out[++j] = a[i]
+  }
+  s = ""
+  for (i = 1; i <= j; i++) s = s "/" out[i]
+  return s == "" ? "/" : s
+}'
+canonpath() { printf '%s\n' "$1" | awk "$CANON_AWK"'{ print canon($0) }'; }
+
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
 # there. :pos is byte-exact -- the byte columns producers emit land where they
 # point, tabs and multibyte included -- and, like a bare line address, records
@@ -135,7 +175,7 @@ jump() {
   f=${1%%:*}; r=${1#*:}; ln=${r%%:*}; r=${r#*:}; c=${r%%:*}
   case "$c"  in ''|*[!0-9]*) c=1 ;; esac
   case "$ln" in ''|*[!0-9]*) return 0 ;; esac
-  if [ -n "$f" ] && [ "$f" != "$(curfile)" ]; then
+  if [ -n "$f" ] && [ "$(canonpath "$f")" != "$(canonpath "$(curfile)")" ]; then
     send "e -- $f" "pos $ln $c"
   else send "pos $ln $c"; fi
 }
@@ -148,11 +188,13 @@ jump() {
 paint() {
   name=$1; [ -f "$listdir/$name" ] || return 0
   cf=$(curfile)
-  lines=$(awk -F: -v f="$cf" '/^[^:]*:[0-9]+(:|$)/ && $1==f{printf "%s:1-1 ", $2}' "$listdir/$name")
+  lines=$(awk -F: -v cf="$cf" "$CANON_AWK"'
+            BEGIN { f = canon(cf) }
+            /^[^:]*:[0-9]+(:|$)/ && canon($1)==f { printf "%s:1-1 ", $2 }' "$listdir/$name")
   [ -n "$lines" ] && send "hl $name $lines" || send "hl $name"
   cur=$(getcur "$name"); total=$(count "$name")
   ce=$(nth "$name" "$cur")
-  if [ -n "$ce" ] && [ "${ce%%:*}" = "$cf" ]; then
+  if [ -n "$ce" ] && [ "$(canonpath "${ce%%:*}")" = "$(canonpath "$cf")" ]; then
     send "hl $name-cur $(printf '%s' "$ce" | awk -F: '{print $2":1-1"}')"
   else send "hl $name-cur"; fi
   send "status $name [$cur/$total] $name"
@@ -181,9 +223,10 @@ case "$sub" in
       cf=$(curfile)
       cl=${LVI_LINE:-}; cc=${LVI_COL:-}
       [ -n "$cl" ] || { set -- $("$LVI" -w "$target" -- pos); cl=${1:-1}; cc=${2:-1}; }
-      i=$(awk -F: -v f="$cf" -v l="${cl:-1}" -v c="${cc:-1}" '
+      i=$(awk -F: -v cf="$cf" -v l="${cl:-1}" -v c="${cc:-1}" "$CANON_AWK"'
+            BEGIN { f = canon(cf) }
             /^[^:]*:[0-9]+(:|$)/ { n++
-              if ($1==f && (($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)))) hit=n }
+              if (canon($1)==f && (($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)))) hit=n }
             END{print hit+0}' "$listdir/$name")
       setcur "$name" "$i"
     else
@@ -203,6 +246,9 @@ case "$sub" in
     name=$(need_name "${1:-}") || exit 1; total=$(count "$name")
     [ "$total" -gt 0 ] || die "$name is empty"
     cur=$(getcur "$name"); [ "$cur" -ge 1 ] || cur=1
+    # Entry-to-entry, so raw: one list comes from one producer and spells a given
+    # file one way. Only entry-vs-BUFFER needs canonpath, and it would cost a
+    # fork per entry here.
     curf=$(nth "$name" "$cur"); curf=${curf%%:*}
     dir=1; [ "$sub" = pfile ] && dir=-1
     i=$cur; target_i=
@@ -217,8 +263,9 @@ case "$sub" in
   here)
     name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
     cf=$(curfile); cl=${LVI_LINE:-$("$LVI" -w "$target" -- pos | cut -f1)}
-    i=$(awk -F: -v f="$cf" -v l="$cl" '
-          /^[^:]*:[0-9]+(:|$)/ { n++; if ($1==f && ($2+0)>=(l+0)) { print n; exit } }' "$listdir/$name")
+    i=$(awk -F: -v cf="$cf" -v l="$cl" "$CANON_AWK"'
+          BEGIN { f = canon(cf) }
+          /^[^:]*:[0-9]+(:|$)/ { n++; if (canon($1)==f && ($2+0)>=(l+0)) { print n; exit } }' "$listdir/$name")
     [ -n "$i" ] || i=1
     setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; show_cur "$name" ;;
 

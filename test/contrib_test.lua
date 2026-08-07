@@ -335,6 +335,35 @@ describe("contrib", function()
       expect(log:find("\npos 3 9\n")).to.exist()                    -- byte-exact jump
       cleanup(d)
     end)
+
+    it("lvi-list matches an entry to the buffer across path spellings", function()
+      -- The cross-file case: a producer names the file relative to the repo top
+      -- (`sub/f.txt`) while lvi calls the buffer by an absolute, un-normalised
+      -- path. Same file -- so no :e, and paint lights the line.
+      local d = stub({ path = pwd .. "/./sub/f.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = pwd .. "/./sub/f.txt",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf 'sub/f.txt:4:1: boom\n' | contrib/lvi-list put qq --focus]])
+      expect(read(d .. "/log"):find("^hl qq 4:1%-1 \n")).to.exist()    -- painted, not skipped
+      run(env, "contrib/lvi-list next")
+      local log = read(d .. "/log")
+      expect(log:find("\npos 4 1\n")).to.exist()
+      expect(log:find("\ne %-%-")).to_not.exist()                     -- already there: no :e
+      cleanup(d)
+    end)
+
+    it("lvi-list still treats a genuinely different file as different", function()
+      local d = stub({ path = pwd .. "/sub/f.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = pwd .. "/sub/f.txt",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf 'sub/../other/g.txt:2:1: boom\n' | contrib/lvi-list put qq --focus]])
+      expect(read(d .. "/log"):find("^hl qq\n")).to.exist()           -- nothing to paint here
+      run(env, "contrib/lvi-list next")
+      expect(read(d .. "/log"):find("\ne %-%- sub/%.%./other/g%.txt\n")).to.exist()
+      cleanup(d)
+    end)
   end)
 end)
 
