@@ -151,6 +151,29 @@ describe("contrib", function()
     end
     local function cleanup(d) os.execute("rm -rf '" .. d .. "'") end
 
+    -- A throwaway repo for the git-backed producers, holding one of each shape
+    -- lvi-gitchanges has to tell apart: a modified file in a SUBDIRECTORY (so
+    -- git's repo-top-relative naming can go wrong), a DELETED file (no
+    -- destination to jump to), and a RENAMED one that also changed (a new
+    -- destination that does exist).
+    local function gitrepo()
+      local d = tmpdir()
+      assert(os.execute(([[
+        cd '%s' && git init -q . &&
+        git config user.email t@t && git config user.name t &&
+        mkdir -p sub other &&
+        printf 'a\nb\nc\nd\ne\n' > sub/f.txt &&
+        printf '1\n2\n3\n' > other/g.txt &&
+        printf 'gone\n' > doomed.txt &&
+        git add -A && git commit -qm init &&
+        printf 'a\nB\nc\nd\ne\n' > sub/f.txt &&
+        rm doomed.txt && git mv other/g.txt other/renamed.txt &&
+        printf '1\n2\n3\n4\n' > other/renamed.txt
+      ]]):format(d)))
+      return d
+    end
+    local GC = pwd .. "/contrib/lvi-gitchanges"
+
     it("lvi-fold --worker pushes one atomic foldset", function()
       local d = stub({ buffer = "a {{{\nb\nc }}}\nd\n" })
       run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1" },
@@ -363,6 +386,49 @@ describe("contrib", function()
       run(env, "contrib/lvi-list next")
       expect(read(d .. "/log"):find("\ne %-%- sub/%.%./other/g%.txt\n")).to.exist()
       cleanup(d)
+    end)
+
+    it("lvi-gitchanges emits absolute entries with bodies, minus deletions", function()
+      local r = gitrepo()
+      -- Run from a SUBDIRECTORY: git names files relative to the repo top, so
+      -- only an absolute entry path is right to jump to from here.
+      local out = run({}, ("cd '%s/sub' && %s 2>&1"):format(r, GC))
+      expect(out:sub(1, 1)).to.equal("/")                  -- entries are absolute paths
+      expect(out:find("/sub/f%.txt:2:%+1 %-1  a\n")).to.exist()
+      expect(out:find("\n %-b\n %+B\n")).to.exist()      -- the hunk, indented into a body
+      expect(out:find("/other/renamed%.txt:")).to.exist()  -- rename: a real destination, kept
+      expect(out:find("doomed")).to_not.exist()            -- deletion: nowhere to go, skipped
+      expect(out:find("1 deleted file%(s%) skipped")).to.exist()   -- ...and said so
+      cleanup(r)
+    end)
+
+    it("lvi-gitchanges narrows to $LVI_FILE, and --repo opts back out", function()
+      local r = gitrepo()
+      local narrow = run({ LVI_FILE = r .. "/sub/f.txt" }, ("cd '%s' && %s"):format(r, GC))
+      expect(narrow:find("/sub/f%.txt:")).to.exist()
+      expect(narrow:find("renamed")).to_not.exist()        -- scoped to the buffer
+      local wide = run({ LVI_FILE = r .. "/sub/f.txt" }, ("cd '%s' && %s --repo"):format(r, GC))
+      expect(wide:find("renamed")).to.exist()
+      cleanup(r)
+    end)
+
+    it("lvi-gitchanges prints without a view and pushes with one", function()
+      local r = gitrepo()
+      local d = stub({ path = r .. "/sub/f.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_SOCK = d .. "/sock",
+                    LVI_FILE = r .. "/sub/f.txt", LVI_LINE = "1", LVI_COL = "1",
+                    PATH = pwd .. "/contrib:" .. os.getenv("PATH") }
+      -- No $LVI_WID and no -w: a bare shell run must never reach for `-w auto`
+      -- and mutate whatever session happens to be up.
+      local out = run(env, ("cd '%s' && %s"):format(r, GC))
+      expect(out:find("/sub/f%.txt:2:")).to.exist()
+      expect(read(d .. "/log")).to.equal("")
+      env.LVI_WID = "w1"                                   -- now there is a view
+      run(env, ("cd '%s' && %s"):format(r, GC))
+      local log = read(d .. "/log")
+      expect(log:find("\npos 2 1\n")).to.exist()
+      expect(log:find("e %-%-")).to_not.exist()   -- absolute entry IS the buffer: no :e
+      cleanup(d); cleanup(r)
     end)
   end)
 end)

@@ -1,36 +1,73 @@
 #!/bin/sh
-# lvi-gitchanges [-w auto|WID] [--staged] [REF | REF..REF]
+# lvi-gitchanges [-w auto|WID] [--print] [--repo] [--staged] [REF | REF..REF] [-- PATHSPEC...]
 #
-# Load the git changes for the CURRENT buffer as a `lvi-list` quickfix and jump
-# to the first hunk; `n`/`N` then step them like any other list. A git producer
-# in the same mold as lvi-search -- it turns `git diff` hunk headers into
-# `file:line:text` entries, one per hunk, feeds them to `lvi-list`, and lets the
-# shared step/paint/status machinery do the rest.
+# Turn git changes into a `lvi-list` quickfix and jump to the first hunk; `n`/`N`
+# then step them like any other list. A git producer in the same mold as
+# lvi-search -- it turns `git diff` into `file:line:text` entries, one per hunk,
+# carrying that hunk's own diff as the entry BODY, and lets lvi-list's shared
+# step/paint/status machinery do the rest.
 #
-#   lvi-gitchanges              uncommitted changes to this file (working tree vs HEAD)
-#   lvi-gitchanges --staged     STAGED changes to this file (index vs HEAD)
-#   lvi-gitchanges HEAD~3..     changes across a commit range that touch this file
+#   lvi-gitchanges              uncommitted changes (working tree vs HEAD)
+#   lvi-gitchanges --staged     STAGED changes (index vs HEAD)
+#   lvi-gitchanges HEAD~3..     changes across a commit range
 #   lvi-gitchanges abc123       changes introduced by a single commit (git show)
 #   lvi-gitchanges --staged REF staged changes measured against REF (index vs REF)
 #
-# --staged is `git diff --cached`: it steps what you've staged, not what you've
-# edited -- so after moving hunks onto the index in lvi-stagediff (each :w on the
-# index pane stages), `lvi-gitchanges --staged` walks exactly those regions, folds
-# and all. It loads into its OWN list (`gitstaged`), separate from the unstaged
-# `gitchanges` list, so both can coexist and be themed and stepped independently.
-# It's a snapshot, not a live view: rerun it to regenerate after staging more.
+# --staged is `git diff --cached`: it steps what you have staged, not what you
+# have edited -- so after moving hunks onto the index in lvi-stagediff (each :w on
+# the index pane stages), `lvi-gitchanges --staged` walks exactly those regions,
+# folds and all. It loads into its OWN list (`gitstaged`), separate from the
+# unstaged `gitchanges` list, so both can coexist and be themed and stepped
+# independently. It is a snapshot, not a live view: rerun it after staging more.
 #
-# SCOPE + PATHS: always the current file (`$LVI_FILE`), passed to git as a
-# pathspec. Entries emit $LVI_FILE verbatim as the filename (not git's `b/...`
-# path) so they always match what lvi calls the buffer -- the same trick
-# lvi-search uses -- which is what lets `jump` skip a needless :e and `paint`
-# light the changed lines in place.
+# SCOPE -- the current file inside lvi, the whole repo outside. Run from a map or
+# a hook and $LVI_FILE is in the environment, so the diff is scoped to the file
+# you are looking at (git gets it as a pathspec); that is the common case, and
+# the one where a repo-wide list would bury the hunks you came for. Run it from a
+# shell and there is no current file, so you get the repo. The narrowing is what
+# you opt OUT of, with `--repo`; an explicit `-- PATHSPEC...` overrides it too. A
+# pathless buffer simply widens to the repo rather than failing.
+#
+# WHERE THE ENTRIES GO: into a live view when there is one to push to -- $LVI_WID
+# is set (lvi spawned us) or -w named a view -- and to STDOUT otherwise. So a bare
+# shell invocation PRINTS; it never reaches for `-w auto` and mutates whichever
+# session happens to be running. That is what makes the outside-in path plain
+# composition instead of a launcher:
+#
+#     lvi-gitchanges HEAD~3.. > qf && lvi -q qf
+#
+# `lvi -q` is vim's -q: it parks the file in $LVI_QUICKFIX and fires the `ready`
+# event, and the hook in contrib/lvirc.sample.vim loads it as a list. Without that
+# rc line, -q does nothing. `--print` forces stdout even from inside lvi. Print
+# mode exits 1 when there is nothing to report, so `&&` will not open an editor on
+# an empty list.
+#
+# DELETED FILES ARE SKIPPED. A deletion's hunks have nowhere to land: git reports
+# `+++ /dev/null` and a `+0,0` range, so an entry for one would send you to line 1
+# of a file that is not there -- the "why am I here?" jump. Renames and copies are
+# KEPT, unlike the `--diff-filter=AM` this convention started from: their line
+# numbers refer to the new path, which exists, and a rename with content changes
+# is exactly a change you want to step. A rename with no content changes produces
+# no hunks and so needs no filtering. When a deletion IS dropped, the run says so
+# rather than leaving you to notice the gap.
+#
+# BODIES: each entry carries its hunk's diff as indented body lines -- vim's
+# multi-line quickfix shape, which lvi-list stores and `lvi-list preview` prints
+# (bind that to a tmux popup; see the lvi-list header). Stepping still echoes only
+# the one-line header text. The diff is -U0, so a body is the changed lines and
+# nothing around them; the context you would want is the buffer you jumped into.
+#
+# PATHS: entries name files ABSOLUTELY. git reports paths relative to the repo
+# top, which is not necessarily where lvi was launched from, and lvi-list matches
+# an entry to the buffer by canonical path -- absolute is the one spelling that is
+# right from any directory. (This wants the lvi-list that canonicalises; an older
+# one compared raw strings and would miss.)
 #
 # DISK, NOT BUFFER: git diffs the file ON DISK (or the index, with --staged), so
-# this reflects your last :w / `git add`, not unsaved edits. Save/stage first if a
-# hunk looks stale. --staged line numbers are index-side, so they best match the
-# buffer when the staged and working versions agree (as they do right after you
-# stage a hunk in lvi-stagediff); single-commit mode emits REF's own line
+# this reflects your last :w / `git add`, not unsaved edits. Save or stage first
+# if a hunk looks stale. --staged line numbers are index-side, so they best match
+# the buffer when the staged and working versions agree (as they do right after
+# you stage a hunk in lvi-stagediff); single-commit mode emits REF's own line
 # numbers, which drift from today's buffer by however much the file has changed
 # since. (Contrast lvi-search, which greps the live buffer via %p.)
 #
@@ -38,6 +75,7 @@
 # the alt-screen flash that :silent ! causes:
 #     map \gg :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
 #     map \gs :bg lvi-gitchanges --staged<CR>    " same, for STAGED changes
+#     map \gr :bg lvi-gitchanges --repo<CR>      " ...the whole repo instead
 #     map ]c :bg lvi-list next gitchanges<CR>    " or step it without stealing focus
 #     map [c :bg lvi-list prev gitchanges<CR>
 # Theme the marks in your rc (un-themed = invisible; see lvi-list); give the two
@@ -45,9 +83,8 @@
 #     hi gitchanges bg=22 pri=10
 #     hi gitstaged  bg=28 pri=10
 #
-# Config: LVI (client, default `lvi`). Needs lvi-list and git on PATH. Run from
-# inside lvi ($LVI_WID/$LVI_FILE are exported); from elsewhere pass -w and cd to
-# the file's directory.
+# Config: LVI (client, default `lvi`). Needs git on PATH, and lvi-list when
+# pushing to a view.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -56,37 +93,76 @@ LVI=${LVI:-lvi}
 die() { echo "lvi-gitchanges: $*" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || die "git not found on PATH"
 
-want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2; }
-staged=; case "${1:-}" in --staged|--cached) staged=1; shift ;; esac
-ref=${1:-}
-target=${want_wid:-${LVI_WID:-auto}}
-wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+want_wid=; doprint=; repo=; staged=
+while :; do
+  case ${1:-} in
+    -w)                want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
+    --print)           doprint=1; shift ;;
+    --repo|--all)      repo=1; shift ;;
+    --staged|--cached) staged=1; shift ;;
+    *)                 break ;;
+  esac
+done
+ref=; case ${1:-} in ''|--) ;; *) ref=$1; shift ;; esac
+[ "${1:-}" = "--" ] && shift                  # whatever is left is a pathspec list
+
+# Scope. An explicit pathspec wins; then --repo; then the current file, which is
+# the narrowing that only exists because lvi told us what it is looking at.
+if [ $# -eq 0 ] && [ -z "$repo" ] && [ -n "${LVI_FILE:-}" ]; then set -- "$LVI_FILE"; fi
+
+# Push into a view, or print? Having a view to talk to is the whole test -- no
+# tty guessing, because the primary binding (:bg) hands us a stdout that is not
+# a tty and would read as "print" under git-quickfix's `[ -t 1 ]` rule.
+target=${want_wid:-${LVI_WID:-}}
+push=; [ -n "$target" ] && [ -z "$doprint" ] && push=1
+[ -n "$push" ] && { command -v lvi-list >/dev/null 2>&1 || die "lvi-list not found on PATH"; }
+
 name=gitchanges; [ -n "$staged" ] && name=gitstaged
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 send() { "$LVI" -w "$target" --detach -- "$@"; }
 
-# The buffer's file: from the env when spawned by lvi (a map/hook), else ask.
-file=${LVI_FILE:-$("$LVI" -w "$target" -- path)}
-[ -n "$file" ] || die "current buffer has no file"
+# Absolute entry paths need the repo root; resolving it also doubles as the
+# "are we even in a repo?" check, before any ref can muddy the error.
+LVI_GC_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository"
+[ -n "$LVI_GC_TOP" ] || die "not inside a git repository"
+LVI_GC_TOP="$LVI_GC_TOP/"; export LVI_GC_TOP
 
 # Choose the diff. --staged -> index vs REF (HEAD by default), git's `--cached`.
 # Otherwise: no ref -> working tree vs HEAD; a range -> that range; a lone commit
 # -> just that commit (git show), mirroring the git-quickfix convention.
-if [ -n "$staged" ]; then
-  if [ -n "$ref" ]; then diff=$(git diff --cached -U0 "$ref" -- "$file" 2>/dev/null)
-  else diff=$(git diff --cached -U0 -- "$file" 2>/dev/null); fi
-elif [ -z "$ref" ]; then
-  diff=$(git diff -U0 HEAD -- "$file" 2>/dev/null)
-elif [ "${ref#*..}" != "$ref" ]; then
-  diff=$(git diff -U0 "$ref" -- "$file" 2>/dev/null)
-else
-  diff=$(git show -U0 --first-parent -m "$ref" -- "$file" 2>/dev/null)
-fi
-[ $? -eq 0 ] || die "git failed (not a repo, or bad ref '$ref'?)"
+gitdiff() {
+  if [ -n "$staged" ]; then
+    if [ -n "$ref" ]; then git diff --cached -U0 "$ref" -- "$@"
+    else                   git diff --cached -U0 -- "$@"; fi
+  elif [ -z "$ref" ];                then git diff -U0 HEAD -- "$@"
+  elif [ "${ref#*..}" != "$ref" ];   then git diff -U0 "$ref" -- "$@"
+  else                                    git show -U0 --first-parent -m "$ref" -- "$@"
+  fi
+}
+what=uncommitted
+[ -n "$staged" ] && what=staged
+[ -n "$ref" ] && what="'$ref'"
+diff=$(gitdiff "$@" 2>/dev/null) || die "git failed (not a repo, or bad ref '$ref'?)"
 
-# One entry per hunk: $LVI_FILE:<new-start>:+A -D  <section context>.
-# @@ -a,d +s,i @@ ctx   (a comma-less count means 1; +s,0 is a pure deletion).
-entries=$(printf '%s\n' "$diff" | awk -v f="$file" '
+# One entry per hunk -- `<abs path>:<new-start>:+A -D  <section context>` -- with
+# the hunk's own lines indented under it as the body. @@ -a,d +s,i @@ ctx; a
+# comma-less count means 1, and +s,0 is a pure deletion (clamped to line 1).
+# Tracking `+++` is what skips deleted files and names the rest: git's own header
+# is the only place the destination path appears, and /dev/null is how it says
+# there isn't one. Read the root from ENVIRON, not -v: awk expands backslash
+# escapes in a -v value, and a repo path may contain one.
+entries=$(printf '%s\n' "$diff" | awk '
+  /^diff /   { inh=0; next }
+  /^--- /    { inh=0; next }
+  /^\+\+\+ / {
+    inh=0; p=substr($0, 5)
+    if (p == "/dev/null") { skip=1; next }        # a deletion: nowhere to jump
+    skip=0; sub(/^b\//, "", p)
+    f = (substr(p, 1, 1) == "/") ? p : ENVIRON["LVI_GC_TOP"] p
+    next }
   /^@@ / {
+    inh=0
+    if (skip) next
     add=$3; sub(/^\+/,"",add); s=add
     if (add ~ /,/) { sub(/.*,/,"",add); sub(/,.*/,"",s) } else add=1
     if (s+0 < 1) s=1
@@ -95,14 +171,35 @@ entries=$(printf '%s\n' "$diff" | awk -v f="$file" '
     label=sprintf("+%d -%d", add, del)
     if (ctx != "") label=label "  " ctx
     printf "%s:%s:%s\n", f, s, label
-  }')
+    inh=1; next }
+  inh { print " " $0 }                            # indent: a body line must never
+')                                                # look like a `file:line:` header
+
+# Deletions were skipped silently above; count them so the run can say so.
+deleted=$(printf '%s\n' "$diff" | grep -c '^+++ /dev/null')
+hunks=$(printf '%s\n' "$entries" | grep -c '^[^:]*:[0-9]')
+# The note rides along with the EMPTY answer too: "no changes" when a staged
+# deletion is the only change would be the very gap this is here to close.
+skipped=; [ "$deleted" -gt 0 ] && skipped=" ($deleted deleted file(s) skipped)"
+
+if [ -z "$push" ]; then
+  [ -n "$entries" ] || { echo "lvi-gitchanges: no $what changes$skipped" >&2; exit 1; }
+  printf '%s\n' "$entries"
+  [ -n "$skipped" ] && echo "lvi-gitchanges:$skipped" >&2
+  exit 0
+fi
 
 if [ -z "$entries" ]; then
   # Clear the paint and the stale counter; the notice itself is a one-shot
   # answer, so an ephemeral :msg, not a status segment that would sit forever.
-  send "hl $name" "hl $name-cur" "status $name" "msg $name: no changes"
+  send "hl $name" "hl $name-cur" "status $name" "msg $name: no changes$skipped"
   exit 0
 fi
 
 printf '%s\n' "$entries" | lvi-list $wflag put "$name" --focus
 lvi-list $wflag next
+# After `next`, so it lands on top of the entry text lvi-list just echoed: when
+# there is a deletion to report it outranks a line you are already looking at,
+# and when there is none (the usual case) the echo stands untouched.
+[ -n "$skipped" ] && send "msg $name: $hunks hunks$skipped"
+exit 0

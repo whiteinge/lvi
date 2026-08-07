@@ -236,14 +236,35 @@ isn't automatically cleaned. See the `lvi-list` header for all arguments.
 ### `lvi-gitchanges` — step your git diff
 
 The second `lvi-list` producer, and a one-line proof that "any tool that speaks
-`file:line:text` is a quickfix": it turns the `git diff` for the current buffer
-into a `gitchanges` list — one entry per hunk — and jumps to the first, so `n`/`N`
-walk your uncommitted changes. `lvi-gitchanges HEAD~3..` steps a commit range,
-`lvi-gitchanges <commit>` a single commit, and `lvi-gitchanges --staged` steps
-what you've *staged* (a separate `gitstaged` list — handy for reviewing the hunks
-you moved onto the index in `lvi-stagediff`, folds and all). Unlike `lvi-search`
-it reads the file on **disk** (or the index), not the live buffer, so it shows
-changes since your last `:w` / `git add`.
+`file:line:text` is a quickfix": it turns `git diff` into a `gitchanges` list —
+one entry per hunk, each carrying that hunk's own diff as its body — and jumps to
+the first, so `n`/`N` walk your uncommitted changes and `lvi-list preview` shows
+you the diff behind the one you're on. `lvi-gitchanges HEAD~3..` steps a commit
+range, `lvi-gitchanges <commit>` a single commit, and `lvi-gitchanges --staged`
+steps what you've *staged* (a separate `gitstaged` list — handy for reviewing the
+hunks you moved onto the index in `lvi-stagediff`, folds and all). Unlike
+`lvi-search` it reads the file on **disk** (or the index), not the live buffer, so
+it shows changes since your last `:w` / `git add`.
+
+It scopes itself to where it was run from. Inside lvi, `$LVI_FILE` is in the
+environment, so you get the current file's hunks rather than the repo's; `--repo`
+opts out. Deleted files are dropped either way, and the run says how many: a
+deletion's hunks have no destination, so an entry for one would land you in a
+file that isn't there. Renames are kept, since their line numbers point at the
+new path, which does exist.
+
+Run from a shell, it has no view to push into, so it **prints** the list instead
+of reaching for `-w auto` and steering whichever session happens to be up. That
+makes the outside-in path plain composition rather than a launcher:
+
+```sh
+lvi-gitchanges HEAD~3.. > qf && lvi -q qf
+```
+
+`lvi -q` is vim's `-q`: it parks the file in `$LVI_QUICKFIX` and fires `ready`,
+and the `on ready` line in `lvirc.sample.vim` loads it. That flag is the bridge
+for any outside-in producer, not just this one: a compiler run, a `grep -Hn`,
+your own script.
 
 ### `lvi-lint` — any linter, as a list
 

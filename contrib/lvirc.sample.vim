@@ -234,9 +234,11 @@ map \t :wbuf<CR>:silent !lvi-tags<CR>
 " `gitchanges` list and jumps to the first hunk; n/N then step it like any other
 " list. It reads the file on disk, so it reflects your last :w. (git is
 " non-interactive -> :bg.) \gg is the common case (working-tree changes); \gs
-" does the same for what's already STAGED.
+" does the same for what's already STAGED; \gr widens to the whole repo, which
+" is what you get by default when you run it from a shell instead.
 map \gg :bg lvi-gitchanges<CR>                 " working-tree changes + focus
 map \gs :bg lvi-gitchanges --staged<CR>        " staged changes + focus
+map \gr :bg lvi-gitchanges --repo<CR>          " ...the whole repo, not this file
 " Or give the list its own step keys so it never steals focus from search:
 map ]c :bg lvi-list next gitchanges<CR>
 map [c :bg lvi-list prev gitchanges<CR>
