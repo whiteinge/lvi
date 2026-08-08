@@ -36,6 +36,14 @@
 # yet). After :w, edit the index pane back to the version you want and :w again, or
 # `git reset` out of band. A dedicated unstage-to-HEAD would want a second mode.
 #
+# WALKING THE RESULT. The diff between the two panes is the same set
+# `lvi-gitchanges --unstaged` produces -- both are working tree vs index. Two
+# views of one thing: the split is where you move hunks, the list is where you
+# walk them in an ordinary buffer, with n/N and the :hl marks. After a :w,
+# `lvi-gitchanges --staged` steps exactly what you just put on the index and
+# `--unstaged` steps what is left, shrinking as the split does. Both are
+# snapshots -- rerun after each :w.
+#
 # g@ AND ENV. --attach binds \dx to `map \dx g@` on the working pane, with g@'s
 # operatorfunc armed to lvi-diff's --xfer-range (destination = the index pane), so
 # the sub-hunk route needs no hand-binding. LVI_DIFF_NOMAP=1 omits \dx along with
