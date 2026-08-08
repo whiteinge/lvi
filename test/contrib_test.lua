@@ -172,6 +172,19 @@ describe("contrib", function()
       ]]):format(d)))
       return d
     end
+    -- A repo caught mid-commit: one STAGED edit and one UNSTAGED edit, in the
+    -- same file on different lines, so the three modes have to partition.
+    local function gitrepo_staging()
+      local d = tmpdir()
+      assert(os.execute(([[
+        cd '%s' && git init -q . &&
+        git config user.email t@t && git config user.name t &&
+        printf 'a\nb\nc\nd\n' > f.txt && git add -A && git commit -qm init &&
+        printf 'a\nSTAGED\nc\nd\n' > f.txt && git add f.txt &&
+        printf 'a\nSTAGED\nc\nWORK\n' > f.txt
+      ]]):format(d)))
+      return d
+    end
     local GC = pwd .. "/contrib/lvi-gitchanges"
 
     it("lvi-fold --worker pushes one atomic foldset", function()
@@ -428,6 +441,33 @@ describe("contrib", function()
       local wide = run({ LVI_FILE = r .. "/sub/f.txt" }, ("cd '%s' && %s --repo"):format(r, GC))
       expect(wide:find("renamed")).to.exist()
       cleanup(r)
+    end)
+
+    it("lvi-gitchanges partitions unstaged, staged, and everything", function()
+      local r = gitrepo_staging()
+      -- The line each hunk points at identifies which edit it found: the staged
+      -- one is on line 2, the unstaged one on line 4.
+      local function lines(flag)
+        local got = {}
+        for l in run({}, ("cd '%s' && %s %s"):format(r, GC, flag)):gmatch("[^\n]+") do
+          if l:sub(1, 1) == "/" then got[#got + 1] = l:match(":(%d+):") end
+        end
+        return table.concat(got, ",")
+      end
+      expect(lines("--unstaged")).to.equal("4")     -- working tree vs index
+      expect(lines("--staged")).to.equal("2")       -- index vs HEAD
+      expect(lines("")).to.equal("2,4")             -- default: both, vs HEAD
+      -- --unstaged already spends the "compared against" slot on the index.
+      local out, ok = run({}, ("cd '%s' && %s --unstaged HEAD 2>&1"):format(r, GC))
+      expect(ok).to.equal(false)
+      expect(out:find("takes no REF")).to.exist()
+      -- Its own list, so all three can coexist and be themed apart.
+      local d = stub({ path = r .. "/f.txt\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_LINE = "1", LVI_COL = "1", PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        ("cd '%s' && %s --unstaged"):format(r, GC))
+      expect(read(d .. "/log"):find("status gitunstaged ")).to.exist()
+      cleanup(d); cleanup(r)
     end)
 
     it("lvi-gitchanges prints without a view and pushes with one", function()

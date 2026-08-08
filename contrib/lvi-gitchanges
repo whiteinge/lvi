@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-gitchanges [-w auto|WID] [--print] [--repo] [--staged] [REF | REF..REF] [-- PATHSPEC...]
+# lvi-gitchanges [-w auto|WID] [--print] [--repo] [--staged|--unstaged] [REF | REF..REF] [-- PATHSPEC...]
 #
 # Turn git changes into a `lvi-list` quickfix and jump to the first hunk; `n`/`N`
 # then step them like any other list. A git producer in the same mold as
@@ -8,17 +8,33 @@
 # step/paint/status machinery do the rest.
 #
 #   lvi-gitchanges              uncommitted changes (working tree vs HEAD)
+#   lvi-gitchanges --unstaged   changes NOT yet staged (working tree vs index)
 #   lvi-gitchanges --staged     STAGED changes (index vs HEAD)
 #   lvi-gitchanges HEAD~3..     changes across a commit range
 #   lvi-gitchanges abc123       changes introduced by a single commit (git show)
 #   lvi-gitchanges --staged REF staged changes measured against REF (index vs REF)
 #
+# The middle three answer the three questions you actually have while building a
+# commit, and they are git's own three diffs:
+#
+#   --unstaged  what is left to stage  working tree vs index  git diff
+#   --staged    what you will commit   index vs HEAD          git diff --cached
+#   REF         what was committed     a commit or range      git show
+#
+# --staged is also the set you pick from to take something back OFF the index.
+#
+# The default is deliberately none of them: working tree vs HEAD, everything
+# uncommitted, staged or not -- the "what have I done since HEAD" view, which is
+# what you want when you are not mid-stage. --unstaged is the complement of
+# --staged, so it takes no REF (it compares against the index, and there is
+# nothing else to measure from).
+#
 # --staged is `git diff --cached`: it steps what you have staged, not what you
 # have edited -- so after moving hunks onto the index in lvi-stagediff (each :w on
 # the index pane stages), `lvi-gitchanges --staged` walks exactly those regions,
-# folds and all. It loads into its OWN list (`gitstaged`), separate from the
-# unstaged `gitchanges` list, so both can coexist and be themed and stepped
-# independently. It is a snapshot, not a live view: rerun it after staging more.
+# folds and all. Each mode loads into its OWN list (`gitchanges`, `gitunstaged`,
+# `gitstaged`), so all three can coexist and be themed and stepped independently.
+# They are snapshots, not live views: rerun after staging more.
 #
 # SCOPE -- the current file inside lvi, the whole repo outside. Run from a map or
 # a hook and $LVI_FILE is in the environment, so the diff is scoped to the file
@@ -78,14 +94,16 @@
 # Bind it with :bg -- git is non-interactive so it needs no tty, and :bg avoids
 # the alt-screen flash that :silent ! causes:
 #     map \gg :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
-#     map \gs :bg lvi-gitchanges --staged<CR>    " same, for STAGED changes
+#     map \gu :bg lvi-gitchanges --unstaged<CR>  " ...only what is NOT staged yet
+#     map \gs :bg lvi-gitchanges --staged<CR>    " ...only what IS staged
 #     map \gr :bg lvi-gitchanges --repo<CR>      " ...the whole repo instead
 #     map ]c :bg lvi-list next gitchanges<CR>    " or step it without stealing focus
 #     map [c :bg lvi-list prev gitchanges<CR>
-# Theme the marks in your rc (un-themed = invisible; see lvi-list); give the two
-# lists distinct colors so staged vs unstaged read apart at a glance:
-#     hi gitchanges bg=22 pri=10
-#     hi gitstaged  bg=28 pri=10
+# Theme the marks in your rc (un-themed = invisible; see lvi-list); give the three
+# lists distinct colors so the modes read apart at a glance:
+#     hi gitchanges  bg=22 pri=10
+#     hi gitunstaged bg=94 pri=10
+#     hi gitstaged   bg=28 pri=10
 #
 # Config: LVI (client, default `lvi`). Needs git on PATH, and lvi-list when
 # pushing to a view.
@@ -97,18 +115,24 @@ LVI=${LVI:-lvi}
 die() { echo "lvi-gitchanges: $*" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || die "git not found on PATH"
 
-want_wid=; doprint=; repo=; staged=
+want_wid=; doprint=; repo=; staged=; unstaged=
 while :; do
   case ${1:-} in
-    -w)                want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
-    --print)           doprint=1; shift ;;
-    --repo|--all)      repo=1; shift ;;
-    --staged|--cached) staged=1; shift ;;
-    *)                 break ;;
+    -w)                   want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
+    --print)              doprint=1; shift ;;
+    --repo|--all)         repo=1; shift ;;
+    --staged|--cached)    staged=1; shift ;;
+    --unstaged|--modified) unstaged=1; shift ;;
+    *)                    break ;;
   esac
 done
 ref=; case ${1:-} in ''|--) ;; *) ref=$1; shift ;; esac
 [ "${1:-}" = "--" ] && shift                  # whatever is left is a pathspec list
+
+[ -n "$staged" ] && [ -n "$unstaged" ] && die "--staged and --unstaged are opposites; pick one"
+# A REF would have to be the thing compared against, and --unstaged has already
+# spent that slot on the index. Refuse rather than quietly ignore one of them.
+[ -n "$unstaged" ] && [ -n "$ref" ] && die "--unstaged compares the working tree to the index; it takes no REF"
 
 # Scope. An explicit pathspec wins; then --repo; then the current file, which is
 # the narrowing that only exists because lvi told us what it is looking at.
@@ -121,7 +145,9 @@ target=${want_wid:-${LVI_WID:-}}
 push=; [ -n "$target" ] && [ -z "$doprint" ] && push=1
 [ -n "$push" ] && { command -v lvi-list >/dev/null 2>&1 || die "lvi-list not found on PATH"; }
 
-name=gitchanges; [ -n "$staged" ] && name=gitstaged
+name=gitchanges
+[ -n "$staged" ] && name=gitstaged
+[ -n "$unstaged" ] && name=gitunstaged
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 send() { "$LVI" -w "$target" --detach -- "$@"; }
 
@@ -131,11 +157,13 @@ LVI_GC_TOP=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git
 [ -n "$LVI_GC_TOP" ] || die "not inside a git repository"
 LVI_GC_TOP="$LVI_GC_TOP/"; export LVI_GC_TOP
 
-# Choose the diff. --staged -> index vs REF (HEAD by default), git's `--cached`.
-# Otherwise: no ref -> working tree vs HEAD; a range -> that range; a lone commit
-# -> just that commit (git show), mirroring the git-quickfix convention.
+# Choose the diff. --unstaged -> bare `git diff`, which IS working tree vs index.
+# --staged -> index vs REF (HEAD by default), git's `--cached`. Otherwise: no ref
+# -> working tree vs HEAD; a range -> that range; a lone commit -> just that
+# commit (git show), mirroring the git-quickfix convention.
 gitdiff() {
-  if [ -n "$staged" ]; then
+  if [ -n "$unstaged" ];  then git diff -U0 -- "$@"
+  elif [ -n "$staged" ]; then
     if [ -n "$ref" ]; then git diff --cached -U0 "$ref" -- "$@"
     else                   git diff --cached -U0 -- "$@"; fi
   elif [ -z "$ref" ];                then git diff -U0 HEAD -- "$@"
@@ -145,6 +173,7 @@ gitdiff() {
 }
 what=uncommitted
 [ -n "$staged" ] && what=staged
+[ -n "$unstaged" ] && what=unstaged
 [ -n "$ref" ] && what="'$ref'"
 diff=$(gitdiff "$@" 2>/dev/null) || die "git failed (not a repo, or bad ref '$ref'?)"
 

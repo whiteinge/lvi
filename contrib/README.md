@@ -239,12 +239,25 @@ The second `lvi-list` producer, and a one-line proof that "any tool that speaks
 `file:line:text` is a quickfix": it turns `git diff` into a `gitchanges` list —
 one entry per hunk, each carrying that hunk's own diff as its body — and jumps to
 the first, so `n`/`N` walk your uncommitted changes and `lvi-list preview` shows
-you the diff behind the one you're on. `lvi-gitchanges HEAD~3..` steps a commit
-range, `lvi-gitchanges <commit>` a single commit, and `lvi-gitchanges --staged`
-steps what you've *staged* (a separate `gitstaged` list — handy for reviewing the
-hunks you moved onto the index in `lvi-stagediff`, folds and all). Unlike
-`lvi-search` it reads the file on **disk** (or the index), not the live buffer, so
-it shows changes since your last `:w` / `git add`.
+you the diff behind the one you're on. Unlike `lvi-search` it reads the file on
+**disk** (or the index), not the live buffer, so it shows changes since your last
+`:w` / `git add`.
+
+Three flags answer the three questions you have while building a commit, and
+they're git's own three diffs:
+
+| flag              | what it shows               | git                     |
+| ----------------- | --------------------------- | ----------------------- |
+| `--unstaged`      | what's left to stage        | working tree vs index   |
+| `--staged`        | what you're about to commit | index vs HEAD           |
+| `REF`, `REF..REF` | what was committed          | `git show` / `git diff` |
+
+Bare `lvi-gitchanges` is deliberately none of those: working tree vs HEAD,
+everything uncommitted whether staged or not — the view you want when you aren't
+mid-stage. Each mode gets its own list (`gitchanges`, `gitunstaged`, `gitstaged`),
+so they coexist and you can theme them apart. `--staged` is also the set you'd
+pick from to take something back *off* the index, and it pairs with
+`lvi-stagediff`: step exactly the hunks you just moved there, folds and all.
 
 It scopes itself to where it was run from. Inside lvi, `$LVI_FILE` is in the
 environment, so you get the current file's hunks rather than the repo's; `--repo`

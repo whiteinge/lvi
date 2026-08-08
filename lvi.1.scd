@@ -1039,13 +1039,15 @@ below, with the happy-path rc lines that turn it on:
 
 *lvi-gitchanges* -- step your git diff
 	Turn *git diff* for the current file into a steppable list of hunks, each
-	carrying its own diff as the entry body. Add *--repo* for the whole
-	repository. Run from a shell it prints the list instead, having no view to
-	push into; pair it with *-q* to open one:
+	carrying its own diff as the entry body. *--unstaged* and *--staged* split
+	that into the two halves you care about mid-commit; *--repo* widens to the
+	whole repository. Run from a shell it prints the list instead, having no
+	view to push into; pair it with *-q* to open one:
 
 	```
 	map \\gg :bg lvi-gitchanges<CR>
-	map \\gr :bg lvi-gitchanges --repo<CR>
+	map \\gu :bg lvi-gitchanges --unstaged<CR>
+	map \\gs :bg lvi-gitchanges --staged<CR>
 	```
 
 *lvi-lint* -- any linter, as a list

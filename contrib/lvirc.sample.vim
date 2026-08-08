@@ -233,11 +233,13 @@ map \t :wbuf<CR>:silent !lvi-tags<CR>
 " git MENU (\g). lvi-gitchanges turns `git diff` for the current file into a
 " `gitchanges` list and jumps to the first hunk; n/N then step it like any other
 " list. It reads the file on disk, so it reflects your last :w. (git is
-" non-interactive -> :bg.) \gg is the common case (working-tree changes); \gs
-" does the same for what's already STAGED; \gr widens to the whole repo, which
-" is what you get by default when you run it from a shell instead.
-map \gg :bg lvi-gitchanges<CR>                 " working-tree changes + focus
-map \gs :bg lvi-gitchanges --staged<CR>        " staged changes + focus
+" non-interactive -> :bg.) \gg is everything uncommitted; \gu and \gs split that
+" in two -- what is still to stage, and what is already staged -- which are the
+" questions you have mid-commit. \gr widens to the whole repo, which is what you
+" get by default when you run it from a shell instead.
+map \gg :bg lvi-gitchanges<CR>                 " everything uncommitted + focus
+map \gu :bg lvi-gitchanges --unstaged<CR>      " ...only what is NOT staged yet
+map \gs :bg lvi-gitchanges --staged<CR>        " ...only what IS staged
 map \gr :bg lvi-gitchanges --repo<CR>          " ...the whole repo, not this file
 " Or give the list its own step keys so it never steals focus from search:
 map ]c :bg lvi-list next gitchanges<CR>
@@ -245,6 +247,10 @@ map [c :bg lvi-list prev gitchanges<CR>
 " A group with no style is invisible; lvi-search styles `search` itself, but you
 " can theme any list's group (and its -cur current-entry group), e.g.:
 "   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
+" Each mode has its own list, so give them distinct colors and the three read
+" apart at a glance:
+"   hi gitunstaged bg=94 pri=10
+"   hi gitstaged   bg=28 pri=10
 "
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
 " lvi-diff and is launched, not a rc default; run it by hand or from a key:
