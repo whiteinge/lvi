@@ -212,11 +212,13 @@ map \r :registers<CR>
 " ---- yank ring (YankRing / yanky.nvim-style history) ------------------- {{{
 
 " Backing the UNNAMED register's write fires on every yank and delete, so it is
-" the one capture point a history tool hangs off. lvi-yankring keeps a per-view
-" ring of them; you paste normally, then walk the paste back through older
-" entries. Register ~ (a name you will not yank into) reads the ring's current
-" entry, and the cycle keys undo the paste and re-put the next one. (`""` is the
-" unnamed register spelled comment-safely -- a lone `"` here would be a comment.)
+" the one capture point a history tool hangs off. lvi-yankring keeps ONE ring of
+" them, shared by every open lvi -- so a yank in any pane is available in all of
+" them, and no setup here says so. You paste normally, then walk the paste back
+" through older entries. Register ~ (a name you will not yank into) reads the
+" ring's current entry, and the cycle keys undo the paste and re-put the next
+" one. (`""` is the unnamed register spelled comment-safely -- a lone `"` here
+" would be a comment.)
 " Both register lines are required: `""` write feeds the ring; `~` read is what
 " p-cycling and pick put through. The maps below do nothing without both.
 register "" write lvi-yankring push

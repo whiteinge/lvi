@@ -22,24 +22,43 @@
 #   cycle next    Press RIGHT AFTER a paste -- the `u` assumes the last change
 #                 was that paste (the paste-then-cycle contract, as in YankRing).
 #   pick          $LVI_PICKER over the ring (newest first, first line shown, each
-#                 prefixed with its index); paste the choice at the cursor (no
-#                 undo -- a fresh paste, not a cycle).
-#   list          the ring as `index<TAB>first-line`, newest first (debug/peek).
-#   clear         forget the whole ring.
+#                 prefixed with its index and the wid that yanked it); paste the
+#                 choice at the cursor (no undo -- a fresh paste, not a cycle).
+#   list          the ring as `index<TAB>wid<TAB>first-line`, newest first (debug).
+#   clear         forget the ring -- SHARED, so for every view (below).
 #
-# STORAGE is one file per entry (raw bytes, newlines and all), per view beside
-# the socket so it dies with the view -- YankRing's per-instance history, not a
-# persistent store. Files are named by a monotonic counter (`.seq`), higher =
-# newer, so ordering is arithmetic (no `ls`/`sort`) and `push` (which runs
-# SYNCHRONOUSLY on the yank keystroke, like a clipboard copy) is a few syscalls:
-# write one file, drop the one past the cap, reset the cursor.
-#   $LVI_SOCK.yankring/<n>     entry n (raw text)         (per view)
-#   $LVI_SOCK.yankring/.seq    last counter (newest = .seq)
-#   $LVI_SOCK.yankring/.cur    the cycle cursor (0 = newest)
-# The directory hangs off $LVI_SOCK, so socket discovery (which filters `[ -S ]`)
-# skips it. LVI_YANKRING_DIR relocates it -- point several views at one path for
-# a shared ring (they share the cursor, so the cycle position too). Sharing is
-# best-effort: two views yanking at once can race the counter, and one wins.
+# ONE RING, SHARED BY EVERY VIEW of this uid. That is the only topology: a yank
+# in any pane is available in every other, which is most of what a ring is for
+# once you run more than one lvi. Inside a single pane you lose nothing you had,
+# since the named registers a-z already hold anything you meant to keep. It is
+# session-scoped, NOT a persistent store: it sits in lvi's per-uid runtime dir
+# beside the sockets, so $XDG_RUNTIME_DIR clears it at logout and deleted buffer
+# text never accumulates on disk across reboots.
+#
+# STORAGE is one file per entry (raw bytes, newlines and all), named by a
+# monotonic counter (`.seq`), higher = newer -- so ordering is arithmetic (no
+# `ls`/`sort`) and `push`, which runs SYNCHRONOUSLY on the yank keystroke like a
+# clipboard copy, is a few syscalls.
+#   <rundir>/yankring/<n>        entry n (raw text)                   SHARED
+#   <rundir>/yankring/.wid.<n>   the wid that yanked entry n          SHARED
+#   <rundir>/yankring/.seq       last counter (newest = .seq)         SHARED
+#   <rundir>/<wid>.yankring-cur  that view's cycle cursor (0 = newest)  PER VIEW
+# The CURSOR is per view on purpose. The cycle contract is "undo MY last paste,
+# put the next entry down", so it is view-local UI state, not ring data: share it
+# and every pane's push (which resets the cursor) would yank the others out of
+# their cycle mid-press. It lives in lvi's `<wid>.*` sidecar namespace, so
+# list_sockets() reaps it when the view dies -- no stale cursors to sweep. The
+# ring directory is not in that namespace (it is shared, and outlives any one
+# view), and discovery ignores it because `yankring` is not a numeric wid.
+#
+# SLOT ALLOCATION is a `ln` compare-and-swap, not read-seq-then-write: with one
+# global ring every pane contends for the counter, so a dropped entry would be
+# routine rather than theoretical. See `push` for the loop.
+#
+# ENTRIES CARRY THEIR ORIGIN wid (`.wid.<n>`, shown by `pick` and `list`). Only a
+# display today. It is here so that if the shared ring ever gets noisy enough
+# that stepping it with cycle annoys, `cycle` can skip other views' entries while
+# `pick` keeps showing everything -- without a migration.
 #
 # SPAWN DISCIPLINE. `push`/`get` are register backends, run inline (yank/put are
 # synchronous) with $LVI_* exported, so they only touch files -- no socket call
@@ -57,7 +76,8 @@
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
 # LVI_YANKRING_MAX (entries kept, default 50), LVI_YANKRING_REG (the read-backed
 # register the maps put from, default `~` -- a name you will not yank into),
-# LVI_YANKRING_DIR (store path; default beside the socket).
+# LVI_YANKRING_DIR (relocate the shared store; for tests, not a workflow knob --
+# the ring is global by design, so there is no per-view scope to opt back into).
 # See lvirc.sample.vim for the register lines and key maps.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
@@ -71,28 +91,42 @@ REG=${LVI_YANKRING_REG:-'~'}
 die()   { echo "lvi-yankring: $*" >&2; exit 1; }
 usage() { echo "usage: lvi-yankring [-w auto|WID] push|get|cycle prev|next|pick|list|clear" >&2; exit 2; }
 
-# ---- resolve the target view + its ring directory ---------------------------
+# ---- resolve this view + the one shared ring --------------------------------
 want_wid=
 [ "${1:-}" = "-w" ] && { want_wid=${2:-}; shift 2; }
 sub=${1:-}; [ -n "$sub" ] || usage; shift
 
-target=${want_wid:-${LVI_WID:-auto}}            # what we hand to `lvi -w`
-if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
-  sock=$LVI_SOCK                                # inside lvi: trust the exported socket
-elif [ "$target" = auto ]; then
+# We need a REAL wid, never the literal `auto`: it names this view's cursor file
+# and tags the entries this view pushes. $LVI_WID covers every in-editor path
+# (both register backends and all three maps) with no subprocess at all -- push
+# runs synchronously on the yank keystroke, so the common path stays syscalls.
+wid=${want_wid:-${LVI_WID:-auto}}
+if [ "$wid" = auto ]; then
   n=$("$LVI" -l | grep -c .)
   [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
-  sock=$("$LVI" -l | cut -f2)
-else
-  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
-  [ -n "$sock" ] || die "no running view '$target'"
+  wid=$("$LVI" -l | cut -f1)
+elif [ -n "$want_wid" ]; then                   # named by hand: fail loudly on a dead view
+  "$LVI" -l | cut -f1 | grep -qxF "$wid" || die "no running view '$wid'"
 fi
-dir=${LVI_YANKRING_DIR:-$sock.yankring}
 
-send()   { "$LVI" -w "$target" --detach -- "$@"; }               # fire-and-forget (see header)
+# ONE ring per uid, so all we need is the DIRECTORY the sockets live in -- never
+# this view's own socket, which is what the per-view ring used to cost us (a
+# three-branch lookup). $LVI_SOCK when lvi spawned us; otherwise any live view's
+# socket names the same directory.
+RUNDIR=${LVI_SOCK%/*}
+if [ -z "$LVI_SOCK" ] || [ ! -d "$RUNDIR" ]; then
+  s=$("$LVI" -l | sed -n 1p | cut -f2); RUNDIR=${s%/*}
+fi
+{ [ -n "$RUNDIR" ] && [ -d "$RUNDIR" ]; } || die "cannot find lvi's runtime dir"
+dir=${LVI_YANKRING_DIR:-$RUNDIR/yankring}
+cur=$RUNDIR/$wid.yankring-cur   # per view, and in lvi's `<wid>.*` sidecar namespace
+                                # so list_sockets() reaps it when this view dies
+
+send()   { "$LVI" -w "$wid" --detach -- "$@"; }                  # fire-and-forget (see header)
 getseq() { s=$(cat "$dir/.seq" 2>/dev/null); case $s in ''|*[!0-9]*) echo 0;; *) echo "$s";; esac; }
-getcur() { c=$(cat "$dir/.cur" 2>/dev/null); case $c in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
-setcur() { mkdir -p "$dir" 2>/dev/null; printf '%s\n' "$1" > "$dir/.cur"; }
+getcur() { c=$(cat "$cur" 2>/dev/null); case $c in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
+setcur() { printf '%s\n' "$1" > "$cur"; }
+widof()  { cat "$dir/.wid.$1" 2>/dev/null || echo '?'; }         # who yanked entry n
 count()  { s=$(getseq); [ "$s" -gt "$MAX" ] && echo "$MAX" || echo "$s"; }  # entries kept = min(seq, MAX)
 
 case "$sub" in
@@ -108,9 +142,22 @@ case "$sub" in
     [ -s "$tmp" ] || { setcur 0; exit 0; }                # empty (e.g. a no-op delete): nothing to keep
     seq=$(getseq)
     if [ "$seq" -gt 0 ] && cmp -s "$tmp" "$dir/$seq"; then setcur 0; exit 0; fi  # dedup vs newest
-    n=$((seq + 1))
-    mv "$tmp" "$dir/$n" && printf '%s\n' "$n" > "$dir/.seq"
-    rm -f "$dir/$((n - MAX))"                              # drop the one that fell past the cap
+    # Claim the slot with `ln`, which is atomic and FAILS if the name exists. One
+    # shared ring means every pane's yanks contend for the counter, so the old
+    # read-seq-then-mv would silently drop an entry whenever two landed together.
+    # Counter values are monotonic and never reused, so a collision means only
+    # that a concurrent push took that slot: step past it and retry. Bounded, so
+    # a failure that ISN'T contention (a full disk) drops the yank, never spins.
+    n=$((seq + 1)); tries=0
+    until ln "$tmp" "$dir/$n" 2>/dev/null; do
+      n=$((n + 1)); tries=$((tries + 1))
+      [ "$tries" -gt 100 ] && exit 0
+    done
+    printf '%s\n' "$wid" > "$dir/.wid.$n"                  # tag it with the view that yanked it
+    # .seq is max-wins: a concurrent push holding a LOWER slot must not walk the
+    # counter back. Worst case it lags one entry until the next push.
+    s=$(getseq); [ "$n" -gt "$s" ] && printf '%s\n' "$n" > "$dir/.seq"
+    rm -f "$dir/$((n - MAX))" "$dir/.wid.$((n - MAX))"     # drop the one that fell past the cap
     setcur 0 ;;
 
   get)
@@ -142,7 +189,9 @@ case "$sub" in
     # is parsed back off the front, so this works on any $LVI_PICKER -- no
     # fzf-only --with-nth/--delimiter, which fzy (a plain line filter) rejects.
     sel=$(i=0; while [ "$i" -lt "$total" ]; do
-            printf '%d: %s\n' "$i" "$(head -n1 "$dir/$((seq - i))" 2>/dev/null)"; i=$((i + 1))
+            e=$((seq - i))
+            printf '%d: [%s] %s\n' "$i" "$(widof "$e")" "$(head -n1 "$dir/$e" 2>/dev/null)"
+            i=$((i + 1))
           done | "$PICKER") || exit 0
     i=${sel%%:*}
     case "$i" in ''|*[!0-9]*) exit 0 ;; esac
@@ -152,10 +201,12 @@ case "$sub" in
   list)
     total=$(count); seq=$(getseq); i=0
     while [ "$i" -lt "$total" ]; do
-      printf '%d\t%s\n' "$i" "$(head -n1 "$dir/$((seq - i))" 2>/dev/null)"; i=$((i + 1))
+      e=$((seq - i))
+      printf '%d\t%s\t%s\n' "$i" "$(widof "$e")" "$(head -n1 "$dir/$e" 2>/dev/null)"
+      i=$((i + 1))
     done ;;
 
-  clear) rm -rf "$dir" ;;
+  clear) rm -rf "$dir" ;;                                  # the ring is shared: clears it for EVERY view
 
   *) usage ;;
 esac

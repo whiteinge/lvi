@@ -534,10 +534,18 @@ above) hands the script every yank and delete, so it needs no key remapping to
 capture. A second register (`~`) is `read`-backed with the ring's current entry,
 and each cycle key is one `:bg` map that steps the cursor and sends `u"~p` (undo
 the paste, put the stepped entry), replacing the pasted text in place. `\yp`/`\yn`
-walk older/newer, `\yy` picks any entry through `$LVI_PICKER`. The ring is
-per-view beside the socket (point `LVI_YANKRING_DIR` at a shared path to carry
-one across views); it rides the unnamed register, so it replaces neither the
-numbered registers nor the `+` clipboard.
+walk older/newer, `\yy` picks any entry through `$LVI_PICKER`.
+
+There is **one ring, shared by every view** — a yank in any pane is available in
+every other, which is most of what a ring is worth once you have more than one
+lvi open, and within a single pane the named registers already hold anything you
+meant to keep. It lives beside the sockets, so it is session-scoped rather than a
+store that accumulates deleted text across reboots. Only the *cycle cursor* is
+per view: "undo my last paste, put the next entry" is view-local state, and
+sharing it would pull every other pane out of its cycle mid-press. Entries carry the wid
+that yanked them, which `\yy` shows. The ring rides the unnamed register, so it
+replaces neither the numbered registers nor the `+` clipboard — `"+` still
+carries text out of lvi entirely; this moves it around inside.
 
 ### `lvi-mirror` — live-share a buffer across panes
 
