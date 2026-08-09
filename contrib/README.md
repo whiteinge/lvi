@@ -616,9 +616,10 @@ pieces, so the highlighting, scrollbind, and hunk maps come free.
 
 The mental model: **the index pane's text is the staged content.** Move a hunk
 onto it with `\dp`, pull one back off with `\do`, move a motion's span with
-`\dx{motion}` or `g@` (or `:L1,L2bg lvi-stagediff --xfer-range …`) to split two
-changes `diff` merged into one hunk. Those are ordinary buffer edits: `u` backs a move out,
-and nothing touches git yet. **`:w` on the index pane is what stages** — it hashes
+`\dx{motion}` or `g@` — or that same operator typed with a range,
+`:L1,L2bg lvi-diff --xfer-range …` — to split two changes `diff` merged into one
+hunk. Those are ordinary buffer edits: `u` backs a move out, and nothing touches
+git yet. **`:w` on the index pane is what stages** — it hashes
 the pane into a blob and points the index at it (`git hash-object -w` + `git
 update-index`), the whole buffer at once, so there's no partial-patch fuzz to
 misapply. Shuffle and edit until the pane reads the way you want it staged, then

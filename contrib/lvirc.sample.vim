@@ -277,8 +277,9 @@ map [c :bg lvi-list prev gitchanges<CR>
 "   hi gitstaged   bg=28 pri=10
 "
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
-" lvi-diff and is launched, not a rc default; run it by hand or from a key:
-"   map \gp :silent !lvi-stagediff<CR>          " "git add -p" the current file
+" lvi-diff and is launched, not a rc default; run it by hand or from a key. It
+" opens its panes in a tmux split and never wants the terminal, so :bg:
+"   map \gp :bg lvi-stagediff<CR>               " "git add -p" the current file
 
 " }}}
 " ---- linting ----------------------------------------------------------- {{{
@@ -469,6 +470,7 @@ map s" :set opfunc=lvi-surround dquote<CR>g@
 map s' :set opfunc=lvi-surround squote<CR>g@
 map s` :set opfunc=lvi-surround tick<CR>g@
 map s* :set opfunc=lvi-surround star<CR>g@     " s*iw -> *word* (Markdown)
+map s_ :set opfunc=lvi-surround under<CR>g@    " s_iw -> _word_ (its italic twin)
 map gc :set opfunc=lvi-comment<CR>g@           " gcip toggles a paragraph, gcj 2 lines
 map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 " (No map timeout in lvi: `gc` fires the instant it's typed, so a vim-style `gcc`
@@ -485,7 +487,7 @@ map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 "   \d MENU   \dp put the hunk across to the peer, \do obtain it from the peer
 "             (vim's diff-mode dp / do, on the leader so they don't shadow d).
 " \dp moves a WHOLE hunk. For a smaller span, lvi-stagediff installs \dx on the
-" working pane (a g@ operator), so \dx ip / \dx } / :12,14 move just those lines
+" working pane (a g@ operator), so \dx ip / \dx } / \dx 2j move just those lines
 " onto the index pane -- like \dp/\do it is wired into the pane at launch, not an
 " rc default (it carries per-session wids the rc can't know).
 
