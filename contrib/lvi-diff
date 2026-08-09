@@ -26,7 +26,9 @@
 #     lvi-stagediff wires for staging.
 #   * FOLD UNCHANGED (zx) collapses the matched regions between hunks to a summary
 #     row (keeping LVI_DIFF_FOLDCTX context lines each side), like vimdiff's
-#     foldmethod=diff. Off by default; zx toggles, LVI_DIFF_FOLD=1 starts folded.
+#     foldmethod=diff. On when we opened the panes ourselves (file mode); off
+#     when we attach to views you already had open, since those carry your own
+#     folds. zx toggles either way, LVI_DIFF_FOLD=1/0 sets the start state.
 #     Re-applied on each re-diff so it tracks edits, and a gap you opened (zo) to
 #     peek at context stays open across the re-applies.
 #
@@ -54,9 +56,10 @@
 # Config (env): LVI (client, default `lvi`); LVI_DIFF_MAXBYTES (skip a buffer
 # larger than this; default 4194304 = 4 MiB -- over it, both views show a
 # "[lvi-diff off: ...]" status); LVI_DIFF_NOMAP=1 leaves the \dp/\do move maps
-# off; LVI_DIFF_NOSTYLE=1 keeps your rc's colors; LVI_DIFF_FOLD=1 starts with the
-# unchanged regions folded (zx toggles); LVI_DIFF_FOLDCTX sets the context lines
-# kept around each hunk (default 3).
+# off; LVI_DIFF_NOSTYLE=1 keeps your rc's colors; LVI_DIFF_FOLD sets whether the
+# unchanged regions start folded (zx toggles; default 1 in file mode, 0 when
+# attaching to live views); LVI_DIFF_FOLDCTX sets the context lines kept around
+# each hunk (default 3).
 #
 # Internal (socket-fired, not for direct use): --xfer put|get PEER A B (\dp/\do);
 # --xfer-range PEER A B (the g@ partial-hunk operatorfunc); --hunk next|prev PEER
@@ -454,6 +457,11 @@ command -v diff >/dev/null 2>&1 || { echo "lvi-diff: diff not found on PATH" >&2
 if [ -f "$1" ] && [ -f "$2" ]; then
   fa=$1; fb=$2; out=$3
   [ -n "$TMUX" ] || { echo "lvi-diff: file mode opens a tmux window -- run it inside tmux" >&2; exit 1; }
+  # These panes are ours, opened for the diff and nothing else, so they start
+  # folded-by-diff the way vimdiff's foldmethod=diff does. Without it the rc's own
+  # folding is still in force -- `on bufenter lvi-fold` marker-folds both files as
+  # they open -- and every hunk sits inside a closed fold. LVI_DIFF_FOLD=0 opts out.
+  LVI_DIFF_FOLD=${LVI_DIFF_FOLD:-1}; export LVI_DIFF_FOLD
   # Open A|B in a NEW window (A left, B right), not a split of the caller's pane --
   # a split gets cramped in a busy window with no easy "maximize"; its own window
   # is clean and full-size. A isn't our child anymore, so it writes its exit code
@@ -501,8 +509,8 @@ fi
 [ -n "$A" ] && [ -n "$B" ] || { echo "lvi-diff: need two view ids" >&2; exit 1; }
 
 gc                                  # reap any dead sessions' caches first
-rm -f "$(flagfile "$A" "$B")"       # start clean; LVI_DIFF_FOLD opts into folding
-[ -n "$LVI_DIFF_FOLD" ] && : > "$(flagfile "$A" "$B")"
+rm -f "$(flagfile "$A" "$B")"       # start clean; LVI_DIFF_FOLD sets the start state
+case ${LVI_DIFF_FOLD:-} in ''|0) ;; *) : > "$(flagfile "$A" "$B")" ;; esac
 build "$A" "$B" || exit 0           # first diff + caches + highlights + folds (bails if over cap)
 
 # pri=20 pins the diff bands above a syntax highlighter's groups: overlaps

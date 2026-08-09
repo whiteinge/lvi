@@ -581,8 +581,11 @@ map and pushed to the peer, so they stay aligned even across a lopsided hunk.
 leaving only the hunks and their context — built on lvi's core `:fold`
 overlay, from the same diff the map comes from. Because matched regions have
 identical line counts on both sides, folding them symmetrically keeps the
-scrollbind aligned; it's off by default (`LVI_DIFF_FOLD=1` to start folded,
-`LVI_DIFF_FOLDCTX` for context).
+scrollbind aligned. A diff that opened its own panes (file mode,
+`lvi-stagediff`) starts folded; attaching to views you already had open leaves
+your folds alone until you press `zx`, since those folds are yours.
+`LVI_DIFF_FOLD` overrides the start state either way, `LVI_DIFF_FOLDCTX` sets
+the context.
 
 For implementors: the first cut of scrollbind was a polling daemon reading
 each view's `:top` ~10×/s, which flickered (lvi repaints on every socket

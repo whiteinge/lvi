@@ -23,6 +23,7 @@
 #   \dx {motion} / g@{motion}  move just the motion's span (\dx ip, g@}, g@@ line)
 #           (working pane)
 #   ]c / [c / zx  (either)     next/prev hunk; fold unchanged (all from lvi-diff)
+#                              -- the split opens folded; zx unfolds it
 #   :w      (index pane)       STAGE the current index text (reblob)
 #   :w      (working pane)     save the working file to disk, no staging
 #
@@ -120,7 +121,10 @@ reblob() {
 # index, B=work=the working tree (the order we hand lvi-diff).
 attach() {
   idx=$1; work=$2; top=$3; rp=$4; gitdir=$5
-  LVI="$LVI" "$DIFF" "$idx" "$work" || return 1
+  # The launcher opened both panes for this, so hand lvi-diff the folded-by-diff
+  # start its own file mode takes: otherwise the rc's folding (`on bufenter
+  # lvi-fold`) hides the hunks you came to stage. LVI_DIFF_FOLD=0 opts out.
+  LVI="$LVI" LVI_DIFF_FOLD=${LVI_DIFF_FOLD:-1} "$DIFF" "$idx" "$work" || return 1
   # Staging is reblob-on-write: :w on the index pane stages its current text. So
   # \dp/\do (from lvi-diff) shuffle hunks as ordinary, undoable edits and nothing
   # touches git until you :w. The baked paths are single-quoted (sq): the hook
