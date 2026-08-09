@@ -20,6 +20,7 @@ make test                      # run all tests (auto-discovers test/*_test.lua)
 - `lvi -w` is a Unix filter: `ok` payloads go to stdout, errors to stderr, exit code reflects failure. Over the socket, send ex commands **without** the leading `:` (a leading `:` is tolerated/stripped by the client).
 - The dev shell runs zsh with `noclobber`; overwrite redirects need `>!` (e.g. `foo >! out`).
 - There is no in-process way to test the tty/render path headlessly (no tty in most harnesses); drive behavior over the socket, or unit-test `render.frame(ed)` (pure) and `normal.lua` (feed keys to the coroutine).
+- **Commit on top of the current branch; don't cut a new one.** The single exception is work that is several related commits meant to land as one set of changes -- that gets its own branch.
 - When live-testing over the socket, **never target a view with `lvi -l | head -1`** — `lvi -l` lists *every* view for the uid, including the user's own live editing session, and your commands will mutate whatever they land on (this has happened). Snapshot the wids before launching your test view, pick the one that is new, then confirm with `lvi -w "$wid" -- f` that it's editing your test file before sending anything else.
 
 ## Architecture (the big picture)
