@@ -1,0 +1,325 @@
+#!/bin/sh
+# lvi-match [-w auto|WID] [add|del|list|clear|scan] [...] -- sticky pattern marks.
+#
+# Vim's `matchadd()`/`matchdelete()`: keep a set of patterns painted in the
+# buffer until you take them away. `/` (lvi-search) answers "where is the next
+# one"; a match answers "where are all of these, while I read" -- the three
+# identifiers you are tracing through a function, a TODO marker. Patterns are
+# stored per view and re-scanned as you type, so a mark lands on text you have
+# not saved, or even finished typing.
+#
+#   lvi-match [add] [-i] [-F] [--word] [-g GROUP] [PATTERN]
+#                         add a pattern (prompts when PATTERN is omitted)
+#   lvi-match del [ID]    remove one pattern (default: the newest)
+#   lvi-match list        print the active patterns: ID, group, flags, pattern
+#   lvi-match clear       remove them all (vim's clearmatches())
+#   lvi-match scan        re-paint now (the hook target; a no-op with no patterns)
+#
+# `add` is implied, so `lvi-match TODO` marks a pattern and a bare `lvi-match`
+# prompts for one -- at the cost that a mistyped subcommand is read as a
+# pattern rather than refused (the message line names what it added).
+#
+# PATTERN is a POSIX ERE, not lvi-search's BRE -- the extents come from awk's
+# `match()`, which is ERE-only, and a mark needs a column range where a search
+# needs only a line. `-F` takes PATTERN literally (it escapes the ERE
+# metacharacters for you), `--word` keeps only matches with a non-word byte on
+# both sides (grep's -w, and what makes `*` on the cursor word behave), and `-i`
+# folds case by lowercasing both sides.
+#
+# GROUPS AND COLOR: each pattern paints one `:hl` group, and successive adds
+# take `match1`, `match2`, ... so several patterns read apart at a glance (the
+# lowest free number is reused after a del; past `match6` they share). `-g`
+# picks the group by hand -- two patterns in one group merge into one color,
+# which is how you mark a family. An un-themed group is invisible (see
+# CLAUDE.md), so the FIRST add of a view pushes a default palette for
+# `match1`-`match6` at `pri=12`, above syntax (0) and search (10). That push
+# lands after the rc has run, so an rc `hi match1` loses. Two ways out:
+# LVI_MATCH_STYLES holds the palette as `;`-separated `hi` specs, one per group,
+# so set it to your own -- or blank it in the add bindings and theme the groups
+# in the rc (`:bg` and `:silent !` take a shell line, so
+# `map \hm :bg LVI_MATCH_STYLES= lvi-match add ...`).
+#
+# SCAN OWNS THE HOOKS, NOT THE RC: `:on` hooks compose by appending and a bare
+# `:on change` clears EVERYONE's, so a tool cannot uninstall just its own. The
+# first add installs `on change lvi-match scan` (and its bufenter twin, so the
+# marks follow a buffer switch) ONCE per view, and the hooks stay; `scan` exits
+# instantly while no pattern is set. Do NOT also add these hooks to your rc.
+# State lives beside the socket, disposable with the view (the lvi-list
+# pattern):
+#   $LVI_SOCK.match          the patterns, one ID<TAB>GROUP<TAB>FLAGS<TAB>PATTERN
+#   $LVI_SOCK.match.hooked   the once-per-view hook marker
+#   $LVI_SOCK.match.styled   the once-per-view palette marker
+#
+# Bindings (rc) -- the highlight menu \h already holds lvi-highlight's \hh/\ht:
+#     map \hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>  " mark the cursor word
+#     map \hp :silent !lvi-match<CR>                        " prompt for a pattern
+#     map \hd :bg lvi-match del<CR>                         " drop the newest mark
+#     map \hc :bg lvi-match clear<CR>                       " drop them all
+#     map \hl :!lvi-match list<CR>                          " what is marked
+#
+# SPAWN DISCIPLINES: every subcommand that re-paints self-backgrounds a
+# --worker, because reading the buffer needs lvi's event loop (the same reason
+# as lvi-highlight) and a `:silent !` binding has it frozen -- so any binding is
+# safe. Only the pattern PROMPT runs in the foreground, where `:!` handed us the
+# tty; bind that one `:silent !`, the rest `:bg` (no terminal handover, so no
+# alt-screen flash).
+#
+# The marks are view-wide, not per-buffer: switch buffers and the same patterns
+# paint the new one. Matches are byte columns, and the buffer is capped (a
+# pathological pattern is capped too -- past LVI_MATCH_MAXHITS the rest of that
+# pattern goes unpainted and the message line says so). A zero-width match
+# (`x*`) paints nothing rather than hanging. Under `-i` a case-distinguishing
+# bracket expression loses its meaning ([[:upper:]] matches nothing), which is
+# the point of asking for -i. A socket-side edit (lvi-fmt, a filter) leaves the
+# marks stale until your next keystroke; `lvi-match scan` re-paints on demand.
+#
+# Config: LVI (client, default `lvi`), LVI_MATCH_STYLES (the default palette;
+# empty pushes none), LVI_MATCH_MAXBYTES (skip buffers larger than this, default
+# 262144), LVI_MATCH_MAXHITS (per-pattern paint cap, default 5000),
+# LVI_MATCH_DEBUG (file to capture worker stderr).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_MATCH_MAXBYTES:-262144}
+MAXHITS=${LVI_MATCH_MAXHITS:-5000}
+TAB=$(printf '\t')
+# The default look of match1..matchN: `;`-separated `hi` specs, positional.
+PALETTE='bg=yellow fg=black pri=12;bg=cyan fg=black pri=12;bg=green fg=black pri=12'
+PALETTE="$PALETTE;bg=magenta fg=black pri=12;bg=blue fg=white pri=12;bg=red fg=white pri=12"
+
+# Errors also land on the target's status line: stderr is discarded (:bg) or
+# repainted over (:silent !) under every documented binding.
+die() {
+  echo "lvi-match: $*" >&2
+  [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "msge lvi-match: $*" 2>/dev/null
+  exit 1
+}
+
+worker=; [ "${1:-}" = "--worker" ] && { worker=1; shift; }
+notify=; [ "${1:-}" = "--notify" ] && { notify=${2:-}; shift 2; }
+want_wid=; [ "${1:-}" = "-w" ] && { want_wid=${2:-}; shift 2; }
+sub=add; [ $# -gt 0 ] && { sub=$1; shift; }
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# The socket path anchors our state files; resolve it the way lvi-list does.
+if [ -n "${LVI_SOCK:-}" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK                      # inside lvi: trust the exported socket
+elif [ "$target" = auto ]; then
+  n=$("$LVI" -l | grep -c .)
+  [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+  sock=$("$LVI" -l | cut -f2)
+else
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || die "no running view '$target'"
+fi
+state="$sock.match"
+hooked="$sock.match.hooked"
+styled="$sock.match.styled"
+
+send() { "$LVI" -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
+
+# ---- worker: the actual scan (runs with lvi's loop live) ---------------------
+if [ -n "$worker" ]; then
+  [ -s "$state" ] || exit 0           # cleared while we were queued
+  text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
+  nbytes=$(printf '%s' "$text" | wc -c)
+  if [ "$nbytes" -gt "$MAXBYTES" ]; then
+    echo "lvi-match: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_MATCH_MAXBYTES)" >&2
+    send "status match [lvi-match off: over ${MAXBYTES}B cap]"
+    exit 0
+  fi
+
+  # One awk over both files: the state first (FNR==NR), then the buffer on
+  # stdin, so every pattern is tried against each line in one pass and each
+  # group's ranges accumulate into ONE `hl` (the paint is a whole-group
+  # replace). A group still in the state but matching nothing emits an empty
+  # `hl`, which clears it -- the same branch, no special case.
+  set --
+  while IFS= read -r cmd; do [ -n "$cmd" ] && set -- "$@" "$cmd"; done <<EOF
+$(printf '%s\n' "$text" | LC_ALL=C awk -v cap="$MAXHITS" -v notify="$notify" '
+    FNR == NR && FILENAME != "-" {                # a state line
+      i = index($0, "\t"); if (!i) next
+      id = substr($0, 1, i - 1); r = substr($0, i + 1)
+      i = index(r, "\t"); grp = substr(r, 1, i - 1); r = substr(r, i + 1)
+      i = index(r, "\t"); fl = substr(r, 1, i - 1); pat = substr(r, i + 1)
+      k++; ID[k] = id; G[k] = grp; FL[k] = fl; P[k] = pat
+      RE[k] = index(fl, "i") ? tolower(pat) : pat
+      seen[grp] = 1
+      next
+    }
+    {
+      for (j = 1; j <= k; j++) {
+        s = index(FL[j], "i") ? tolower($0) : $0
+        base = 0                                  # bytes of the line consumed
+        while (length(s) > 0 && match(s, RE[j])) {
+          st = RSTART; ln = RLENGTH
+          # A zero-width match would never consume: step past it and move on,
+          # so `x*` paints nothing instead of spinning forever.
+          if (ln < 1) { s = substr(s, st + 1); base += st; continue }
+          c = base + st
+          keep = 1
+          if (index(FL[j], "w")) {                # grep -w, on the raw line
+            if (c > 1 && substr($0, c - 1, 1) ~ /[[:alnum:]_]/) keep = 0
+            else if (substr($0, c + ln, 1) ~ /[[:alnum:]_]/) keep = 0
+          }
+          # Hits are counted past the cap even though they stop being painted,
+          # so the status total stays honest about what is out there.
+          if (keep) {
+            if (hits[j] < cap) R[G[j]] = R[G[j]] sprintf(" %d:%d-%d", FNR, c, c + ln - 1)
+            else over[j] = 1
+            hits[j]++
+          }
+          s = substr(s, st + ln); base = c + ln - 1
+        }
+      }
+    }
+    END {
+      for (g in seen) printf "hl %s%s\n", g, R[g]
+      tot = 0; ov = 0
+      for (j = 1; j <= k; j++) { tot += hits[j]; if (over[j]) ov = 1 }
+      printf "status match [match %d: %d]\n", k, tot
+      # The just-added pattern reports itself -- an add that matches nothing
+      # would otherwise be indistinguishable from a mark you cannot see.
+      for (j = 1; j <= k; j++)
+        if (notify != "" && ID[j] == notify) {
+          if (hits[j]) printf "msg match /%s/ %d (%s)\n", P[j], hits[j], G[j]
+          else printf "msge match /%s/ no match\n", P[j]
+        }
+      if (ov) printf "msge match: over %d hits, rest unpainted (LVI_MATCH_MAXHITS)\n", cap
+    }' "$state" -)
+EOF
+  # No commands means awk itself failed (the state vanished under us, say) --
+  # sending nothing beats sending an empty request.
+  [ $# -gt 0 ] && "$LVI" -w "$target" -- "$@"
+  exit 0
+fi
+
+# ---- subcommands -------------------------------------------------------------
+# Detach the buffer-reading half; return at once so lvi's loop resumes and can
+# service the worker's socket traffic.
+match_scan() {
+  [ -s "$state" ] || return 0               # the gate that makes the hooks no-ops
+  ( "$0" --worker ${1:+--notify} ${1:+$1} $wflag >"${LVI_MATCH_DEBUG:-/dev/null}" 2>&1 & )
+}
+
+# Clear every group we currently paint. Used before a del/clear edits the state:
+# a group that leaves the state is never named again, so the scan that follows
+# cannot clear it -- only this can.
+match_unpaint() {
+  [ -s "$state" ] || return 0
+  set --
+  for g in $(cut -f2 "$state" | sort -u); do set -- "$@" "hl $g"; done
+  [ $# -gt 0 ] && send "$@"
+}
+
+# The default palette, once per view. It lands AFTER the rc has run, so it wins
+# over an rc `hi match1 ...`; setting LVI_MATCH_STYLES empty is how you keep the
+# rc's colors (see the header).
+match_style() {
+  [ -f "$styled" ] && return 0
+  : > "$styled"
+  styles=${LVI_MATCH_STYLES-$PALETTE}
+  [ -n "$styles" ] || return 0
+  set --
+  n=1
+  while [ -n "$styles" ]; do
+    spec=${styles%%;*}
+    case $styles in *";"*) styles=${styles#*;} ;; *) styles= ;; esac
+    [ -n "$spec" ] && set -- "$@" "hi match$n $spec"
+    n=$((n + 1))
+  done
+  [ $# -gt 0 ] && send "$@"
+}
+
+match_add() {
+  icase= fixed= word= grp=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      -i)     icase=1; shift ;;
+      -F)     fixed=1; shift ;;
+      --word) word=1; shift ;;
+      -g)     grp=${2:-}; [ -n "$grp" ] || die "-g needs a group name"; shift 2 ;;
+      --)     shift; break ;;
+      -?*)    die "unknown flag '$1' (-i -F --word -g GROUP)" ;;
+      *)      break ;;
+    esac
+  done
+  pat=${1:-}
+
+  # Prompt in the foreground (where `:!` handed us the tty). Skipped when a
+  # pattern was supplied, e.g. the \hm map passing $LVI_CWORD.
+  if [ -z "$pat" ]; then
+    [ -t 0 ] || die "no pattern, and no tty to prompt on (bind :silent !lvi-match)"
+    printf 'match/' >&2
+    IFS= read -r pat || exit 0
+    [ -n "$pat" ] || exit 0
+  fi
+  [ -n "$fixed" ] && pat=$(printf '%s\n' "$pat" | sed 's/[][\\^$.|?*+(){}]/\\&/g')
+  # A bad ERE is fatal inside the worker's awk, which would leave every OTHER
+  # pattern unpainted -- so reject it here, where there is someone to tell.
+  awk -v p="$pat" 'BEGIN { if ("" ~ p) x = 1 }' </dev/null 2>/dev/null \
+    || die "bad pattern /$pat/"
+
+  # The lowest free matchN, so a del frees its color for the next add; past six
+  # they share a group (and a color) rather than going invisible.
+  if [ -z "$grp" ]; then
+    n=1
+    while [ "$n" -le 6 ]; do
+      cut -f2 "$state" 2>/dev/null | grep -qx "match$n" || break
+      n=$((n + 1))
+    done
+    [ "$n" -le 6 ] || n=$(( ($(cut -f1 "$state" | wc -l) % 6) + 1 ))
+    grp=match$n
+  fi
+  id=$({ echo 0; cut -f1 "$state" 2>/dev/null; } | sort -n | tail -1)
+  id=$((id + 1))
+  fl=; [ -n "$icase" ] && fl="${fl}i"; [ -n "$word" ] && fl="${fl}w"; [ -z "$fl" ] && fl=-
+  printf '%s\t%s\t%s\t%s\n' "$id" "$grp" "$fl" "$pat" >> "$state" || die "cannot write $state"
+
+  if [ ! -f "$hooked" ]; then               # once per view; the hooks then stay
+    send 'on change lvi-match scan' 'on bufenter lvi-match scan'
+    : > "$hooked"
+  fi
+  match_style
+  match_scan "$id"
+}
+
+match_del() {
+  [ -s "$state" ] || { send 'msge match: nothing to delete'; return 0; }
+  id=${1:-$(cut -f1 "$state" | sort -n | tail -1)}
+  grep -q "^$id$TAB" "$state" || die "no match '$id' (lvi-match list)"
+  match_unpaint                             # before the state loses the group
+  tmp="$state.$$"
+  grep -v "^$id$TAB" "$state" > "$tmp"
+  mv "$tmp" "$state"
+  if [ -s "$state" ]; then
+    match_scan                              # repaint the survivors
+  else
+    rm -f "$state"
+    send 'status match' 'msg match cleared'
+  fi
+}
+
+match_clear() {
+  match_unpaint
+  rm -f "$state"
+  send 'status match' 'msg match cleared'
+}
+
+match_list() {
+  [ -s "$state" ] || { echo "no matches"; return 0; }
+  while IFS="$TAB" read -r id grp fl pat; do
+    printf '%s\t%s\t%s\t/%s/\n' "$id" "$grp" "$fl" "$pat"
+  done < "$state"
+}
+
+case "$sub" in
+  add)   match_add "$@" ;;
+  del)   match_del "$@" ;;
+  clear) match_clear ;;
+  list)  match_list ;;
+  scan)  match_scan ;;
+  *)     match_add "$sub" "$@" ;;           # `lvi-match TODO`, `lvi-match -i foo`
+esac

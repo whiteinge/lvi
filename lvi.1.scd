@@ -1037,6 +1037,19 @@ below, with the happy-path rc lines that turn it on:
 	on bufenter lvi-list paint
 	```
 
+*lvi-match* -- sticky pattern marks
+	Vim's *matchadd()*: keep a pattern painted while you read, rather than
+	stepping to the next hit. Marks repaint as you type, follow a buffer switch,
+	and take a color apiece; the first add installs its own hooks, so the rc
+	needs only keys:
+
+	```
+	map \\hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>
+	map \\hp :silent !lvi-match<CR>
+	map \\hd :bg lvi-match del<CR>
+	map \\hc :bg lvi-match clear<CR>
+	```
+
 *lvi-gitchanges* -- step your git diff
 	Turn *git diff* for the current file into a steppable list of hunks, each
 	carrying its own diff as the entry body. *--unstaged* and *--staged* split

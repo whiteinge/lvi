@@ -27,7 +27,7 @@
 "     is that letter DOUBLED (a leaf-like two-key press for the common case):
 "       \g  git      \gg changes   \gs staged   \gp stage-hunks (git add -p)
 "       \l  lists     \ll switch    \lg goto   \lc current   \lh hide   \lp preview
-"       \h  highlight \hh refresh   \ht toggle
+"       \h  highlight \hh refresh   \ht toggle   \hm mark word   \hc clear marks
 "       \y  yankring  \yy pick      \yp older  \yn newer
 "       \i  invis     \ii toggle    \ip page (exact bytes in less)
 "       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
@@ -106,6 +106,28 @@ on bufenter lvi-highlight
 " highlight MENU (\h): \hh forces a refresh now, \ht toggles syntax off/on.
 map \hh :bg lvi-highlight<CR>               " re-highlight on demand
 map \ht :bg lvi-highlight toggle<CR>        " :syntax off / on
+
+" }}}
+" ---- sticky pattern marks (vim's matchadd) ----------------------------- {{{
+
+" lvi-search finds the next occurrence; lvi-match keeps every occurrence painted
+" while you read, until you drop it. Marks repaint as you type and follow a
+" buffer switch: the first add installs those hooks itself, so nothing here but
+" keys. Patterns are EREs (-F takes one literally, --word is grep -w, -i folds
+" case), and each gets its own color, match1..match6.
+map \hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>  " mark the word under the cursor
+map \hp :silent !lvi-match<CR>              " ...or prompt for a pattern
+map \hd :bg lvi-match del<CR>               " drop the newest mark
+map \hc :bg lvi-match clear<CR>             " drop them all
+map \hl :!lvi-match list<CR>                " what is marked
+" lvi-match colors match1..match6 itself (pri=12, above syntax and search paint),
+" once per view on the first add -- which lands after this rc, so a `hi match1`
+" here loses. To pick the colors here instead, blank LVI_MATCH_STYLES so it
+" pushes none. `:bg` takes a shell line, so the maps that add carry it:
+"   map \hm :bg LVI_MATCH_STYLES= lvi-match add --word -F "$LVI_CWORD"<CR>
+"   map \hp :silent !LVI_MATCH_STYLES= lvi-match<CR>
+"   hi match1 bg=yellow fg=black pri=12
+"   hi match2 bg=cyan   fg=black pri=12
 
 " }}}
 " ---- message line ------------------------------------------------------ {{{

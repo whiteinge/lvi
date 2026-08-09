@@ -233,6 +233,24 @@ Lists are ephemeral and live beside the view's socket (auto-cleaned per
 view); use `lvi-list save`/`load` to persist a list to a location that
 isn't automatically cleaned. See the `lvi-list` header for all arguments.
 
+### `lvi-match` — sticky pattern marks (vim's `matchadd`)
+
+Search answers where the next occurrence is. A match answers where all of them
+are while you read: `lvi-match add fox` paints every occurrence in the live
+buffer and keeps repainting as you type, until `del` or `clear` takes it away.
+Vim's `matchadd()` / `matchdelete()`, as a command.
+
+Each pattern gets its own `:hl` group — `match1`, `match2`, …, colored by
+default at `pri=12`, above syntax (0) and search (10) — so the three
+identifiers you are tracing through a function read apart at a glance. `-g`
+puts several patterns in one group, and one color, when they are one family.
+Patterns are POSIX EREs rather than lvi-search's BREs, since the extents come
+from awk's `match()` and a mark needs a column range where a search needs only
+a line; `-F` takes the pattern literally, `--word` is grep's `-w` (what makes
+marking the cursor word behave), `-i` folds case. The first add installs the
+`change`/`bufenter` hooks itself, so the rc needs only keys and, if you don't
+want the built-in palette, your own `hi match1`… lines.
+
 ### `lvi-gitchanges` — step your git diff
 
 The second `lvi-list` producer, and a one-line proof that "any tool that speaks
