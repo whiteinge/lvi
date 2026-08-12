@@ -274,20 +274,46 @@ local function insert_literal(ed, byte_)
   ed.cx = ed.cx + #ch
 end
 
--- Ctrl-T (POSIX): blanks up to the column after the next shiftwidth boundary.
--- The blanks land exactly as <Tab> would lay them, because lvi's Tab already
--- means "indent one unit" (see insert_tab) rather than POSIX's plain tab
--- character, so the two agree byte for byte instead of spelling one indent two
--- ways.
+-- The two halves of an indent change, shared by insert mode's Ctrl-T/Ctrl-D and
+-- the >/< operators: measure a leading <blank> run in display columns, and spell
+-- a width back out as blanks (spaces under expandtab, else tab-optimized).
+local function indent_width(lead, ts)
+  local w = 0
+  for i = 1, #lead do
+    if lead:sub(i, i) == "\t" then w = w + (ts - w % ts) else w = w + 1 end
+  end
+  return w
+end
+
+local function indent_str(w, et, ts)
+  return et and string.rep(" ", w)
+    or (string.rep("\t", math.floor(w / ts)) .. string.rep(" ", w % ts))
+end
+
+-- Ctrl-T / Ctrl-D: shift the line's indent by one shiftwidth, from anywhere in
+-- the line. This is >> and << applied to the line being typed, so an indent
+-- means the same thing in insert mode as it does in normal mode.
 --
--- When Ctrl-T is extending the indent, its blanks JOIN the autoindent, so
--- Ctrl-D takes them back. POSIX reads them as ordinary typed text, which would
--- leave Ctrl-D unable to undo a Ctrl-T; every historical vi pairs the two, and a
--- pair that only works in one direction is the worse deviation. In the manpage.
-local function insert_shift(ed)
-  local indenting = ed.cx == #ed.ai_text + 1
-  insert_tab(ed)
-  if indenting then ed.ai_text = line(ed, ed.cy):sub(1, ed.cx - 1) end
+-- Deviation, in the manpage. POSIX scopes Ctrl-D to *autoindent* characters --
+-- "no special meaning" unless the cursor follows them -- and spells two prefixed
+-- forms, 0 Ctrl-D and ^ Ctrl-D. That leaves the indent adjustable only before
+-- you type anything on the line, which is the wrong half of the edit to serve:
+-- autoindent guesses the indent, and the correction usually occurs to you while
+-- you are typing. Vim's reading is the whole feature in two keys.
+--
+-- The ownership bookkeeping the POSIX form needed goes with it. ai_text now
+-- answers one question, for Esc's trim rule: which blanks did lvi put there?
+local function insert_shift(ed, delta)
+  local s = line(ed, ed.cy)
+  local lead, rest = s:match("^([ \t]*)(.*)$")
+  local ts = ed.opts.tabstop
+  local w = math.max(0, indent_width(lead, ts) + delta * ed.opts.shiftwidth)
+  local new = indent_str(w, ed.opts.expandtab, ts) .. rest
+  ed.buf:set(ed.cy, new)
+  ed.cx = math.max(1, ed.cx + #new - #s)
+  -- Shifting lvi's own indent leaves it lvi's, so Esc still trims a line that
+  -- holds nothing else. Shifting on top of blanks the user typed claims nothing.
+  if lead == ed.ai_text then ed.ai_text = new:match("^[ \t]*") end
 end
 
 local function split_line(ed) -- <CR> in insert mode
@@ -295,12 +321,9 @@ local function split_line(ed) -- <CR> in insert mode
   local head, tail = s:sub(1, ed.cx - 1), s:sub(ed.cx)
   local indent = ""
   if ed.opts.autoindent then
-    -- ^ Ctrl-D asked for this line's indent to be dropped but the NEXT line's to
-    -- come from wherever this one's did, so a forced indent outranks re-deriving.
-    indent = ed.ai_next or s:match("^[ \t]*")   -- carry the split line's indent onto the next
+    indent = s:match("^[ \t]*")                 -- carry the split line's indent onto the next
     if head == ed.ai_text then head = "" end    -- ...and drop it from a line that was only indent
   end
-  ed.ai_next = nil
   ed.ai_text = indent
   ed.buf:set(ed.cy, head)
   ed.buf:insert(ed.cy + 1, { indent .. tail })
@@ -343,45 +366,6 @@ local function kill_to_bol(ed)
   ed.cx = 1
 end
 
--- Ctrl-D (POSIX): erase back through the AUTOINDENT, and only the autoindent.
--- The spec is explicit that Ctrl-D has no special meaning unless the cursor
--- follows autoindent characters, optionally with a '0' or '^' typed after them.
--- Indentation you typed by hand is not its business, which is where it parts
--- company with vim's Ctrl-D. That is why ed.ai_text exists: the erase has to
--- know which blanks the editor inserted, and no inspection of the line can tell.
---
---   Ctrl-D    back to the column after the previous shiftwidth boundary
---   0 Ctrl-D  drop the whole indent
---   ^ Ctrl-D  drop it here, but indent the next line as this one would have been
---
--- Returns false when none of that applies; the key is then simply ignored.
-local function erase_autoindent(ed)
-  local cur, ts = line(ed, ed.cy), ed.opts.tabstop
-  local ai = #ed.ai_text
-  if ai == 0 or not cur:sub(1, ai):match("^[ \t]*$") then return false end
-  local pfx = cur:sub(ed.cx - 1, ed.cx - 1)
-  if ed.cx == ai + 2 and (pfx == "0" or pfx == "^") then
-    if pfx == "^" then ed.ai_next = ed.ai_text end -- the next line still gets it
-    ed.buf:set(ed.cy, cur:sub(ed.cx))              -- the 0/^ goes with the indent
-    ed.cx, ed.ai_text = 1, ""
-    return true
-  end
-  if ed.cx ~= ai + 1 then return false end         -- cursor is past the indent: not ours
-  -- POSIX's column arithmetic, (column-1) - ((column-2) % shiftwidth), in the
-  -- 0-based display columns disp speaks. Rebuilt from the indent's own bytes so
-  -- a tabbed indent stays tabbed, padded out with spaces when the boundary falls
-  -- inside a tab.
-  local d = disp.dispcol(cur, ts, ed.cx)
-  if d == 0 then return false end
-  local target = d - ((d - 1) % ed.opts.shiftwidth) - 1
-  local head = cur:sub(1, disp.byte_at_dispcol(cur, ts, target) - 1)
-  local w = disp.width(head, ts)
-  if w < target then head = head .. string.rep(" ", target - w) end
-  ed.buf:set(ed.cy, head .. cur:sub(ed.cx))
-  ed.cx, ed.ai_text = #head + 1, head
-  return true
-end
-
 -- POSIX input-mode NUL: re-enter the previously inserted text literally (no
 -- interpretation, no macro expansion), then leave insert mode. Fed through the
 -- buffer rather than ed.inject precisely because inject would re-interpret it.
@@ -413,12 +397,12 @@ end
 
 -- `ai` is the autoindent this insert opened with -- only o/O have one to declare.
 -- Every other entry point resets it here, so a stale indent from an earlier o
--- can never make Ctrl-D eat blanks the user typed by hand.
+-- can never make Esc trim blanks the user typed by hand.
 local function insert_mode(ed, ai)
   ed.changed = true
   ed.mode = "insert"
   ed.message = "-- INSERT --"
-  ed.ai_text, ed.ai_next = ai or "", nil
+  ed.ai_text = ai or ""
   clamp(ed)
   local sy, sx = ed.cy, ed.cx
   local fresh = true                                 -- nothing typed yet (NUL's window)
@@ -445,8 +429,8 @@ local function insert_mode(ed, ai)
     elseif k == 22 or k == 17 then
       local k2 = getkey(ed)
       if k2 == 13 or k2 == 10 then split_line(ed) else insert_literal(ed, k2) end
-    elseif k == 20 then insert_shift(ed)               -- Ctrl-T: indent one shiftwidth
-    elseif k == 4 then erase_autoindent(ed)            -- Ctrl-D: un-indent (autoindent only)
+    elseif k == 20 then insert_shift(ed, 1)            -- Ctrl-T: indent one shiftwidth
+    elseif k == 4 then insert_shift(ed, -1)            -- Ctrl-D: un-indent one shiftwidth
     -- Ctrl-A / Ctrl-E move to line ends. Not POSIX vi (readline muscle memory);
     -- vi's answer is <Esc> then I / A. Included by request.
     elseif k == 1 then ed.cx = 1                       -- Ctrl-A: start of line
@@ -511,14 +495,7 @@ end
 local function reindent(s, delta, et, ts)
   local lead, rest = s:match("^([ \t]*)(.*)$")
   if rest == "" then return (delta < 0) and "" or s end
-  local w = 0
-  for i = 1, #lead do
-    if lead:sub(i, i) == "\t" then w = w + (ts - w % ts) else w = w + 1 end
-  end
-  local nw = math.max(0, w + delta)
-  local indent = et and string.rep(" ", nw)
-    or (string.rep("\t", math.floor(nw / ts)) .. string.rep(" ", nw % ts))
-  return indent .. rest
+  return indent_str(math.max(0, indent_width(lead, ts) + delta), et, ts) .. rest
 end
 
 local function op_lines(ed, op, a, c, reg)

@@ -362,17 +362,18 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 	use *contrib/lvi-invis*.
 
 *Ctrl-T*, *Ctrl-D*
-	Indent / un-indent by one *shiftwidth*. *Ctrl-D* is scoped to indentation
-	the editor inserted, so it never eats blanks you typed by hand. Two
-	prefixed forms: *0 Ctrl-D* drops the whole indent, and *^ Ctrl-D* drops it
-	on this line while the next line is still indented as this one would have
-	been.
+	Indent / un-indent the current line by one *shiftwidth*, from anywhere in
+	the line. These are *>>* and *<<* on the line you are typing, and lay the
+	same blanks: spaces under *expandtab*, tabs otherwise.
 
-	Two deviations. POSIX counts *Ctrl-T*'s blanks as ordinary typed text, which
-	would leave *Ctrl-D* unable to undo a *Ctrl-T*; lvi folds them into the
-	indent so the pair works both ways, as historical vi does. And lvi skips
-	POSIX's rewrite of leading indentation to the fewest possible blanks on
-	*Esc*, which would undo *expandtab*.
+	Two deviations. POSIX scopes *Ctrl-D* to indentation the editor inserted,
+	acting only while the cursor sits right after it, and adds the prefixed
+	forms *0 Ctrl-D* and *^ Ctrl-D*. lvi takes vim's reading instead. The POSIX
+	rule leaves the indent adjustable only before you type anything on the line,
+	and autoindent's guess is usually worth correcting later than that; the
+	prefixed forms are gone with it. lvi also skips POSIX's rewrite of leading
+	indentation to the fewest possible blanks on *Esc*, which would undo
+	*expandtab*.
 
 *NUL* (*Ctrl-@*)
 	As the first character of an insert, re-enter the text of the previous
@@ -591,7 +592,8 @@ spaces and tabs included.
 	*tabstop*=_N_ (*ts*)
 		How many columns a literal tab renders as.
 	*shiftwidth*=_N_ (*sw*)
-		The indent step for *>>*/*<<* (and *>*/*<*).
+		The indent step for *>>*/*<<* (and *>*/*<*, and insert mode's
+		*Ctrl-T*/*Ctrl-D*).
 	*expandtab*, *noexpandtab* (*et*, *noet*)
 		Indent with spaces, one *shiftwidth*, instead of a tab for *>>* and the
 		insert-mode *<Tab>* key; *tabstop* then only sets how wide a literal tab
