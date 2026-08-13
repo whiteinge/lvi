@@ -386,6 +386,20 @@ re-dirty the buffer on every save. Format, then `:w`.
 A fuzzy-picker (fzf by default) that opens the chosen file in the running view.
 Bind it: `map \f :silent !lvi-open<CR>`.
 
+### `lvi-buf` — switch to an open buffer
+
+`:ls` in the same picker, over the buffers you already have open — pick a row,
+the view switches. `bn`/`bp` step cyclically and skip scratch buffers, so this
+is how you reach a man page or a `:cmdwin` without knowing its index, and how
+you get to the fourth file without pressing `bn` three times. Bind it: `map \b
+:silent !lvi-buf<CR>`.
+
+A picker needs the terminal, so it runs under `:silent !` — which freezes the
+event loop, so it can't ask for `ls` over the socket any more than `lvi-tags`
+can ask for `%p`. It reads the listing out of `$LVI_BUFS` instead, which lvi
+puts in every child's environment. Nothing can renumber the buffers while the
+picker holds the tty, so the index it picked is still the index it sends.
+
 ### `lvi-shell.sh` — drive lvi from your shell (save-as with real completion)
 
 This is not a tool that lvi runs, but rather a script you source in your

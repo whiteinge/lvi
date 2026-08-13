@@ -21,8 +21,8 @@
 " That single rule is the whole scheme:
 "
 "   * LEAF -- a tool with one action gets one letter, mnemonic where vim has an
-"     equivalent:  \= format (vim =), \f find/open, \t tags, \r registers,
-"     \m marks, \e errors/lint, \s spell, \w wrap-toggle.
+"     equivalent:  \= format (vim =), \f find/open, \b buffers, \t tags,
+"     \r registers, \m marks, \e errors/lint, \s spell, \w wrap-toggle.
 "   * MENU -- a tool with several actions gets a prefix, and its most-used action
 "     is that letter DOUBLED (a leaf-like two-key press for the common case):
 "       \g  git      \gg changes   \gs staged   \gp stage-hunks (git add -p)
@@ -233,12 +233,19 @@ map \yy :silent !lvi-yankring pick<CR>     " or pick any entry through $LVI_PICK
 " LVI_YANKRING_DIR at a shared path to carry one ring across views.
 
 " }}}
-" ---- open files -------------------------------------------------------- {{{
+" ---- open files and buffers -------------------------------------------- {{{
 
 " lvi-open fuzzy-picks a file ($LVI_PICKER, default fzf) and opens it with :e
 " over the socket. It needs the picker's tty (:silent !), which freezes lvi; the
 " chosen file lands when lvi resumes. \f = find (the open leaf).
 map \f :silent !lvi-open<CR>
+
+" lvi-buf is the same picker over :ls -- the buffers already open, rather than
+" files on disk. bn/bp skip scratch buffers, so this is the way to a man page or
+" a :cmdwin, and the way to the fourth file without three bn's. It reads the
+" listing from $LVI_BUFS (exported to every child), since the frozen picker can't
+" ask for :ls over the socket. \b = buffers (the switch leaf).
+map \b :silent !lvi-buf<CR>
 
 " }}}
 " ---- tags -------------------------------------------------------------- {{{

@@ -1,0 +1,59 @@
+#!/bin/sh
+# lvi-buf [-w auto|WID] -- fuzzy-pick a resident buffer and switch the view to it.
+#
+# `:ls` in a picker (fzf/fzy/sk): pick a row, the view switches to that buffer.
+# It is the random-access companion to `bn`/`bp`, which step cyclically and skip
+# scratch buffers -- so a man page, a `:cmdwin`, or a diff pane is reachable here
+# without knowing its index.
+#
+# SYNOPSIS
+#   map \b :silent !lvi-buf<CR>   bind it inside lvi
+#   lvi-buf -w auto|WID           run from another terminal
+#
+# Rows are `:ls` verbatim -- index, the flags field (`%` current, `+` modified,
+# `s` scratch, `=` readonly), then the path. The index stays column 1 so the
+# selection is read straight back off it, which keeps any $LVI_PICKER usable
+# (no fzf-only --with-nth/--delimiter).
+#
+# GETTING THE LIST. A picker needs the terminal, so the map runs under
+# `:silent !`, which freezes lvi's event loop while we hold the tty -- an `ls`
+# read back over the socket would deadlock. So we read the listing out of
+# $LVI_BUFS, which lvi exports to every child it spawns; nothing can renumber
+# the buffers while lvi is frozen on us, so the index we picked is still the
+# index we send. Run from another terminal (-w WID), lvi is live and $LVI_BUFS is
+# unset, so we ask for `ls` over the socket instead.
+#
+# The switch uses --detach (fire-and-forget -- a synchronous reply would deadlock
+# while lvi is frozen on us).
+#
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
+# Needs a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_BUFS exported); from
+# elsewhere pass -w.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+
+die() { echo "lvi-buf: $*" >&2; exit 1; }
+
+want_wid=; [ "${1:-}" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2; }
+target=${want_wid:-${LVI_WID:-auto}}
+send() { "$LVI" -w "$target" --detach -- "$@"; }
+
+# $LVI_BUFS is the snapshot lvi handed us; -w from another terminal has no such
+# env, so ask the live view. An explicit -w always asks, so it can't report the
+# spawning view's buffers while aiming at a different one.
+if [ -n "${LVI_BUFS:-}" ] && [ -z "$want_wid" ]; then
+  rows=$LVI_BUFS
+else
+  rows=$("$LVI" -w "$target" -- ls) || die "could not read the buffer list over the socket"
+fi
+
+count=$(printf '%s\n' "$rows" | grep -c .)
+[ "$count" -gt 1 ] || { send "msg lvi-buf: only one buffer"; exit 0; }
+
+sel=$(printf '%s\n' "$rows" | awk -F'\t' 'NF>=3 {printf "%3s  %s  %s\n", $1, $2, $3}' | "$PICKER") || exit 0
+idx=$(printf '%s' "$sel" | awk '{print $1}')
+case "$idx" in ''|*[!0-9]*) exit 0 ;; esac
+send "b $idx"

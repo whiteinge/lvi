@@ -475,7 +475,9 @@ spaces and tabs included.
 	*%* current, *+* modified, *s* scratch, *=* readonly. The *s* slot is how you
 	tell which buffers the walk above skips. Slots are positional, so read one by
 	index or match it with a glob; a later release may append a slot, but will not
-	move one. The same field reaches a hook as *$LVI_FLAGS* (see *ENVIRONMENT*).
+	move one. The same field reaches a hook as *$LVI_FLAGS*, and the whole listing
+	reaches a child as *$LVI_BUFS* (see *ENVIRONMENT*), which is how
+	*contrib/lvi-buf* puts the buffer list in a fuzzy picker.
 
 *n* [_file_...], *N*, *rew*, *last*, *args*
 	The ex file-walk commands, which in lvi are the buffer walk above: *n* (also
@@ -1104,6 +1106,15 @@ below, with the happy-path rc lines that turn it on:
 	map \\f :silent !lvi-open<CR>
 	```
 
+*lvi-buf* -- switch to an open buffer
+	*ls* in a fuzzy picker, for the buffers you already have open. It reaches the
+	scratch views *bn*/*bp* skip, so a man page or the command window needs no
+	index:
+
+	```
+	map \\b :silent !lvi-buf<CR>
+	```
+
 *lvi-shell.sh* -- drive lvi from your shell
 	Shell functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the running view
 	from *sh* or any terminal, with your shell's own path completion. Source it
@@ -1276,6 +1287,13 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	```
 	case $LVI_FLAGS in *s*) exit 0 ;; esac
 	```
+
+*LVI_BUFS*
+	The buffer list as *ls* prints it, one buffer per line. A child gets it without
+	asking, which matters for a tool holding the terminal under *:silent !*: the
+	event loop is frozen, so it cannot read *ls* back over the socket, and nothing
+	can renumber the buffers while it holds the tty, so an index read off the
+	snapshot is still valid when it sends *b* _N_. *contrib/lvi-buf* is that tool.
 
 *LVI_EVENT*
 	The event name (*change*, *write*, ...) while an *:on* hook's command runs;

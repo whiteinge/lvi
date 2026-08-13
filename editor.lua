@@ -524,6 +524,16 @@ function M.run(opts)
     -- so (a scratch buffer can have a real path). The slots are blank-padded, so
     -- a child tests them with a glob -- `case $LVI_FLAGS in *s*)` -- not equality.
     sys.setenv("LVI_FLAGS", bufs.flags(ed, buf))
+    -- The whole buffer list, byte-for-byte what :ls prints (index<TAB>flags<TAB>
+    -- path per line). A picker over the buffer list (contrib/lvi-buf) needs the
+    -- terminal, so it runs under `:silent !`, which freezes the poll loop -- it
+    -- can no more read `ls` back over the socket than lvi-tags can read `%p`
+    -- (see :wbuf). The env is the way past the freeze: the list is already in
+    -- the child's environment before the shell-out begins, and it is a snapshot
+    -- of a view that cannot change while the child holds the tty, so an index
+    -- read off it stays valid. Multi-line, unlike every var above it; a child
+    -- splits it with `printf '%s\n' "$LVI_BUFS"`.
+    sys.setenv("LVI_BUFS", bufs.list(ed))
     -- The A-Z char behind a `markset`/`markjump` fire (the global-mark seam);
     -- empty for every other spawn, so no child sees a stale mark. Set transiently
     -- by normal.lua right around the fire, same discipline as the range vars below.
