@@ -126,6 +126,53 @@ describe("contrib", function()
       expect(out).to.equal("hi syn0 sgr=31\nhl syn0 1:3-5\n")
     end)
 
+    -- jq's wording moves between versions, so pin the shape the list parser
+    -- needs, not the message. Skipped where jq is absent (the adapter's own
+    -- 127 guard is what lvi-lint turns into a status-line failure there).
+    it("lvi-lint-jq normalizes a jq parse error to FILE:LINE:COL: E:", function()
+      local out = run({}, "command -v jq >/dev/null 2>&1 || { echo SKIP; exit 0; }\n"
+        .. [[printf '{\n  "a": 1,\n}\n' | contrib/lvi-lint-jq conf.json]])
+      if not out:find("SKIP") then
+        expect(out:find("^conf%.json:3:1: E: %S")).to.exist()
+        expect(out:find("\n.")).to_not.exist()        -- one entry: jq stops at the first
+      end
+    end)
+
+    it("lvi-lint-jq says nothing about valid json (the clean [0/0])", function()
+      local out = run({}, "command -v jq >/dev/null 2>&1 || exit 0\n"
+        .. [[printf '{"a":[1,2,{"b":null}]}\n' | contrib/lvi-lint-jq conf.json]])
+      expect(out).to.equal("")
+    end)
+
+    it("lvi-lint-xmlstarlet drops libxml2's source/caret context lines", function()
+      local out = run({}, "command -v xmlstarlet >/dev/null 2>&1 || { echo SKIP; exit 0; }\n"
+        .. [[printf '<a>\n  <b>x</c>\n</a>\n' | contrib/lvi-lint-xmlstarlet a.xml]])
+      if not out:find("SKIP") then
+        expect(out:find("^a%.xml:2:11: E: Opening and ending tag mismatch")).to.exist()
+        expect(out:find("%^")).to_not.exist()          -- the caret line is not an entry
+      end
+    end)
+
+    it("lvi-lint-xmlstarlet says nothing about well-formed xml", function()
+      local out = run({}, "command -v xmlstarlet >/dev/null 2>&1 || exit 0\n"
+        .. [[printf '<svg><rect/></svg>\n' | contrib/lvi-lint-xmlstarlet i.svg]])
+      expect(out).to.equal("")
+    end)
+
+    -- Forced --show-warnings/--show-errors on the command line: a ~/.tidyrc
+    -- with `show-warnings: no` would otherwise make every buffer read clean.
+    it("lvi-lint-tidy folds tidy's severities in and drops repeats", function()
+      local out = run({}, "command -v tidy >/dev/null 2>&1 || { echo SKIP; exit 0; }\n"
+        .. [[printf '<html><body><p>hi</body>\n<foo/>\n</html>\n' ]]
+        .. [[| contrib/lvi-lint-tidy p.html]])
+      if not out:find("SKIP") then
+        expect(out:find("p%.html:1:1: W: missing <!DOCTYPE> declaration")).to.exist()
+        expect(out:find("p%.html:2:1: E: <foo> is not recognized!")).to.exist()
+        local n = select(2, out:gsub("content occurs after end of body", ""))
+        expect(n).to.equal(1)                        -- tidy reports it twice
+      end
+    end)
+
     it("lvi-textobj-tag finds the inner range of the enclosing tag", function()
       local d = tmpdir()
       write(d .. "/b.html", "<b>hi</b>\n")

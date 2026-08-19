@@ -1,0 +1,36 @@
+#!/bin/sh
+# lvi-lint-xmlstarlet -- `xmlstarlet val` backend for lvi-lint (xml/svg/xsl/…).
+#
+# Contract (see lvi-lint): buffer on stdin, real filename as $1, emit
+# `FILE:LINE:COL: S: msg`. `xmlstarlet val -e -` checks well-formedness (its
+# default) and prints libxml2's diagnostics on STDERR as `-:LINE.COL: msg`,
+# each followed by the source line and a caret -- context lines carry no
+# `-:L.C:` prefix, so anchoring on that prefix drops them. The `-` is stdin's
+# name; rewrite it to $1. The verdict line (`- - invalid`) goes to stdout,
+# which is discarded.
+#
+# One mistake can cascade: a malformed start tag yields the AttValue error, the
+# attributes-construct error, and the unfinished-tag error, all at the same
+# column. They are left in -- libxml2 recovers as it goes, so later entries are
+# just as often independent faults -- and the first one is the one to fix.
+# Everything lands as `E:`: for well-formedness there is no lesser verdict.
+#
+# Well-formedness is all of it: this is a parse check, not schema validation.
+# `xmlstarlet val --xsd/--relaxng/--dtd SCHEMA` does that, but the schema is
+# per-project, so wire it up as an $LVI_LINT_BACKEND adapter of your own. An
+# empty buffer is not well-formed XML (no root element), so a file reports one
+# error until it has one. HTML is not XML -- xmlstarlet rejects the unclosed
+# tags that HTML allows; use `tidy -eq` (or the Nu validator) for html/xhtml.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+# Debian names the binary xmlstarlet; upstream (and some ports) install it as
+# `xml`, so try the unambiguous name first and fall back.
+XS=$(command -v xmlstarlet || command -v xml) ||
+  { echo "lvi-lint-xmlstarlet: xmlstarlet not found on PATH" >&2; exit 127; }
+"$XS" val -e - 2>&1 1>/dev/null |
+  awk -v f="$1" '{
+    if (!match($0, /^-:[0-9]+\.[0-9]+: /)) next
+    split(substr($0, 3, RLENGTH - 4), a, ".")      # "-:L.C: " -> a[1], a[2]
+    print f ":" a[1] ":" (a[2] + 0 < 1 ? 1 : a[2] + 0) ": E: " substr($0, RSTART + RLENGTH)
+  }'

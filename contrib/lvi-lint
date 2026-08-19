@@ -27,8 +27,9 @@
 # must then say "reflects your last :w" (the lvi-gitchanges caveat).
 #
 # Backend: $LVI_LINT_BACKEND if set, else picked from the file extension (table
-# below). Ships ruff (python), shellcheck (sh), deno (js/ts); eslint, luacheck,
-# or `gcc -fsyntax-only` are a few more adapter lines when you want them.
+# below). Ships ruff (python), shellcheck (sh), deno (js/ts), jq (json),
+# xmlstarlet (xml/svg), tidy (html); eslint, luacheck, or `gcc -fsyntax-only`
+# are a few more adapter lines when you want them.
 #
 # Bindings (rc):
 #     on write lvi-lint                    " lint on every save
@@ -119,6 +120,9 @@ if [ -z "$backend" ]; then
     *.py)        backend=ruff ;;
     *.sh|*.bash) backend=shellcheck ;;
     *.js|*.jsx|*.ts|*.tsx|*.mjs|*.mts) backend=deno ;;
+    *.json|*.jsonl) backend=jq ;;
+    *.xml|*.svg|*.xsd|*.xsl|*.xslt|*.rng) backend=xmlstarlet ;;
+    *.html|*.htm|*.xhtml) backend=tidy ;;
     *) skip "no backend for '$fname' (set LVI_LINT_BACKEND, or extend the table)" ;;
   esac
 fi

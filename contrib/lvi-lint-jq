@@ -1,0 +1,35 @@
+#!/bin/sh
+# lvi-lint-jq -- `jq` backend for lvi-lint (json/jsonl).
+#
+# Contract (see lvi-lint): buffer on stdin, real filename as $1, emit
+# `FILE:LINE:COL: S: msg`. `jq empty` parses every input value and prints
+# nothing, so validating a buffer costs no discarded pretty-print. Diagnostics
+# go to STDERR (hence the 1>/dev/null) in one shape, `jq: parse error: MSG at
+# line L, column C`, with no filename to rewrite -- stdin has none -- so this
+# supplies $1 itself and anchors on the ` at line L, column C` tail; a line
+# without that tail is not a diagnostic.
+#
+# JSON has one severity, so everything lands as `E:`, and jq stops at the first
+# parse error: expect a one-entry list that reveals the next problem only once
+# you fix this one. COL is where the parser gave up -- at the offending token
+# for an unmatched bracket, just past it for a bad literal or a missing
+# separator, and column 0 when the newline was already consumed (reported as 1,
+# since lvi columns start there).
+#
+# jq accepts a stream of values, which is what makes this work unchanged on
+# .jsonl; the flip side is that a stray second document in a .json file passes.
+# Comments do not: a .jsonc/.json5 buffer wants a comment-tolerant backend
+# (biome), and schema checking is check-jsonschema's job.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+command -v jq >/dev/null 2>&1 || { echo "lvi-lint-jq: jq not found on PATH" >&2; exit 127; }
+jq empty - 2>&1 1>/dev/null |
+  awk -v f="$1" '{
+    if (!match($0, / at line [0-9]+, column [0-9]+/)) next
+    msg = substr($0, 1, RSTART - 1)
+    lc  = substr($0, RSTART, RLENGTH)
+    gsub(/[^0-9,]/, "", lc); split(lc, a, ",")     # " at line L, column C" -> a[1], a[2]
+    sub(/^jq: (parse )?error: /, "", msg)
+    print f ":" a[1] ":" (a[2] + 0 < 1 ? 1 : a[2] + 0) ": E: " msg
+  }'

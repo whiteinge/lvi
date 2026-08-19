@@ -1068,9 +1068,9 @@ below, with the happy-path rc lines that turn it on:
 	```
 
 *lvi-lint* -- any linter, as a list
-	Lint the live buffer (ruff, shellcheck, *deno lint* ship; one small adapter
-	per tool) into a steppable list; the status counter doubles as the pass/fail
-	glance:
+	Lint the live buffer (one small adapter per tool; ruff, shellcheck, *deno
+	lint*, *jq*, *xmlstarlet* and *tidy* ship) into a steppable list; the status
+	counter doubles as the pass/fail glance:
 
 	```
 	on write lvi-lint

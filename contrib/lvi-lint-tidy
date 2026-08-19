@@ -1,0 +1,37 @@
+#!/bin/sh
+# lvi-lint-tidy -- `tidy` backend for lvi-lint (html/xhtml).
+#
+# Contract (see lvi-lint): buffer on stdin, real filename as $1, emit
+# `FILE:LINE:COL: S: msg`. HTML is not XML, so the xmlstarlet backend is no use
+# here: unclosed tags are legal markup, and only a real HTML parser can tell
+# them from a mistake. HTML Tidy (HTACG tidy-html5) is the one such checker the
+# distros package; the W3C's Nu validator is the authority on conformance but
+# needs a JVM, so it belongs in an adapter of its own, not as the default.
+#
+# `-e` asks for diagnostics with no tidied markup, `-q` drops the banner and
+# the summary, and everything lands on STDERR (hence the 1>/dev/null). Fed
+# stdin, tidy has no filename to print -- `--gnu-emacs` prefixes one only for a
+# file argument -- so the shape is plain `line L column C - Sev: msg` and $1 is
+# supplied here. tidy's own `Error:`/`Warning:` become `E:`/`W:`; anything else
+# it labels (`Info:`, `Access:` under --accessibility-check) folds into `I:`.
+# Recovering from one mistake makes tidy report some diagnostics twice, so
+# identical entries are dropped -- n/N should not step the same spot twice.
+#
+# `~/.tidyrc`, `/etc/tidy.conf`, and $HTML_TIDY are still read, so a project's
+# doctype and tag settings apply -- but the two knobs that decide whether there
+# is any output at all are forced on the command line, where they win: this
+# machine's rc had `show-warnings: no` (silence, and a linter reporting clean
+# because of a config file is worse than no linter), and the `show-errors`
+# default of 6 truncates a bad file mid-list.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+command -v tidy >/dev/null 2>&1 || { echo "lvi-lint-tidy: tidy not found on PATH" >&2; exit 127; }
+tidy -q -e -utf8 --show-warnings yes --show-errors 1000 - 2>&1 1>/dev/null |
+  awk -v f="$1" '{
+    if (!match($0, /^line [0-9]+ column [0-9]+ - [A-Za-z]+: /)) next
+    split(substr($0, 1, RLENGTH), p, " ")          # line L column C - Sev:
+    sev = (p[6] == "Error:") ? "E" : (p[6] == "Warning:") ? "W" : "I"
+    e = f ":" p[2] ":" p[4] ": " sev ": " substr($0, RSTART + RLENGTH)
+    if (!seen[e]++) print e                        # tidy re-reports as it recovers
+  }'

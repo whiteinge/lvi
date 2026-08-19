@@ -292,8 +292,9 @@ map [c :bg lvi-list prev gitchanges<CR>
 " ---- linting ----------------------------------------------------------- {{{
 
 " lvi-lint runs a linter over the LIVE buffer (unsaved edits included) into a
-" `lint` list; the backend is picked by the file's extension (ruff / shellcheck
-" / deno lint ship -- see lvi-lint's header for the tiny adapter contract).
+" `lint` list; the backend is picked by the file's extension (ruff, shellcheck,
+" deno lint, jq, xmlstarlet and tidy ship -- see lvi-lint's header for the
+" adapter contract, which is a dozen lines).
 " Findings step like any list, and the status counter doubles as the pass/fail
 " glance: [0/0] after a run means clean.
 on write lvi-lint                      " re-lint on every save...
