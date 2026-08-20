@@ -1,0 +1,375 @@
+#!/bin/sh
+# lvi-hl-col [-w auto|WID] [toggle|on|off|scan|rule [on|off] RULE...|RULE...]
+# -- mark text past a column limit.
+#
+# vim's `colorcolumn` / `textwidth` warning, as a :hl overlay: while on, the
+# buffer re-scans as you type and whatever runs past the limit takes a styled
+# mark. Nothing is enforced and nothing is rewrapped -- the marks say "this line
+# is too long", and `gq` (fmtprg) is what fixes it. The pairing is the point: one
+# number per file type sets the reflow width AND the warning, so what you see
+# marked is what gq would have wrapped.
+#
+#   lvi-hl-col [toggle]     enable/disable the overlay (the default subcommand)
+#   lvi-hl-col 72           set the rule and turn on (the interactive one-shot)
+#   lvi-hl-col rule RULE... set the rule and leave visibility alone (the hook
+#                           target for a projection like lvi-ftype: the table
+#                           owns the number, your toggle owns whether it shows)
+#   lvi-hl-col rule on 72   ...and project visibility with it, for a file type
+#                           that should always be marked (a commit message).
+#                           Silent, unlike the hand-run on/off/toggle, since a
+#                           projection runs on every buffer entry
+#   lvi-hl-col scan         re-paint now (the other hook target; no-op when off)
+#   lvi-hl-col off
+#
+# RULES -- a rule is a space-separated list of items, each `[LINES:]COL[:GROUP]`:
+#   72                  mark past column 72 on every line
+#   1:50                ...on line 1 only
+#   3-$:72              ...on line 3 to the last
+#   *:72:overlong       ...on every line, naming the group explicitly
+#   1:50:subjectlong    ...on line 1, into group `subjectlong`
+# LINES is `*` (the default), a single number, or `A-B` with `$` for the last
+# line. COL is a column, GROUP a :hl group name defaulting to `overlong`. An item
+# that parses as none of the above is named in the status segment and skipped --
+# `col + 0` unchecked would turn `seventytwo` into column 0 and mark every line
+# whole, loud nonsense that never says why.
+#
+# LINE-SPECIFIC ITEMS COMPOSE; THE CATCH-ALL COVERS THE REST. Every item whose
+# LINES matches marks, so ONE LINE CAN CARRY TWO LIMITS -- which is what a git
+# commit subject wants, its 50 columns being convention and its 72 the point
+# where `git log`'s four-space indent stops fitting an 80-column terminal:
+#
+#     1:50:subjectlong 1:72:subjecterror
+#
+# An item with `*` applies only to the lines no line-specific item claimed, so a
+# catch-all is the "everything else" arm and never doubles up on a line that has
+# its own rule. Two consequences worth knowing: `1:50:subjectlong 72` marks the
+# subject at 50 and every OTHER line at 72 (line 1 is claimed, so the catch-all
+# skips it), and `1:100000 72` exempts line 1 from the catch-all outright.
+#
+# TIERS DON'T OVERLAP: on a line carrying several limits, each mark stops where
+# the next one starts, so the two paint side by side (51-72 `subjectlong`, then
+# 73-end `subjecterror`). Overlapping them would leave :hl to break the tie per
+# cell by z-order, and equal-pri groups resolve arbitrarily there.
+#
+# GROUPS -- un-themed = invisible, so theme what your rules name:
+#   hi overlong     bg=52 pri=15
+#   hi subjectlong  bg=58 pri=15
+#   hi subjecterror bg=red fg=black pri=15
+# The pri= is against OTHER painters: syntax tokens and list marks repaint on the
+# same change settle and one group wins each cell outright (no merging), so an
+# un-pri'd group ties at 0 and the marks would appear, then lose their cells a
+# beat later when the slower painter lands. Between these groups it does not
+# matter -- their marks never share a cell.
+#
+# TOGGLE OWNS THE HOOKS, NOT THE RC: `:on` hooks compose by appending and a bare
+# `:on change` clears EVERYONE's, so a toggle cannot uninstall just its own.
+# Instead the first `on` installs `on change lvi-hl-col scan` (and its bufenter
+# twin, so the overlay follows a buffer switch) ONCE per view, and the hooks
+# stay; `scan` gates on the enabled flag and exits instantly while off. Do NOT
+# also add these hooks to your rc -- the toggle owns them. State lives beside the
+# socket, disposable with the view (the lvi-list pattern):
+#   $LVI_SOCK.hlcol          the enabled flag
+#   $LVI_SOCK.hlcol.rule     the rule in force
+#   $LVI_SOCK.hlcol.painted  the groups the last paint used (see TOTAL, below)
+#   $LVI_SOCK.hlcol.hooked   the once-per-view hook marker
+#
+# Bindings (rc) -- under the \h highlight menu, beside the other :hl producers:
+#     map \ho :bg lvi-hl-col<CR>              " toggle the marks (o = overlong)
+#     hi overlong    bg=52 pri=15             " un-themed = invisible
+#     hi subjectlong bg=red fg=black pri=15   " the loud one (see lvi-ftype)
+# With lvi-ftype driving it there is nothing else to bind: its table pushes
+# `rule` on every buffer entry, so a commit buffer marks its subject at 50 and
+# its body at 72 while a Markdown file marks at 79 -- and an arm can say `on`, so
+# the file types where a limit is not optional need no key at all. Standalone,
+# set the rule by hand for the current buffer -- `:bg lvi-hl-col 72` -- or from
+# the rc for every buffer (`on bufenter lvi-hl-col rule 79`).
+#
+# WHY A RULE AND NOT AN OPTION: the limit is a property of what you are writing,
+# and the thing that already knows that is the file-type table. A core
+# `colorcolumn` option would have to be set from the same place anyway, and this
+# way the two-regime case (a commit's 50-column subject over its 72-column body)
+# is a rule instead of a feature.
+#
+# CHANGING THE RULE clears the groups the old rule named, and every paint is
+# total over the groups on screen (not just the ones its own rule names), so
+# switching from a commit buffer to a mail one cannot leave a stale
+# `subjectlong` mark behind -- see the worker for why one clear isn't enough.
+# `rule` with no argument is the off switch for a projection: it clears and marks
+# nothing (what lvi-ftype's default arm sends for a file type with no limit).
+# `rule off` goes further and takes the overlay down, which is what a projection
+# sends for a file type whose marks are not wanted -- both are no-ops when the
+# overlay is already off, so neither costs a round-trip per :e.
+#
+# SPAWN DISCIPLINES: every subcommand self-backgrounds a --worker where it needs
+# the buffer (reading it needs lvi's event loop -- same reason as lvi-highlight),
+# so any binding is safe as `:bg`. Nothing here wants the tty.
+#
+# CAVEATS (v1): the limit counts CHARACTERS, taking each UTF-8 continuation byte
+# as no cell of its own -- right for accented Latin text, still wrong for a tab
+# (counted as one, not to the next tabstop) and for double-width CJK (counted as
+# one cell, not two). Extents are byte columns, as everywhere in :hl. A mark can
+# only cover bytes that exist, so this marks the overflow rather than drawing
+# vim's empty guide column at COL+1 on a short line -- that would need the
+# renderer, and the overflow is the half worth seeing. The overlay repaints on
+# keyboard edits and buffer switches; a socket-side edit (lvi-fmt, a filter)
+# shows on your next keystroke.
+#
+# Config: LVI (client, default `lvi`), LVI_HL_COL_DEFAULT (the rule a bare
+# `toggle`/`on` starts with when none is set, default 79), LVI_HL_COL_MAXBYTES
+# (skip buffers larger than this, default 262144), LVI_HL_COL_DEBUG (file to
+# capture worker stderr).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+MAXBYTES=${LVI_HL_COL_MAXBYTES:-262144}
+
+# Errors also land on the target's status line: stderr is discarded (:bg) under
+# every documented binding.
+die() {
+  echo "lvi-hl-col: $*" >&2
+  [ -n "${target:-}" ] && "$LVI" -w "$target" --detach -- "msge lvi-hl-col: $*" 2>/dev/null
+  exit 1
+}
+
+worker=; [ "$1" = "--worker" ] && { worker=1; shift; }
+want_wid=; [ "$1" = "-w" ] && { want_wid=${2:-}; shift 2; }
+target=${want_wid:-${LVI_WID:-auto}}
+wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+
+# `rule` and `scan` are the hook targets, and a hook must never banner: with no
+# view to project onto there is nothing to say, so they exit quiet where the
+# hand-run subcommands report. (lvi-ftype calls `rule` on every buffer entry.)
+quiet=$worker; case "${1:-}" in rule|scan) quiet=1 ;; esac
+noview() { [ -n "$quiet" ] && exit 0; die "$@"; }
+
+# The socket path anchors our state files; resolve it the way lvi-list does.
+if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then
+  sock=$LVI_SOCK                      # inside lvi: trust the exported socket
+elif [ "$target" = auto ]; then
+  n=$("$LVI" -l | grep -c .)
+  [ "$n" = 1 ] || noview "-w auto needs exactly one running view ($n found)"
+  sock=$("$LVI" -l | cut -f2)
+else
+  sock=$("$LVI" -l | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')
+  [ -n "$sock" ] || noview "no running view '$target'"
+fi
+flag="$sock.hlcol"
+rulef="$sock.hlcol.rule"
+paintf="$sock.hlcol.painted"
+hooked="$sock.hlcol.hooked"
+
+send() { "$LVI" -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
+
+# Every group a rule names, one per line -- what has to be cleared when the rule
+# changes or the overlay goes off. An item's group is its third field, or the
+# `overlong` default.
+groups_of() {
+  printf '%s\n' "$1" | tr ' ' '\n' \
+    | awk -F: 'NF { print (NF > 2 && $3 != "") ? $3 : "overlong" }' | sort -u
+}
+
+# ---- worker: the actual scan (runs with lvi's loop live) ---------------------
+if [ -n "$worker" ]; then
+  [ -f "$flag" ] || exit 0            # toggled off while we were queued
+  # An EMPTY rule is not an early exit: it is "mark nothing", and the paint below
+  # is what unmarks (a projection clearing the limit for a file type with none).
+  rule=$(cat "$rulef" 2>/dev/null)
+  text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
+  nbytes=$(printf '%s' "$text" | wc -c)
+  if [ "$nbytes" -gt "$MAXBYTES" ]; then
+    echo "lvi-hl-col: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_HL_COL_MAXBYTES)" >&2
+    send "status hlcol [lvi-hl-col off: over ${MAXBYTES}B cap]"
+    exit 0
+  fi
+
+  # One `hl` command per group the rule names (an empty spec list = clear, so a
+  # line that came back under its limit un-marks in the same round-trip).
+  set --
+  while IFS= read -r cmd; do [ -n "$cmd" ] && set -- "$@" "$cmd"; done <<EOF
+$(printf '%s\n' "$text" | LC_ALL=C awk -v RULE="$rule" '
+    # Byte column where line s first exceeds col cells, or 0 if it fits. A UTF-8
+    # continuation byte takes no cell of its own, so the count is characters
+    # while the returned column stays bytes (what :hl speaks).
+    function over(s, col,   i, n, w) {
+      n = length(s); w = 0
+      for (i = 1; i <= n; i++) {
+        if (substr(s, i, 1) !~ CONT) w++
+        if (w > col) return i
+      }
+      return 0
+    }
+    # The items covering line ln, into T[1..k] ascending by column: the TIERS on
+    # this line. `spec` picks the pass -- line-specific items, or the catch-alls.
+    function tiers(ln, spec,   i, j, k) {
+      k = 0
+      for (i = 1; i <= nr; i++) {
+        if (!OK[i] || SPEC[i] != spec) continue
+        if (ln < LO[i] || (HI[i] != -1 && ln > HI[i])) continue
+        for (j = k; j >= 1 && COL[T[j]] > COL[i]; j--) T[j + 1] = T[j]
+        T[j + 1] = i; k++
+      }
+      return k
+    }
+    BEGIN {
+      CONT = sprintf("[%c-%c]", 128, 191)
+      Q = sprintf("%c", 39)             # a quote to name a bad item with: this
+      nr = split(RULE, item, " ")       # program is itself inside shell quotes
+      for (i = 1; i <= nr; i++) {
+        n = split(item[i], f, ":")
+        if (n == 1)      { lines = "*";  col = f[1]; grp = "" }
+        else if (n == 2) { lines = f[1]; col = f[2]; grp = "" }
+        else if (n == 3) { lines = f[1]; col = f[2]; grp = f[3] }
+        else             { bad = bad " " Q item[i] Q; continue }
+        if (grp == "") grp = "overlong"
+        # A rule is config, and config with a typo in it must SAY so: an
+        # unchecked `col + 0` turns `seventytwo` into column 0, which marks every
+        # line whole -- loud nonsense the status segment would never explain.
+        if (col !~ /^[0-9]+$/ || col + 0 < 1 || grp !~ /^[A-Za-z0-9_-]+$/ ||
+            lines !~ /^(\*|[0-9]+|[0-9]+-([0-9]+|\$))$/) {
+          bad = bad " " Q item[i] Q; continue
+        }
+        if (lines == "*")                    { lo = 1;         hi = -1 }
+        else if (split(lines, r, "-") == 2)  { lo = r[1] + 0;  hi = (r[2] == "$") ? -1 : r[2] + 0 }
+        else                                 { lo = lines + 0; hi = lo }
+        OK[i] = 1; SPEC[i] = (lines == "*") ? 0 : 1
+        LO[i] = lo; HI[i] = hi; COL[i] = col + 0; GRP[i] = grp
+        if (!(grp in seen)) { seen[grp] = 1; order[++ng] = grp }
+      }
+    }
+    {
+      # Line-specific items COMPOSE -- every one of them marks -- and the
+      # catch-all covers only the lines none of them claimed. So a commit
+      # subject can carry two limits while the body carries the plain one, and
+      # `1:100000` still exempts a line from the catch-all entirely.
+      k = tiers(NR, 1)
+      if (k == 0) k = tiers(NR, 0)
+      for (j = 1; j <= k; j++) {
+        i = T[j]
+        s = over($0, COL[i])
+        if (!s) continue
+        # A tier stops where the next one starts, so two limits on one line paint
+        # side by side. Overlapping them instead would leave :hl to break the tie
+        # per cell by z-order, and a tie there resolves arbitrarily.
+        e = length($0)
+        if (j < k) { nx = over($0, COL[T[j + 1]]); if (nx && nx - 1 < e) e = nx - 1 }
+        if (e >= s) mark[GRP[i]] = mark[GRP[i]] sprintf(" %d:%d-%d", NR, s, e)
+      }
+    }
+    # One owner for the status segment: it clears on a clean rule and carries the
+    # complaint otherwise, in the same round-trip as the paint.
+    END {
+      for (i = 1; i <= ng; i++) printf "hl %s%s\n", order[i], mark[order[i]]
+      printf "status hlcol%s\n", (bad == "") ? "" : " [lvi-hl-col: bad rule item" ((bad ~ / .* /) ? "s" : "") bad "]"
+    }')
+EOF
+  # EVERY PAINT IS TOTAL, over the groups on screen rather than the ones this
+  # rule names: a group the LAST paint used and this rule doesn't gets an empty
+  # spec (= clear). Without that, two scans in flight on the same buffer switch
+  # -- lvi-ftype's projection (`rule`, which repaints) and the bufenter hook the
+  # toggle installed -- leave whatever the loser painted, and a commit buffer's
+  # `subjectlong` marks follow you into the next file. Being total means the
+  # screen is consistent whichever one lands last, with no ordering assumption.
+  cur=$(groups_of "$rule")
+  for g in $(cat "$paintf" 2>/dev/null); do
+    printf '%s\n' "$cur" | grep -qx -- "$g" || set -- "$@" "hl $g"
+  done
+
+  # ...and the newest rule is the one that should win: a scan holding a rule that
+  # has since been replaced is stale, and dropping it leaves the newer scan's
+  # paint (or the repaint that follows the replacement) as the final state.
+  [ -f "$flag" ] || exit 0
+  [ "$rule" = "$(cat "$rulef" 2>/dev/null)" ] || exit 0
+
+  # One round-trip: the paint, the group clears, and the status segment (which
+  # awk emitted, clearing any earlier over-cap or bad-rule notice).
+  "$LVI" -w "$target" -- "$@"
+  printf '%s\n' $cur > "$paintf"
+  exit 0
+fi
+
+# ---- subcommands -------------------------------------------------------------
+hlcol_scan() {
+  [ -f "$flag" ] || exit 0                  # the gate that makes the hooks no-ops
+  ( "$0" --worker $wflag >"${LVI_HL_COL_DEBUG:-/dev/null}" 2>&1 & )
+}
+
+# Install the rule. Only the rule -- clearing the old rule's groups from HERE
+# looks right and isn't: the clear goes out detached, so it can arrive after the
+# newer scan's paint and wipe marks that belong on screen (which is how a commit
+# body's marks went missing while the subject's survived). Every screen change
+# goes through the worker's one total paint instead, empty rule included.
+#
+# An EMPTY rule leaves a ZERO-byte file, not a bare newline: `on` falls back to
+# LVI_HL_COL_DEFAULT on an empty rule file and tests its SIZE, so a "\n" reads as
+# a rule in force -- and after one buffer whose file type has no limit, \ho would
+# be a dead key that turns the overlay on with a blank number.
+rule_set() {
+  [ "$(cat "$rulef" 2>/dev/null)" = "$1" ] && return 0
+  if [ -n "$1" ]; then printf '%s\n' "$1" > "$rulef"; else : > "$rulef"; fi
+  return 0
+}
+
+# The `rule` subcommand: install the number, and optionally project VISIBILITY
+# with it -- a leading on/off, which is how a file type turns the marks on by
+# itself (lvi-ftype's table) without a key. Silent either way: this runs on every
+# buffer entry, so the `msg` the hand-run toggle prints would be a flash per :e.
+# Without the word, visibility is left alone and the toggle keeps deciding.
+hlcol_rule() {
+  want=$1
+  rule_set "$2"
+  case $want in
+    on)  [ -f "$flag" ] || { : > "$flag"; arm_hooks; } ;;
+    off) [ -f "$flag" ] || return 0          # already off: nothing to unpaint
+         rm -f "$flag"; hlcol_clear; return 0 ;;
+  esac
+  [ -f "$flag" ] && hlcol_scan
+  return 0
+}
+
+# The change/bufenter scans, installed once per view -- `scan` gates on the flag,
+# so they cost nothing while the overlay is off (see TOGGLE OWNS THE HOOKS).
+arm_hooks() {
+  [ -f "$hooked" ] && return 0
+  send 'on change lvi-hl-col scan' 'on bufenter lvi-hl-col scan'
+  : > "$hooked"
+}
+
+hlcol_on() {
+  : > "$flag"
+  [ -s "$rulef" ] || printf '%s\n' "${LVI_HL_COL_DEFAULT:-79}" > "$rulef"
+  arm_hooks
+  send "msg col $(cat "$rulef")"            # visible even before the theme is
+  hlcol_scan
+}
+
+# Unpaint: the groups the last paint used, and the current rule's in case a scan
+# is still in flight behind us.
+hlcol_clear() {
+  set --
+  for g in $( { groups_of "$(cat "$rulef" 2>/dev/null)"; cat "$paintf" 2>/dev/null; } | sort -u )
+  do set -- "$@" "hl $g"; done
+  rm -f "$paintf"
+  send "$@" 'status hlcol'
+}
+
+hlcol_off() {
+  rm -f "$flag"                             # first: gates any in-flight scan
+  hlcol_clear
+  send 'msg col off'
+}
+
+case "${1:-toggle}" in
+  toggle) if [ -f "$flag" ]; then hlcol_off; else hlcol_on; fi ;;
+  on)     hlcol_on ;;
+  off)    hlcol_off ;;
+  scan)   hlcol_scan ;;
+  rule)   shift
+          # `rule [on|off] RULE` -- the optional word projects visibility too.
+          # No rule item can look like it (they open with a digit or `*`), so the
+          # older `rule RULE` spelling stays unambiguous.
+          case ${1:-} in on|off) want=$1; shift ;; *) want= ;; esac
+          hlcol_rule "$want" "$*" ;;
+  [0-9]*|\*:*) rule_set "$*"; hlcol_on ;;   # a bare rule: set it and turn on
+  *)      die "unknown subcommand '$1' (toggle|on|off|scan|rule [on|off] RULE|RULE)" ;;
+esac

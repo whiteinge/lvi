@@ -28,6 +28,7 @@
 "       \g  git      \gg changes   \gs staged   \gp stage-hunks (git add -p)
 "       \l  lists     \ll switch    \lg goto   \lc current   \lh hide   \lp preview
 "       \h  highlight \hh refresh   \ht toggle   \hm mark word   \hc clear marks
+"                     \ho column-limit marks (lvi-hl-col)
 "       \y  yankring  \yy pick      \yp older  \yn newer
 "       \i  invis     \ii toggle    \ip page (exact bytes in less)
 "       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
@@ -350,17 +351,36 @@ map \= :bg lvi-fmt<CR>
 "
 " That is CODE formatting. For PROSE, gq reflows a motion/text object through the
 " `fmtprg` option (default fmt(1)); gqip reflows a paragraph, gqq the line. fmtprg
-" seeds from $LVI_FMT but is live, so re-set it per file type -- 72 for an email,
-" 80 for Markdown -- from a key or a hook. It takes the rest of the line, so keep
-" it on its own :set. A \q menu (q for gq) makes the width switch a two-key press:
-"   set fmtprg=fmt -w 72                " a startup default width
-"   map \qe :set fmtprg=fmt -w 72<CR>   " switch to email width on demand
-"   map \qm :set fmtprg=fmt -w 80<CR>   " ...or Markdown width
+" seeds from $LVI_FMT but is live, so it can be re-set per file type -- 72 for an
+" email, 79 for a draft. It takes the rest of the line, so keep it on its own
+" :set.
 "
 " fmt(1) drops a list's hanging indent. lvi-reflow is a drop-in fmtprg that keeps
 " each item's marker and hangs the wrapped lines under its text (ordered, roman,
 " letter, and bullet markers; nested lists nest). Then gqip/gqq reflow lists too:
 "   set fmtprg=lvi-reflow -w 79
+"
+" WIDTHS live in lvi-ftype's table (below), not in a map per width: a commit
+" message, a rebase todo and an MUA's compose file are known by name, so each
+" opens at its own width with nothing pressed. For the buffer whose name can't
+" say it -- a draft going into an email -- name the type from the ex line:
+"   :bg lvi-ftype mail                  " 72 columns, this buffer
+"   :bg lvi-ftype prose                 " ...back to a 79-column draft
+"
+" lvi-hl-col is the other half: it marks what runs PAST the limit, so the number
+" you reflow at is the number you can see. It lives in the \h highlight menu with
+" the other :hl producers (\ho, o for the `overlong` group). The table pushes the
+" limit per file type and can show the marks by itself -- `mark=on`, which the
+" commit and mail arms set, since going over is a mistake there rather than a
+" preference. A commit SUBJECT carries two limits at once (50 by convention, 72
+" where git log starts eliding it) and each tier gets its own group; the body
+" carries none, since nothing truncates it and gq wraps it when you ask.
+" Un-themed = invisible, so theme the groups; pri= lifts them above a syntax
+" theme repainting the same cells.
+map \ho :bg lvi-hl-col<CR>              " toggle the column-limit marks
+hi overlong     bg=52 pri=15            " over a hard limit (a mail body at 72)
+hi subjectlong  bg=58 pri=15            " a commit subject past 50: convention
+hi subjecterror bg=red fg=black pri=15  " ...past 72, where git log elides it
 
 " }}}
 " ---- filetype settings (vim's ftplugin) -------------------------------- {{{
@@ -378,6 +398,9 @@ map \= :bg lvi-fmt<CR>
 " Options are view-global, not per-buffer, so the table is re-applied on every
 " switch and a manual :set lasts only until you switch away. Use one such hook,
 " not several: two would race.
+" It also classifies the files another program hands you -- a commit message, a
+" rebase todo, a mail compose file -- and takes a filetype word as an argument
+" (`:bg lvi-ftype mail`) for the buffer whose name can't say what it is.
 on bufenter lvi-ftype
 
 " }}}

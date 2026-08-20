@@ -365,6 +365,38 @@ groups or nothing shows — with a `pri=` above your syntax theme, or the
 slower repaint takes the cells; the `lvi-invis` header has the bindings and
 the byte-column caveats.
 
+### `lvi-hl-col` — mark what runs past a column limit
+
+Vim's `colorcolumn`, as an overlay. While on, whatever runs past the limit takes
+a styled mark, re-scanned as you type. It enforces nothing: the marks say a line
+is too long and `gq` is what fixes it, which is why a file type's limit and its
+reflow width come from the same table row.
+
+A rule is a list of `[LINES:]COL[:GROUP]` items. Line-specific items *compose*
+and a `*` catch-all covers the lines none of them claimed, so **one line can
+carry two limits**. That is what a git commit subject wants:
+`1:50:subjectlong 1:72:subjecterror` marks it amber past the 50 columns git's
+docs ask for, red past the 72 where `git log`'s four-space indent stops fitting
+an 80-column terminal and forges begin eliding. Each tier stops where the next
+begins, so the two paint side by side instead of stacking and leaving `:hl`'s
+z-order to break the tie. Vim can't say this: `colorcolumn` takes a list of
+columns and paints all of them with one highlight group.
+
+The shipped commit arm marks that subject and nothing else. A commit *body* has
+no hard limit — nothing truncates it, the 72 is convention — so marking every
+line you hadn't reflowed yet was noise, and `gq` at 72 is still what wraps it. An
+item that doesn't parse is named in the status segment and skipped, since an
+unchecked column reads a typo as column 0 and marks every line whole.
+
+Set the rule by hand (`:bg lvi-hl-col 72`) or let `lvi-ftype` push it per file
+type, where an arm can also ask for the marks to show on entry (`mark=on`, which
+commit and mail set: going over is a mistake there, not a preference).
+Everywhere else the table sets only the number and `\ho` decides whether it
+shows. Theme the groups or nothing appears, with `pri=` above your syntax theme.
+A mark can only cover bytes that exist, so this marks the overflow instead of
+drawing an empty guide column on a short line — that half would need the
+renderer, and the overflow is the half you act on.
+
 ### `lvi-fmt` — format the buffer, minimally
 
 `:%!ruff format -` works today — the ex filter is one splice, one undo — but it
@@ -802,6 +834,21 @@ One optional line hands the file to `lvi-detect-indent` (below), whose reading
 of the actual indentation overrides the table's `et`/`sw` — so a 2-space file
 isn't edited at your 4-space default. Content beats name; comment the line out
 to key indent off the name alone.
+
+For prose the width you write to is a property of where the text is going, and
+names give most of it away: `git commit` hands the editor `COMMIT_EDITMSG`, a
+rebase hands it `git-rebase-todo` (where `gq` must not touch a thing — `cat` is
+the identity `fmtprg` that makes it a no-op), and an MUA hands it a compose file,
+so each arrives at its own width with nothing to press. What a name can't say is
+that the `notes.txt` you're drafting in is bound for an email, so a filetype word
+as `$1` skips detection and projects by intent — `:bg lvi-ftype mail`, then `:bg
+lvi-ftype prose` to go back. Same table, two entry points, and no key for it:
+naming the type is the exception, not the routine. It holds until the next buffer
+switch re-projects from the name, the same rule as a manual `:set`.
+
+Each arm also carries a `col`, the column limit handed to `lvi-hl-col` (above) —
+one limit seen two ways, `gq` wrapping at it and the overlay marking what isn't
+wrapped — and `mark=on` where those marks should show without being asked for.
 
 ### `lvi-detect-indent` — infer indentation from content
 

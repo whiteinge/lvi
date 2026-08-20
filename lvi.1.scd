@@ -608,7 +608,9 @@ spaces and tabs included.
 		The filter *gq* reflows through: default *fmt*(1), seeded from *$LVI_FMT*
 		at startup but live-settable here, so *set fmtprg=fmt -w 72* rewraps at
 		72. Point it at *lvi-reflow*(_contrib_) to reflow lists, marker and
-		hanging indent kept.
+		hanging indent kept. There is no *textwidth* and no *colorcolumn*: to set
+		the width per file type see *lvi-ftype*(_contrib_), and to mark what runs
+		past it, *lvi-hl-col*(_contrib_).
 	*operatorfunc*=_command_ (*opfunc*)
 		The shell command *g@*_motion_ spawns over the span (empty by default,
 		so *g@* is a no-op until set). Run detached like *:bg*, with the span in
@@ -1091,6 +1093,20 @@ below, with the happy-path rc lines that turn it on:
 	map zg :bg lvi-spell add<CR>
 	```
 
+*lvi-hl-col* -- mark what runs past a column limit
+	vim's *colorcolumn*, as an overlay: whatever runs past the limit takes a styled
+	mark. Limits compose per line, each tier in its own group, so a commit subject
+	can be amber past 50 and red past 72, while the body carries no mark at all
+	(nothing truncates a commit body). *lvi-ftype* pushes the limit per file type,
+	and for the ones where going over is a mistake it turns the marks on too;
+	elsewhere *\\ho* decides. Theme the groups or nothing shows:
+
+	```
+	map \\ho :bg lvi-hl-col<CR>
+	hi subjectlong  bg=58 pri=15
+	hi subjecterror bg=red fg=black pri=15
+	```
+
 *lvi-fmt* -- format the buffer
 	Run the file's formatter over the live buffer and splice back only the changed
 	window (cursor stays put, one undo reverts, already-formatted is a no-op):
@@ -1235,11 +1251,14 @@ below, with the happy-path rc lines that turn it on:
 	```
 
 *lvi-ftype* -- per-filetype options
-	Set *sw*, *et*, *fmtprg* and the rest from the file's name on entry (vim's
-	ftplugin as two shell *case*s): Python at *sw=4* with *ruff format*, shell at
-	*sw=2* with *shfmt*. With *lvi-detect-indent* alongside it, the file's own
-	indentation overrides the name. It ships as a template; copy it, edit the
-	table, and aim the hook at your own copy:
+	Set *sw*, *et*, *fmtprg*, the *lvi-hl-col* limit and the rest from the file's
+	name on entry (vim's ftplugin as two shell *case*s): Python at *sw=4* with
+	*ruff format*, shell at *sw=2* with *shfmt*, a commit message at 72 columns
+	with its subject marked at 50. With *lvi-detect-indent* alongside it, the
+	file's own indentation overrides the name. A filetype word as an argument
+	skips detection, for the buffer whose name cannot say what it is (*:bg
+	lvi-ftype mail* on a draft bound for an email). It ships as a template; copy
+	it, edit the table, and aim the hook at your own copy:
 
 	```
 	on bufenter lvi-ftype

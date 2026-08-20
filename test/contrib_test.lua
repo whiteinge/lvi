@@ -34,6 +34,14 @@ local function read(p)
   return s
 end
 
+-- Presence, not contents: `read` cannot tell an empty flag file (lvi-hl-col's
+-- `on` marker is zero bytes) from a missing one.
+local function exists(p)
+  local f = io.open(p, "rb")
+  if not f then return false end
+  f:close(); return true
+end
+
 -- Run a shell line and return its combined output and exit ok. The env goes
 -- in as exports from a wrapper script -- a plain VAR=x prefix would bind only
 -- to the first command of a pipeline -- and the status comes from os.execute
@@ -534,6 +542,163 @@ describe("contrib", function()
       expect(log:find("\npos 2 1\n")).to.exist()
       expect(log:find("e %-%-")).to_not.exist()   -- absolute entry IS the buffer: no :e
       cleanup(d); cleanup(r)
+    end)
+
+    -- lvi-ftype's two entry points: the name (a commit message classifies on
+    -- its own) and an explicit word (a .txt draft told it is going into mail).
+    it("lvi-ftype reads a commit message by name and projects both regimes", function()
+      local d = stub({})
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/home/u/proj/.git/COMMIT_EDITMSG",
+            PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        "contrib/lvi-ftype")
+      local log = read(d .. "/log")
+      expect(log:find("set fmtprg=lvi%-reflow %-w 72")).to.exist()   -- body wraps at 72
+      -- ...and the same limit reaches the overlay, subject rule ahead of it.
+      expect(read(d .. "/sock.hlcol.rule")).to.equal("1:50:subjectlong 1:72:subjecterror\n")
+      -- A commit's marks are not optional: the arm's mark=on shows them on entry
+      -- rather than waiting for \ho.
+      expect(exists(d .. "/sock.hlcol")).to.be(true)
+      expect(log:find("on change lvi%-hl%-col scan")).to.exist()     -- hooks armed
+      cleanup(d)
+    end)
+
+    -- An arm with no `col` clears the limit; an arm with no `mark` says nothing
+    -- about visibility, so a \ho you pressed survives the switch (the marks
+    -- themselves go with the empty rule, through the scan's one total paint).
+    it("lvi-ftype clears the limit for a filetype with none, leaving \\ho alone", function()
+      local d = stub({ buffer = "package main\n" })
+      write(d .. "/sock.hlcol", "")                       -- you pressed \ho
+      write(d .. "/sock.hlcol.rule", "1:50:subjectlong 1:72:subjecterror\n")
+      write(d .. "/sock.hlcol.painted", "overlong\nsubjectlong\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/home/u/main.go",                 -- no col, no mark
+            PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        "contrib/lvi-ftype")
+      expect(exists(d .. "/sock.hlcol")).to.be(true)                 -- yours to hold
+      expect(read(d .. "/sock.hlcol.rule")).to.equal("")             -- limit cleared
+      expect(read(d .. "/log"):find("msg col")).to_not.exist()  -- silent, every :e
+      cleanup(d)
+    end)
+
+    it("lvi-ftype takes an explicit filetype word over the buffer's name", function()
+      local d = stub({})
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/home/u/notes.txt",              -- name says prose (79)
+            PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        "contrib/lvi-ftype mail")                        -- intent says mail (72)
+      expect(read(d .. "/log"):find("set fmtprg=lvi%-reflow %-w 72")).to.exist()
+      expect(read(d .. "/sock.hlcol.rule")).to.equal("72\n")
+      cleanup(d)
+    end)
+
+    -- The shipped commit rule: two limits on the subject, each tier stopping
+    -- where the next begins, and the body left alone (no catch-all item).
+    it("lvi-hl-col --worker tiers one line and leaves the rest unmarked", function()
+      local d = stub({ buffer =
+        "a subject line of thirty-nine characters\nx\na body line of exactly thirty-one\n" })
+      write(d .. "/sock.hlcol", "")                      -- overlay on
+      write(d .. "/sock.hlcol.rule", "1:20:subjectlong 1:30:subjecterror\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" },
+        "contrib/lvi-hl-col --worker")
+      local log = read(d .. "/log")
+      expect(log:find("\nhl subjectlong 1:21%-30\n")).to.exist()   -- clipped at the
+      expect(log:find("\nhl subjecterror 1:31%-40\n")).to.exist()  -- next tier
+      expect(log:find("3:")).to_not.exist()                       -- body: no rule
+      cleanup(d)
+    end)
+
+    -- A `*` item is the "everything else" arm: it must not double up on a line a
+    -- line-specific item already claimed.
+    it("lvi-hl-col --worker lets the catch-all cover only unclaimed lines", function()
+      local d = stub({ buffer = "a subject line of thirty-nine characters\n"
+        .. "x\na body line of exactly thirty-one\n" })
+      write(d .. "/sock.hlcol", "")
+      write(d .. "/sock.hlcol.rule", "1:20:subjectlong 30\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" },
+        "contrib/lvi-hl-col --worker")
+      local log = read(d .. "/log")
+      expect(log:find("\nhl subjectlong 1:21%-40\n")).to.exist()   -- to end of line
+      expect(log:find("\nhl overlong 3:31%-33\n")).to.exist()      -- the body only
+      expect(log:find("overlong 1:")).to_not.exist()               -- not line 1
+      cleanup(d)
+    end)
+
+    -- A typo must say so: an unchecked column reads `seventytwo` as 0 and marks
+    -- every line whole. The repeating-condition channel is the status segment.
+    it("lvi-hl-col --worker names a bad rule item instead of painting nonsense", function()
+      local d = stub({ buffer = "a line of exactly thirty-three ..\n" })
+      write(d .. "/sock.hlcol", "")
+      write(d .. "/sock.hlcol.rule", "seventytwo 30\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" },
+        "contrib/lvi-hl-col --worker")
+      local log = read(d .. "/log")
+      expect(log:find("status hlcol %[lvi%-hl%-col: bad rule item 'seventytwo'%]")).to.exist()
+      expect(log:find("\nhl overlong 1:31%-33\n")).to.exist()      -- the good item still works
+      expect(log:find("1:1%-33")).to_not.exist()                   -- and column 0 never happened
+      cleanup(d)
+    end)
+
+    -- A projection while the overlay is off installs the number and touches the
+    -- screen not at all -- the table owns the limit, the toggle owns visibility.
+    -- It must not clear from here either: that clear goes out detached and can
+    -- land after a newer scan's paint, wiping marks that belong on screen.
+    it("lvi-hl-col rule installs the number without painting while off", function()
+      local d = stub({ buffer = "short\n" })
+      write(d .. "/sock.hlcol.rule", "1:20:subjectlong 30\n")     -- no flag: off
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" },
+        "contrib/lvi-hl-col rule 72")
+      expect(read(d .. "/sock.hlcol.rule")).to.equal("72\n")
+      expect(read(d .. "/log")).to.equal("")
+      cleanup(d)
+    end)
+
+    -- An arm with no limit sends the empty rule, and `on`'s fallback to
+    -- LVI_HL_COL_DEFAULT keys off an EMPTY rule file -- so the empty rule has to
+    -- leave zero bytes behind. A bare newline reads as a rule in force, and \ho
+    -- then turns the overlay on with a blank number and marks nothing.
+    it("lvi-hl-col rule '' leaves an empty rule that `on` falls back from", function()
+      local d = stub({ buffer = "short\n" })
+      write(d .. "/sock.hlcol.rule", "79\n")
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+        LVI_HL_COL_DEFAULT = "79" }
+      run(env, "contrib/lvi-hl-col rule ''")
+      expect(read(d .. "/sock.hlcol.rule")).to.equal("")
+      run(env, "contrib/lvi-hl-col on")
+      expect(read(d .. "/sock.hlcol.rule")).to.equal("79\n")
+      expect(read(d .. "/log"):find("msg col 79\n")).to.exist()
+      cleanup(d)
+    end)
+
+    -- The clear on rule-change is not enough on its own: on a buffer switch two
+    -- scans are in flight (the projection's and the bufenter hook's), and one
+    -- can paint the old rule's groups AFTER that clear. So every paint is total
+    -- over the groups the last one used, whichever lands last.
+    it("lvi-hl-col --worker clears a group the previous paint used", function()
+      local d = stub({ buffer = "a line of exactly thirty-three ..\n" })
+      write(d .. "/sock.hlcol", "")
+      write(d .. "/sock.hlcol.rule", "30\n")
+      write(d .. "/sock.hlcol.painted", "overlong\nsubjectlong\n")   -- a commit buffer's
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" },
+        "contrib/lvi-hl-col --worker")
+      local log = read(d .. "/log")
+      expect(log:find("\nhl overlong 1:31%-33\n")).to.exist()
+      expect(log:find("\nhl subjectlong\n")).to.exist()              -- gone with the rule
+      expect(read(d .. "/sock.hlcol.painted")).to.equal("overlong\n")
+      cleanup(d)
+    end)
+
+    -- LVI_SOCK is cleared, not just unset: the script trusts an exported socket
+    -- over `lvi -l`, so a suite run from inside a live view (`:!make test`)
+    -- would resolve the REAL socket -- writing state beside it and testing the
+    -- resolved path instead of this one, while still passing.
+    it("lvi-hl-col rule is silent with no view to project onto (a hook must not banner)", function()
+      local d = stub({})                                 -- no `list`: no views
+      local out = run({ LVI = STUB, STUB_DIR = d, LVI_SOCK = "", LVI_HL_COL_DEFAULT = "79" },
+        "contrib/lvi-hl-col rule 72")
+      expect(out).to.equal("")
+      expect(read(d .. "/log")).to.equal("")
+      cleanup(d)
     end)
   end)
 end)

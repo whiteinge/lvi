@@ -21,12 +21,29 @@
 # feeding the same word, and `file`(1) or another detector would slot in beside
 # them. The CONFIGURE table is what you tweak.
 #
+# BY INTENT, NOT BY NAME: a filetype word as $1 skips CLASSIFY, so the same table
+# is reachable when the name cannot say what you are writing -- a scratch .txt
+# draft bound for an email wants the mail settings, and nothing about `notes.txt`
+# says so. Ask for it from the ex line, no key needed:
+#
+#     :bg lvi-ftype mail                        " 72 columns, this buffer
+#     :bg lvi-ftype prose                       " ...back to 79
+#
+# It lasts until the next buffer switch, when the hook re-projects from the name
+# (the same rule as a manual `:set`, below). The cases that DO have a name --
+# `git commit` (COMMIT_EDITMSG), a rebase todo, an MUA's compose file -- need no
+# key and no command at all: they classify and set their own width on entry, so
+# typing the word stays the exception it should be.
+#
 # Use ONE such hook, not several stacked. Options are view-global, not
 # per-buffer, so each rule is a TOTAL projection: it sets everything it cares
 # about and the `*)` arm resets the rest, re-applied on every switch so no buffer
 # inherits the last one's settings. Corollary: a manual `:set sw=2` lasts only
 # until the next switch, when the table re-projects over it. There is no
 # per-buffer "the user touched this" bit -- for a lasting change, edit the table.
+# A hook also runs DETACHED, so switching buffers faster than a projection takes
+# can land two of them out of order, leaving the previous file's settings; the
+# next switch corrects it.
 #
 # Optionally, lvi-detect-indent reads the file's actual indentation and overrides
 # the table's et/sw, so editing a 2-space file does not fight a 4-space default
@@ -43,6 +60,25 @@
 # gq default in $default_fmt, not with a bare `set fmtprg=...` in the rc, which
 # the hook would re-project away on the next buffer entry.
 #
+# `col` is the third column of the table, projected the same way: the column
+# limit for this filetype, handed to contrib/lvi-hl-col so what runs past it is
+# marked. Keep it in step with the arm's reflow width -- one limit, seen two
+# ways: `gq` wraps at it, the overlay marks what isn't wrapped. An arm with no
+# `col` clears the marks; with lvi-hl-col not installed the line is a silent
+# no-op.
+#
+# `mark` is the fourth, and the one column that is NOT a total projection:
+# whether the marks show is state you produce with \ho, and a hook cannot see
+# your keystrokes, so re-projecting it on every switch would only wipe the
+# toggle. `mark=on` shows the marks whenever you enter this file type, without a
+# key: where going over is a real mistake -- a commit subject a forge will elide,
+# a mail body someone else's client will re-wrap -- waiting to be asked is the
+# wrong default. `mark=off` takes the overlay down for a file type whose marks
+# you never want. An arm with NEITHER, the usual case, sets only the number: the
+# table owns the limit, \ho owns whether you see it. So `mark=on` is sticky the
+# way your own \ho is -- leaving a commit buffer leaves the overlay up, marking
+# the next arm's number (often none at all) until you press \ho.
+#
 # $LVI_FILE names the buffer and $LVI_WID the view -- both exported for every
 # hook. To test outside a hook, supply them yourself and watch the ok/error
 # replies a hook would discard:
@@ -55,11 +91,23 @@
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 fname=$LVI_FILE
-[ -n "$fname" ] || exit 0        # unnamed buffer: nothing to key off
 
 # --- CLASSIFY: name (then shebang) -> a filetype word. Add detectors here. -----
-ft=
-case "$fname" in
+# An explicit word as $1 (`lvi-ftype mail`) skips this stage: same table, asked
+# for by intent instead of derived from a name.
+ft=${1:-}
+[ -n "$ft" ] || [ -n "$fname" ] || exit 0   # unnamed, nothing asked: no-op
+
+# Files known by their whole NAME, not an extension: the ones an editor is
+# handed by another program. Matched on the basename so a directory called
+# mutt-something cannot claim the files under it.
+[ -n "$ft" ] || case "${fname##*/}" in
+  COMMIT_EDITMSG|MERGE_MSG|TAG_EDITMSG)  ft=commit ;;
+  git-rebase-todo)                       ft=gittodo ;;
+  *.eml|mutt-*|neomutt-*|aerc-*)         ft=mail ;;
+esac
+
+[ -n "$ft" ] || case "$fname" in
   *.py)                          ft=python ;;
   *.sh|*.bash|.bashrc|.profile)  ft=sh ;;
   *.go)                          ft=go ;;
@@ -83,13 +131,15 @@ esac
 
 # --- CONFIGURE: filetype word -> options. This is the part to edit. ------------
 # `opt` packs the space-free flags into one `set`; `fmt` (fmtprg), when set, gets
-# its own command. Keep the `*)` arm total -- it resets what the last buffer left.
-opt= fmt=
+# its own command; `col` is the column limit lvi-hl-col marks past, and `mark=on`
+# shows those marks on entry. Keep the `*)` arm total -- it resets what the last
+# buffer left.
+opt= fmt= col= mark=
 case "$ft" in
-  python) opt='sw=4 et'     fmt='ruff format -' ;;
+  python) opt='sw=4 et'     fmt='ruff format -' col=88 ;;   # ruff's own default
   sh)     opt='sw=2 et'     fmt='shfmt -i 2' ;;
   go)     opt='sw=8 noet'   fmt='gofmt' ;;
-  rust)   opt='sw=4 et'     fmt='rustfmt --emit stdout' ;;
+  rust)   opt='sw=4 et'     fmt='rustfmt --emit stdout' col=100 ;;
   json)   opt='sw=2 et'     fmt='jq .' ;;
   js)     opt='sw=2 et'     fmt='prettier --parser babel' ;;
   ts)     opt='sw=2 et'     fmt='prettier --parser typescript' ;;
@@ -99,8 +149,23 @@ case "$ft" in
   toml)   opt='sw=2 et' ;;
   lua)    opt='sw=2 et' ;;
   c)      opt='sw=4 et' ;;
-  prose)  opt='sw=4 et lbr' ;;
+  prose)  opt='sw=4 et lbr' fmt='lvi-reflow -w 79' col=79 ;;
   make)   opt='sw=8 noet' ;;
+  # A commit message is two regimes in one file, and only the SUBJECT has a hard
+  # one: 50 columns is the convention git's own docs ask for, 72 is where `git
+  # log`'s four-space indent stops fitting an 80-column terminal and forges begin
+  # eliding, so the subject carries both tiers. The body is convention only --
+  # nothing truncates it -- so it is left unmarked and `gq` (fmtprg, 72) is what
+  # wraps it when you ask. Marking every body line you had not reflowed yet was
+  # noise, not information.
+  commit)  opt='sw=2 et lbr' fmt='lvi-reflow -w 72' mark=on \
+           col='1:50:subjectlong 1:72:subjecterror' ;;
+  # A mail body at 72, the usenet/mail convention, leaving room for `> ` quoting
+  # on the way back. lvi-reflow keeps a `> ` leader, so gq rewraps a reply.
+  mail)    opt='sw=4 et lbr' fmt='lvi-reflow -w 72' col=72 mark=on ;;
+  # A rebase todo is a command list, not prose: gq must not touch it, and `cat`
+  # is the identity fmtprg that makes it a no-op instead of a scramble.
+  gittodo) opt='sw=2 noet'   fmt='cat' ;;
   *)      opt='sw=8 noet' ;;
 esac
 
@@ -115,9 +180,25 @@ default_fmt='lvi-reflow -w 79'
 # sw/et while leaving flags like `lbr` intact. Skip filetypes where tabs are
 # mandatory no matter what the file currently holds (make recipes). Comment out
 # the line to disable, or drop lvi-detect-indent off your PATH.
-case "$ft" in make) ;; *) opt="$opt $(lvi-detect-indent "$fname" 2>/dev/null)" ;; esac
+case "$ft" in
+  make) ;;
+  *) [ -n "$fname" ] && opt="$opt $(lvi-detect-indent "$fname" 2>/dev/null)" ;;
+esac
+
+# Optional: spell-check the filetypes that are prose (vim's `spell` in an
+# ftplugin). Off as shipped, because it needs lvi-spell AND a dictionary
+# installed -- without one, every commit would open with an error on the status
+# line -- and because it takes the toggle out of your hands on every switch.
+#case "$ft" in commit|mail|prose) lvi-spell on ;; *) lvi-spell off ;; esac
 
 # --- plumbing (leave alone) ----------------------------------------------------
+# The column limit goes to lvi-hl-col as a total projection like the options: an
+# arm with no `col` sends the empty rule, which clears. `mark` rides along in the
+# same call -- one round-trip, and one scan rather than two -- but only when the
+# arm set it: the word is what projects visibility, and an arm that stays quiet
+# leaves your \ho alone (see `mark`, above).
+command -v lvi-hl-col >/dev/null 2>&1 && lvi-hl-col rule ${mark:+"$mark"} "$col"
+
 # fmtprg is always sent (an arm with no formatter falls back to $default_fmt), so
 # it is a total projection like the flags -- it never inherits the last buffer's.
 set -- "set $opt" "set fmtprg=${fmt:-$default_fmt}"
