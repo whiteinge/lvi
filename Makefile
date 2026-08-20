@@ -11,6 +11,7 @@ PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 LIBDIR  ?= $(PREFIX)/lib
 MANDIR  ?= $(PREFIX)/share/man
+DOCDIR  ?= $(PREFIX)/share/doc/lvi
 DESTDIR ?=
 
 LUAJIT  ?= luajit
@@ -20,8 +21,16 @@ INSTALL ?= install
 APPDIR  = $(LIBDIR)/lvi
 MODULES = buffer.lua bufs.lua client.lua config.lua disp.lua editor.lua \
           ex.lua normal.lua path.lua proto.lua render.lua sys.lua term.lua
-CONTRIB = contrib/lvi-highlight contrib/lvi-hl-pygments contrib/lvi-hl-bat \
-          contrib/lvi-hl-ansi contrib/lvi-search contrib/lvi-open
+# Contrib is globbed, not listed: a hand-written list went stale for 30-odd
+# scripts, and going missing is not a soft failure here -- the dispatchers
+# resolve their adapters and each other through $DIR, which is BINDIR once
+# installed, so a helper left behind breaks its caller rather than merely being
+# absent. lvirc-man is data ($DIR/lvirc-man, read by lvi-man) so it installs
+# beside the scripts but unexecutable; the sample rc and the shell functions are
+# read/sourced by the user, so they go to DOCDIR instead.
+CONTRIB      = $(filter-out %.md %.sh %.vim contrib/lvirc-man,$(wildcard contrib/lvi*))
+CONTRIB_DATA = contrib/lvirc-man
+CONTRIB_DOC  = contrib/lvirc.sample.vim contrib/lvi-shell.sh
 TESTS   = $(wildcard test/*_test.lua)
 
 .PHONY: all man test clean install uninstall
@@ -76,6 +85,10 @@ install: man
 	chmod 0755 $(DESTDIR)$(BINDIR)/lvi
 	# Contrib helpers on PATH (they find each other and the launcher there).
 	$(INSTALL) -m 0755 $(CONTRIB) $(DESTDIR)$(BINDIR)/
+	$(INSTALL) -m 0644 $(CONTRIB_DATA) $(DESTDIR)$(BINDIR)/
+	# Sample rc and shell functions, for the user to copy and source.
+	$(INSTALL) -d $(DESTDIR)$(DOCDIR)
+	$(INSTALL) -m 0644 $(CONTRIB_DOC) $(DESTDIR)$(DOCDIR)/
 	# Manpage.
 	$(INSTALL) -d $(DESTDIR)$(MANDIR)/man1
 	$(INSTALL) -m 0644 man1/lvi.1 $(DESTDIR)$(MANDIR)/man1/lvi.1
@@ -83,5 +96,6 @@ install: man
 uninstall:
 	rm -rf $(DESTDIR)$(APPDIR)
 	rm -f $(DESTDIR)$(BINDIR)/lvi
-	for f in $(CONTRIB); do rm -f $(DESTDIR)$(BINDIR)/$$(basename $$f); done
+	for f in $(CONTRIB) $(CONTRIB_DATA); do rm -f $(DESTDIR)$(BINDIR)/$$(basename $$f); done
+	rm -rf $(DESTDIR)$(DOCDIR)
 	rm -f $(DESTDIR)$(MANDIR)/man1/lvi.1
