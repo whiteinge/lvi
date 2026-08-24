@@ -1171,8 +1171,9 @@ local motions = {
 motions[13] = motions[b("+")]   -- <CR> is a synonym for +
 
 -- The jumplist: a per-buffer rolling record of positions a "jump-class" motion
--- (G, %, marks, {}, (), [[ ]], H/M/L -- the entries flagged jump=true) left
--- FROM, so Ctrl-O/Ctrl-I can walk back and forth. Mirrors vim's setpcmark:
+-- (G, gg, %, marks, {}, (), [[ ]], H/M/L -- the entries flagged jump=true, plus
+-- gg, flagged at its call site in command() because it hangs off the g suffix)
+-- left FROM, so Ctrl-O/Ctrl-I can walk back and forth. Mirrors vim's setpcmark:
 -- jumps are per-buffer (swapped by bufs alongside marks), the store is
 -- ed.jumps = { list = {line,col}..., idx }, and idx is a 1-based cursor into
 -- list where idx == #list+1 means "at the live edge, not navigating". Only bare
@@ -2180,7 +2181,12 @@ local function command(ed)
     elseif k2 == b(";") then change_nav(ed, count1 or 1, true)   -- g;: older change
     elseif k2 == b(",") then change_nav(ed, count1 or 1, false)  -- g,: newer change
     else
-      do_motion(ed, { kind = "line", move = function(e, c) return g_motion_move(e, k2, c) end }, count1)
+      -- gg is jump-class (vim's nv_goto sets the pcmark for G and gg alike); gj/gk
+      -- are not. The flag cannot live on the motions-table `g` entry because it
+      -- depends on the suffix, and that entry only ever serves the operator path
+      -- (dgg), which pushes nothing -- so it belongs here, where k2 is known.
+      do_motion(ed, { kind = "line", jump = (k2 == b("g")),
+                      move = function(e, c) return g_motion_move(e, k2, c) end }, count1)
       if k2 == b("j") or k2 == b("k") then colmode = "keep" end
     end
   elseif motions[k] then

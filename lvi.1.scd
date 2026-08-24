@@ -119,9 +119,10 @@ leading count, e.g. *3dw*.
 *Ctrl-O* *Ctrl-I*
 	Go to an older / newer position in the jumplist -- a per-buffer rolling
 	record of where each _jump-class_ motion left from. A jump is any motion
-	that can move far: *G*, *%*, the mark jumps (*`* *'*), paragraph/section
-	(*{* *}* *[[* *]]*), sentence (*(* *)*), and the screen positions (*H* *M*
-	*L*). Plain moves (*h j k l*, *w*, *f*) are not jumps. *Ctrl-I* is *Tab*.
+	that can move far: *G* and *gg*, *%*, the mark jumps (*`* *'*),
+	paragraph/section (*{* *}* *[[* *]]*), sentence (*(* *)*), and the screen
+	positions (*H* *M* *L*). Plain moves (*h j k l*, *w*, *f*) are not jumps,
+	and neither are the display-row steps *gj*/*gk*. *Ctrl-I* is *Tab*.
 	*:jumps* shows it.
 
 *g;* *g,*

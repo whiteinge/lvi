@@ -1905,6 +1905,16 @@ describe("normal-mode interpreter", function()
       feed(ed, CO);    expect(ed.cy).to.equal(4)  -- empty jumplist: no move
       feed(ed, CI);    expect(ed.cy).to.equal(4)
     end)
+    it("gg is jump-class but gj/gk are not", function()
+      local ed = make("l1\nl2\nl3\nl4\nl5")
+      feed(ed, "4G");   expect(#ed.jumps.list).to.equal(1)   -- G pushed the line-1 origin
+      feed(ed, "gg");   expect(ed.cy).to.equal(1)
+      expect(#ed.jumps.list).to.equal(2)          -- gg pushed the line-4 origin too
+      expect(ed.marks["'"][1]).to.equal(4)        -- ...and set the previous context
+      feed(ed, CO);     expect(ed.cy).to.equal(4) -- so Ctrl-O comes back from gg
+      feed(ed, "gj");   expect(ed.cy).to.equal(5) -- display-row step, not a jump
+      expect(#ed.jumps.list).to.equal(2)          -- unchanged: gj pushed nothing
+    end)
     it("dedups by line so revisiting a line doesn't bloat the list", function()
       local ed = make("l1\nl2\nl3\nl4\nl5")
       feed(ed, "G");   feed(ed, "1G")             -- jump to 5, then back to 1
