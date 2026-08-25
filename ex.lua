@@ -1469,18 +1469,6 @@ def("fire", function(ed, c)
   return "", "ok"
 end)
 
--- Record a departure position the way a jump-class motion does: the jumplist,
--- plus BOTH spellings of the previous-context mark (` and ' index the one mark,
--- so vi's `` and '' both return here). Distinct tables, never a shared
--- reference -- the splice hook adjusts each entry in ed.marks once, and an alias
--- would double-shift it. normal.lua requires us, so the require is lazy: at load
--- time it would be a cycle.
-local function record_jump(ed, l, c)
-  require("normal").record_pos(ed.jumps, l, c)
-  ed.marks["`"] = { l, c }
-  ed.marks["'"] = { l, c }
-end
-
 -- :pos [LINE [COL [UNIT]]] [jump] -- query or set the cursor. Bare :pos reports
 -- line<TAB>col (a 1-based BYTE column, matching :marks and Vim's `" mark). With
 -- arguments it MOVES the cursor there: the byte-exact setter contrib/lvi-pos
@@ -1488,8 +1476,9 @@ end
 -- `l` steps by character and `|` by display column, so neither lands on a raw
 -- byte offset once a line has tabs or multibyte. LINE/COL are clamped into the
 -- buffer (a position that outlived an edit lands as near as it can, viminfo's
--- tolerance), and refresh's normal.clamp gives the resting column its final
--- char-aware snap.
+-- tolerance), then normal.clamp gives the resting column its final char-aware
+-- snap -- here rather than at refresh, so the jump test below can compare the
+-- position the cursor actually comes to rest at.
 --
 -- A trailing `jump` makes the move JUMP-CLASS: it records where you left, so
 -- Ctrl-O and `` bring you back. Without it :pos is silent like :top, which is
@@ -1541,12 +1530,17 @@ def("pos", function(ed, c)
     end
     cx = i
   end
-  cx = math.max(1, math.min(cx, math.max(1, #line)))
-  -- Only a move that lands somewhere else is a jump, matching do_motion: a
-  -- no-op :pos jump (a list re-jumping you to the entry you are on) must not
-  -- push a stray entry and cost you the one Ctrl-O would have gone to.
-  if isjump and (ed.cy ~= oy or cx ~= ox) then record_jump(ed, oy, ox) end
-  ed.cx = cx
+  ed.cx = math.max(1, math.min(cx, math.max(1, #line)))
+  -- The snap refresh would apply anyway, done now so the test below sees the
+  -- RESTING position: only a move that lands somewhere else is a jump, matching
+  -- do_motion, and a column the char-aware cap folds back onto the one we left
+  -- is not a move. A no-op :pos jump (a list re-jumping you to the entry you are
+  -- on) must not push a stray entry and cost you the one Ctrl-O would have gone
+  -- to. normal.lua requires us, so the require is lazy: at load time it would be
+  -- a cycle.
+  local normal = require("normal")
+  normal.clamp(ed)
+  if isjump and (ed.cy ~= oy or ed.cx ~= ox) then normal.record_jump(ed, oy, ox) end
   return "", "ok"
 end)
 

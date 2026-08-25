@@ -1197,6 +1197,20 @@ local function record_pos(j, l, c)
 end
 M.record_pos = record_pos
 
+-- Record a DEPARTURE the way every jump-class motion does: the jumplist, plus
+-- BOTH spellings of the previous-context mark. The `\`` and `'` keys index the
+-- ONE mark, so both must be set, and with distinct tables -- never a shared
+-- reference, since the splice hook adjusts each entry in ed.marks once and an
+-- alias would double-shift it. Exported because ex.lua's `:pos ... jump` is the
+-- second caller: one definition, so a third store or a policy change lands in
+-- one place instead of drifting between two.
+local function record_jump(ed, l, c)
+  record_pos(ed.jumps, l, c)
+  ed.marks["`"] = { l, c }
+  ed.marks["'"] = { l, c }
+end
+M.record_jump = record_jump
+
 -- Ctrl-O: step to an older position. On the first step from the live edge, the
 -- current position is recorded first (like vim), so Ctrl-I can bring you back.
 local function jump_back(ed)
@@ -1244,19 +1258,13 @@ local function do_motion(ed, m, count)
   ed.cy, ed.cx = tl, tc
   clamp(ed)
   -- Record the origin in the jumplist -- but only if a jump-class motion
-  -- actually moved us, so a no-op jump (mistyped [[, % off a bracket, missing
+  -- actually moved us (compared AFTER the clamp, so the test sees where the
+  -- cursor came to rest), so a no-op jump (mistyped [[, % off a bracket, missing
   -- mark) leaves no stray entry. Same event sets the previous-context mark
   -- (POSIX vi's ` / '), so `` and '' return to where the last jump left from --
   -- and a second `` toggles back, since this very motion (`{mark} is jump-class)
-  -- reads the old value before we overwrite it. The `\`` and `'` keys index the
-  -- ONE previous-context mark, so both must be set; distinct tables, never a
-  -- shared reference -- the splice hook adjusts each entry in ed.marks once, and
-  -- aliasing would double-shift it.
-  if m.jump and (ed.cy ~= oy or ed.cx ~= ox) then
-    record_pos(ed.jumps, oy, ox)
-    ed.marks["`"] = { oy, ox }
-    ed.marks["'"] = { oy, ox }
-  end
+  -- reads the old value before we overwrite it. See record_jump above.
+  if m.jump and (ed.cy ~= oy or ed.cx ~= ox) then record_jump(ed, oy, ox) end
 end
 
 -- Shift operators are always linewise, even over a charwise motion (>w shifts

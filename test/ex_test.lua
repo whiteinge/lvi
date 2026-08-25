@@ -809,6 +809,18 @@ describe("ex.dispatch", function()
       expect(#ed.jumps.list).to.equal(2)
       expect(ed.jumps.list[2][1]).to.equal(2)
     end)
+    -- The move that only LOOKS like one: a byte column inside (or past) the
+    -- line's last character folds back onto where the cursor already stood, so
+    -- the test has to run after the clamp -- as do_motion's does -- or a
+    -- restore-shaped no-op would cost you the entry Ctrl-O was going to.
+    it(":pos jump ignores a column the clamp folds back onto the cursor", function()
+      local ed = ed_with("ab\195\169")           -- "abe-acute": 4 bytes, 3 chars
+      ex.dispatch(ed, "pos 1 3")                 -- on the multibyte char's first byte
+      expect(ed.cx).to.equal(3)
+      ex.dispatch(ed, "pos 1 4 jump")            -- its continuation byte: clamped back to 3
+      expect(ed.cx).to.equal(3)
+      expect(#ed.jumps.list).to.equal(0)
+    end)
 
     -- :motion registers an external motion on a key; ex.motion_target is the
     -- filter call. The parse is what the contract is made of, so pin each form.
