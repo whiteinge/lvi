@@ -1361,13 +1361,17 @@ local function fold_create(ed, a, c)          -- a closed fold over lines a..c
   clamp(ed)
 end
 
+-- Declared here, defined once read_line exists: zf{motion} below is above that
+-- point and would otherwise call a nil global.
+local external_motion
+
 -- zf{motion}: fold the lines the motion spans (linewise, like an operator, so
 -- zf3j / zf} / zfG all work and an inner count multiplies the z-count).
 local function fold_create_motion(ed, count)
   local k = getkey(ed)
   local c2
   c2, k = read_count(ed, k)
-  local m = motions[k]
+  local m = motions[k] or external_motion(ed, k, combine(count, c2))
   if not m then return end
   fold_create(ed, ed.cy, (m.move(ed, combine(count, c2))))
 end
@@ -1435,48 +1439,38 @@ local function do_put(ed, after, reg)
   clamp(ed)
 end
 
--- The ':' command prompt as a reusable loop, so the ':' key and the '!' filter
--- operator (which seeds it with an address range) share one implementation.
--- `seed` pre-fills the line (cursor conceptually at its end). Returns true if a
--- command was submitted (Enter), false if cancelled -- the '!' operator uses
--- that to decide whether the edit counts as a change for '.'.
-local function run_prompt(ed, seed)
-  ed.mode = "command"; ed.cmdline = seed or ""
+-- The command-line LINE EDITOR, on its own: collect a line and return it, or
+-- nil if it was cancelled. Two callers, and the second is why it is factored out
+-- of run_prompt below -- a `:motion` key that prompts wants the line editing and
+-- none of the dispatch. `full` is the ':' line's extras: the command history
+-- (Ctrl-P/N) and the command-window handoff (Ctrl-F), neither of which a search
+-- pattern wants -- it is not an ex command, and it would only clutter both. The
+-- second return is the ex command to run on the way out (the handoff).
+--
+-- Keys arrive through getkey, so the funnel logs them: a pattern typed here is
+-- part of ed.last_change, which is what makes `.` replay `d/foo` -- it retypes
+-- the pattern into this same prompt.
+local function collect_line(ed, full)
   local hidx = #ed.cmdhist + 1
   local stash = nil
   while true do
     local k = getkey(ed)
-    if k == 13 or k == 10 then
-      local cmd = ed.cmdline
-      ed.mode = "normal"; ed.cmdline = ""
-      ex.record_history(ed, cmd)
-      local payload, status = ex.dispatch(ed, cmd)
-      if status == "err" then
-        ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
-      elseif payload and payload:find("\n", 1, true) and ed.suspend then
-        ed.suspend(payload)                     -- multi-line output -> the terminal
-      elseif payload and payload ~= "" then
-        ed.message = payload:gsub("\n", " ")
-      end
-      return true
-    elseif k == 27 or k == 3 then ed.mode = "normal"; ed.cmdline = ""; return false  -- Esc / Ctrl-C cancel
+    if k == 13 or k == 10 then return ed.cmdline
+    elseif k == 27 or k == 3 then return nil                    -- Esc / Ctrl-C cancel
     elseif k == 127 or k == 8 then
-      if #ed.cmdline == 0 then ed.mode = "normal"; return false end
+      if #ed.cmdline == 0 then return nil end
       -- Erase the whole trailing char (may be multibyte), like insert mode.
       ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
-    elseif k == 6 then                                 -- Ctrl-F: open the command window
+    elseif full and k == 6 then                                 -- Ctrl-F: the command window
       -- Carry any half-typed line in as the seed, then hand off. The window
       -- gives full-editor editing for anything too fiddly for a one-line prompt.
-      local carry = ed.cmdline
-      ed.mode = "normal"; ed.cmdline = ""
-      ex.dispatch(ed, carry == "" and "cmdwin" or ("cmdwin " .. carry))
-      return false
-    elseif k == 16 then                                -- Ctrl-P: older history
+      return nil, (ed.cmdline == "" and "cmdwin" or ("cmdwin " .. ed.cmdline))
+    elseif full and k == 16 then                                -- Ctrl-P: older history
       if hidx > 1 then
         if hidx == #ed.cmdhist + 1 then stash = ed.cmdline end
         hidx = hidx - 1; ed.cmdline = ed.cmdhist[hidx]
       end
-    elseif k == 14 then                                -- Ctrl-N: newer history
+    elseif full and k == 14 then                                -- Ctrl-N: newer history
       if hidx <= #ed.cmdhist then
         hidx = hidx + 1
         ed.cmdline = (hidx > #ed.cmdhist) and (stash or "") or ed.cmdhist[hidx]
@@ -1492,6 +1486,64 @@ local function run_prompt(ed, seed)
     -- typeable at the prompt, not only over the socket.
     elseif k == 9 or (k >= 32 and k ~= 127) then ed.cmdline = ed.cmdline .. string.char(k) end
   end
+end
+
+-- Run the command line under the prompt character `ch`, seeded with `seed`.
+-- Returns the submitted line or nil. Command mode is what render draws, so the
+-- state goes up before the first key and comes down before we return, whichever
+-- way we leave.
+local function read_line(ed, ch, seed, full)
+  ed.mode = "command"; ed.cmdline = seed or ""; ed.cmdchar = ch
+  local text, handoff = collect_line(ed, full)
+  ed.mode = "normal"; ed.cmdline = ""; ed.cmdchar = ":"
+  if handoff then ex.dispatch(ed, handoff) end
+  return text
+end
+
+-- The ':' prompt: read a line, then run it. Shared with the '!' filter operator,
+-- which seeds it with an address range. Returns true if a command was submitted,
+-- false if cancelled -- '!' uses that to decide whether the edit counts for '.'.
+local function run_prompt(ed, seed)
+  local cmd = read_line(ed, ":", seed, true)
+  if not cmd then return false end
+  ex.record_history(ed, cmd)
+  local payload, status = ex.dispatch(ed, cmd)
+  if status == "err" then
+    ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
+  elseif payload and payload:find("\n", 1, true) and ed.suspend then
+    ed.suspend(payload)                     -- multi-line output -> the terminal
+  elseif payload and payload ~= "" then
+    ed.message = payload:gsub("\n", " ")
+  end
+  return true
+end
+
+-- An external motion (`:motion KEY CMD`) resolved into the ordinary motion
+-- contract, so every consumer -- a bare press, an operator, zf, g~ -- takes it
+-- without knowing it came from outside. The filter runs HERE rather than inside
+-- `move`, because the caller reads m.kind to choose linewise from charwise and
+-- only the tool knows which this was. `move` then just hands back what it said,
+-- ignoring the count: the count went to the tool, which already applied it.
+--
+-- Jump-class, like every search in vi, so Ctrl-O and `` return from a match.
+external_motion = function(ed, key, count)
+  local spec = ed.motion_cmds[key]
+  if not spec then return nil end
+  local arg = ""
+  if spec.prompt then
+    arg = read_line(ed, string.char(key), "", false)
+    if not arg then return nil end                    -- cancelled at the prompt
+  end
+  local tl, tc, kind, inc = ex.motion_target(ed, spec.cmd, count or 1, arg)
+  if not tl then
+    if tc then ed.message = tc:gsub("\n", " "); ed.message_hl = "Error" end
+    return nil
+  end
+  -- A linewise target lands on the line's first non-blank, the way `+` and `-`
+  -- do; for an operator the column is moot, the whole lines go.
+  if kind == "line" then tc = first_nonblank(line(ed, tl)) end
+  return { kind = kind, inclusive = inc, jump = true,
+           move = function() return tl, tc, inc end }
 end
 
 local actions
@@ -2040,7 +2092,7 @@ local function read_gtarget(ed, opkey, total)
     if not sl then return nil end
     return sl, sc, tl, tc, kind or "char", true
   end
-  local m = motions[k]
+  local m = motions[k] or external_motion(ed, k, total)
   if not m then return nil end
   local tl, tc, inc = m.move(ed, total)
   if inc == nil then inc = m.inclusive end
@@ -2168,7 +2220,7 @@ local function command(ed)
     elseif k2 == k then -- dd / yy / cc
       op_lines(ed, op, ed.cy, ed.cy + (total or 1) - 1, reg)
     else
-      local m = motions[k2]
+      local m = motions[k2] or external_motion(ed, k2, total)
       if m then apply_operator(ed, op, m, total, reg) end
     end
   elseif k == b("!") then                      -- filter lines through a command (prompts)
@@ -2194,6 +2246,11 @@ local function command(ed)
     colmode = COLMODE[k]
   elseif actions[k] then
     actions[k](ed, count1, reg)
+  else
+    -- Last, so a builtin binding of the same key always wins: :motion fills
+    -- unclaimed keys (`/ ? n N *`), it does not override `w`.
+    local m = external_motion(ed, k, count1)
+    if m then do_motion(ed, m, count1) end
   end
   -- Sticky column: every command restates the desired column from where it left
   -- the cursor, EXCEPT the four that consume it (j/k/gj/gk) and `$`, which pins

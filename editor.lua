@@ -81,6 +81,8 @@ function M.new_ed()
     maps = {},                -- :map LHS -> RHS (byte strings)
     hooks = {},               -- :on event -> { cmd, ... }
     textobj_cmds = {},        -- :textobj KEY -> CMD (custom objects; see ex.textobj_range)
+    motion_cmds = {},         -- :motion KEY -> {cmd, prompt} (external motions; see ex.motion_target)
+    cmdchar = ":",            -- the character the command line prompts with (a :motion key borrows it)
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
     event_mark = false,       -- transient: the A-Z char while a markset/markjump hook fires (-> $LVI_MARK)
     event_name = false,       -- transient: the event name while a hook fires (-> $LVI_EVENT)

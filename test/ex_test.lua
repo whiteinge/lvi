@@ -810,6 +810,52 @@ describe("ex.dispatch", function()
       expect(ed.jumps.list[2][1]).to.equal(2)
     end)
 
+    -- :motion registers an external motion on a key; ex.motion_target is the
+    -- filter call. The parse is what the contract is made of, so pin each form.
+    it(":motion registers, validates, and unregisters a key", function()
+      local ed = ed_with("a")
+      expect(select(2, ex.dispatch(ed, "motion / prompt echo"))).to.equal("ok")
+      expect(ed.motion_cmds[("/"):byte()].cmd).to.equal("echo")
+      expect(ed.motion_cmds[("/"):byte()].prompt).to.equal(true)
+      ex.dispatch(ed, "motion * lvi-motion-search --word")
+      expect(ed.motion_cmds[("*"):byte()].cmd).to.equal("lvi-motion-search --word")
+      expect(ed.motion_cmds[("*"):byte()].prompt).to.equal(false)
+      ex.dispatch(ed, "motion *")                    -- bare KEY unregisters
+      expect(ed.motion_cmds[("*"):byte()]).to_not.exist()
+      expect(select(2, ex.dispatch(ed, "motion"))).to.equal("err")
+      expect(select(2, ex.dispatch(ed, "motion ab echo"))).to.equal("err")
+      expect(select(2, ex.dispatch(ed, "motion / prompt"))).to.equal("err")
+    end)
+
+    it("ex.motion_target reads each output form the contract allows", function()
+      local ed = ed_with("hello\nworld\nthird")
+      local l, c, kind, inc = ex.motion_target(ed, "sh -c 'echo char 2 3'", 1, "")
+      expect({ l, c, kind, inc }).to.equal({ 2, 3, "char", false })
+      l, c, kind, inc = ex.motion_target(ed, "sh -c 'echo char 2 3 incl'", 1, "")
+      expect({ l, c, kind, inc }).to.equal({ 2, 3, "char", true })
+      l, c, kind = ex.motion_target(ed, "sh -c 'echo line 3'", 1, "")
+      expect({ l, c, kind }).to.equal({ 3, 1, "line" })
+      -- no target, with and without something to say
+      local nl, msg = ex.motion_target(ed, "sh -c 'echo err nope'", 1, "")
+      expect(nl).to_not.exist(); expect(msg).to.equal("nope")
+      expect((ex.motion_target(ed, "true", 1, ""))).to_not.exist()
+      expect((ex.motion_target(ed, "sh -c 'echo garbage here'", 1, ""))).to_not.exist()
+    end)
+
+    -- The filter gets the buffer as it stands (unsaved edits included), the
+    -- count, the cursor, and the prompted argument -- in that order.
+    it("ex.motion_target hands the filter the buffer, count, cursor and argument", function()
+      local ed = ed_with("alpha\nbeta\n")
+      ed.cy, ed.cx = 2, 3
+      local probe = "sh -c 'printf \"err %s|%s|%s|%s\\n\" \"$1\" \"$2\" \"$3\" $(wc -l < \"$0\")'"
+      local _, msg = ex.motion_target(ed, probe, 7, "pat tern")
+      expect(msg).to.equal("7|2|3|2")   -- count, line, col, and the buffer's lines
+      -- the argument survives a shell metacharacter
+      local probe2 = "sh -c 'printf \"err [%s]\\n\" \"$4\"'"
+      local _, m2 = ex.motion_target(ed, probe2, 1, "a b; rm -rf $HOME")
+      expect(m2).to.equal("[a b; rm -rf $HOME]")
+    end)
+
     it(":top reports the viewport top line", function()
       local ed = ed_with("a\nb\nc\nd"); ed.top = 2
       expect((ex.dispatch(ed, "top"))).to.equal("2")

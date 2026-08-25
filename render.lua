@@ -188,7 +188,9 @@ function M.frame(ed)
   if ed.mode == "command" then
     -- Char-aware slice (a byte :sub could bisect a UTF-8 char at the edge) and
     -- a display-width cursor (a multibyte cmdline is wider in bytes than cells).
-    local pline = ":" .. ed.cmdline
+    -- The prompt CHARACTER is state, not a constant: a `:motion` key that
+    -- prompts borrows this line and shows its own key, so `/` looks like `/`.
+    local pline = ed.cmdchar .. ed.cmdline
     out[#out + 1] = disp.slice(pline, ts, 0, cols, nil)
     crow, ccol = rows, math.min(cols, 1 + disp.width(pline, ts))
   else

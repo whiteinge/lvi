@@ -272,6 +272,70 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- lvi-motion-search is a `:motion` filter, so it is a pure one: argv in, one
+    -- line out. Same tier as lvi-reflow, no editor and no socket involved.
+    local function msearch(dir, args, count, line, col, arg)
+      return (run({ LVI_SOCK = dir .. "/sock" },
+        ("contrib/lvi-motion-search %s '%s/buf' %d %d %d '%s'")
+          :format(args, dir, count, line, col, arg)))
+    end
+
+    it("lvi-motion-search finds the next match past the cursor, exclusive", function()
+      local d = stub({ buf = "aaa foo bar\nbaz foo\nlast foo here\n" })
+      expect(msearch(d, "", 1, 1, 1, "foo")).to.equal("char 1 5\n")
+      expect(msearch(d, "", 1, 1, 5, "foo")).to.equal("char 2 5\n")   -- never where you are
+      expect(msearch(d, "", 2, 1, 1, "foo")).to.equal("char 2 5\n")   -- 2/foo
+      expect(msearch(d, "-b", 1, 2, 5, "foo")).to.equal("char 1 5\n")
+      cleanup(d)
+    end)
+
+    -- A motion that stops dead at the end of the buffer is not the motion vi
+    -- has, so this one wraps -- vi's wrapscan, unlike lvi-search's list.
+    it("lvi-motion-search wraps, in both directions and over the count", function()
+      local d = stub({ buf = "one foo\ntwo foo\n" })
+      expect(msearch(d, "", 1, 2, 5, "foo")).to.equal("char 1 5\n")   -- past the last
+      expect(msearch(d, "-b", 1, 1, 5, "foo")).to.equal("char 2 5\n") -- before the first
+      expect(msearch(d, "", 5, 1, 1, "foo")).to.equal("char 1 5\n")   -- 5 of 2 matches
+      cleanup(d)
+    end)
+
+    it("lvi-motion-search reads the pattern as a BRE, and says why when it cannot", function()
+      local d = stub({ buf = "aaa foo(bar)\nxx a+b yy\nlook\n" })
+      expect(msearch(d, "", 1, 1, 1, "foo(")).to.equal("char 1 5\n")      -- literal paren
+      expect(msearch(d, "", 1, 1, 1, "a+b")).to.equal("char 2 4\n")       -- literal plus
+      expect(msearch(d, "", 1, 1, 1, [[\(o\)\1]])).to.equal("char 1 6\n") -- back-reference
+      expect(msearch(d, "", 1, 1, 1, "^look")).to.equal("char 3 1\n")     -- anchored
+      expect(msearch(d, "", 1, 1, 1, "zzz")).to.equal("err pattern not found\n")
+      expect(msearch(d, "", 1, 1, 1, [[a\{2]])).to.equal("err bad pattern: a\\{2\n")
+      cleanup(d)
+    end)
+
+    -- The last pattern is the tool's to keep: that is what makes `n` re-run the
+    -- matcher against the buffer as it is now rather than walk a snapshot.
+    it("lvi-motion-search remembers the pattern for --last, and --word takes it off the buffer", function()
+      local d = stub({ buf = "foo food\nfoo bar\n" })
+      expect(msearch(d, "", 1, 1, 1, "foo")).to.equal("char 1 5\n")   -- inside "food"
+      expect(msearch(d, "--last", 1, 1, 5, "")).to.equal("char 2 1\n")
+      expect(read(d .. "/sock.motion-search")).to.equal("\nfoo\n")
+      -- an empty argument reuses it too, the way a bare `/<CR>` does in vi
+      expect(msearch(d, "", 1, 1, 5, "")).to.equal("char 2 1\n")
+      -- --word: whole words only, and it stays a word search for the next --last
+      expect(msearch(d, "--word", 1, 1, 1, "")).to.equal("char 2 1\n") -- skips "food"
+      expect(read(d .. "/sock.motion-search")).to.equal("1\nfoo\n")
+      expect(msearch(d, "--last", 1, 2, 1, "")).to.equal("char 1 1\n") -- wraps, still whole-word
+      cleanup(d)
+    end)
+
+    it("lvi-motion-search skips a zero-width match and reports an empty store", function()
+      local d = stub({ buf = "ab\n" })
+      -- `z*` matches the empty string everywhere; a width-less match is nowhere
+      -- to land, so it is not a match here.
+      expect(msearch(d, "", 1, 1, 1, "z*")).to.equal("err pattern not found\n")
+      local e = stub({ buf = "ab\n" })          -- fresh: nothing kept yet
+      expect(msearch(e, "--last", 1, 1, 1, "")).to.equal("err no previous search\n")
+      cleanup(d); cleanup(e)
+    end)
+
     it("lvi-search --worker reports no-match via msge and clears the paint", function()
       local d = stub({ buffer = "haystack\n", path = "x.txt\n" })
       run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "x.txt" },

@@ -275,6 +275,41 @@ Lists are ephemeral and live beside the view's socket (auto-cleaned per
 view); use `lvi-list save`/`load` to persist a list to a location that
 isn't automatically cleaned. See the `lvi-list` header for all arguments.
 
+### `lvi-motion-search` — search as a *motion*
+
+A list is the wrong shape for `d/foo`. An operator needs its target before the
+command finishes, and a list arrives over the socket afterwards, so `lvi-search`
+can move you but can never be an operator's range. The `:motion` seam is the
+other half: a synchronous filter, run the way `:textobj` is run, that prints one
+target and exits.
+
+```
+motion / prompt lvi-motion-search       " /pattern
+motion ? prompt lvi-motion-search -b    " ?pattern
+motion n lvi-motion-search --last       " next / previous
+motion N lvi-motion-search --last -b
+motion * lvi-motion-search --word       " the word under the cursor
+motion # lvi-motion-search --word -b
+```
+
+Then `/` moves, `d/foo` deletes up to the match, `y?bar` yanks back to one, and
+every one of them is jump-class, so `Ctrl-O` and `` ` `` come back. The editor does
+the prompting — a filter is a child of an editor holding the terminal in raw
+mode, so a `read` of its own would take raw keystrokes with no echo — and the
+pattern is a POSIX BRE, matched by the same sed marker pass `lvi-search` uses.
+
+Two ways it differs from the list. It **wraps**, because a motion that stops dead
+at the end of the buffer is not the motion vi has. And the last pattern is the
+tool's to keep, in a file beside the socket, which is what makes `n` re-run the
+matcher against the buffer as it is *now* rather than walk a snapshot: nothing
+goes stale as you type. An empty pattern reuses the last one, like a bare
+`/<CR>`.
+
+The two searches coexist — `/` as a motion, `\ls` (or whatever key) as a list
+when you want to see all the hits at once — but not on the same key, and a `map`
+shadows a `motion`, so an rc that maps `/` to `lvi-search` has to drop that map
+first.
+
 ### `lvi-match` — sticky pattern marks (vim's `matchadd`)
 
 Search answers where the next occurrence is. A match answers where all of them

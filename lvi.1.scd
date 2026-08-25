@@ -556,8 +556,11 @@ spaces and tabs included.
 	(vi's line-wise order), each line positioned first and any open insert
 	auto-closed at its end. Keys that add or delete lines are the caller's
 	responsibility -- *:normal* is for per-line edits; use *:g*/*:d*/*:m* to
-	change the line count. Trailing spaces are stripped from _keys_, so prefix a
-	line via *:s* (*:%s/^/# /*) rather than *:normal I*. Over the socket, _keys_
+	change the line count. Trailing WHITESPACE is stripped from _keys_, so prefix a
+	line via *:s* (*:%s/^/# /*) rather than *:normal I* -- and a trailing carriage
+	return goes with it, so keys that end by submitting a prompt (*:normal
+	/pat*<CR>, driving a *motion* key) need something after the return, or the
+	prompt is left open and every later *:normal* waits behind it. Over the socket, _keys_
 	run immediately only when the interpreter is parked between commands; if
 	they arrive mid-command (an operator awaiting its motion, insert mode, a
 	prompt) they are held and replayed at the next command boundary, so a
@@ -710,6 +713,37 @@ spaces and tabs included.
 	charwise inclusive byte range, *line L1 L2* for whole lines, or nothing for
 	no object. *contrib/lvi-textobj-tag* implements HTML *it*/*at* this way,
 	teaching lvi no HTML; see *contrib/README.md*.
+
+*motion* _key_ [*prompt*] [_cmd_]
+	Register an external motion on the single character _key_, run by a filter the
+	same synchronous way *textobj* is. It then behaves like any other motion:
+	pressed alone it moves, and it is jump-class, so *Ctrl-O* and *``* come back;
+	after an operator it supplies the range, so *d*_key_ and *y*_key_ compose for
+	free. No _cmd_ unregisters it, and a builtin binding of the same key always
+	wins -- this fills unclaimed keys such as */ ? n N \**, never *w*.
+
+	*prompt* (the literal word, before _cmd_) makes the key read a line first,
+	using _key_ itself as the prompt character, which is what makes */* feel like
+	*/*. The editor prompts, not the tool: a filter is a child of an editor
+	holding the terminal in raw mode, so a read of its own would take raw
+	keystrokes with no echo. A key without *prompt* works from the cursor
+	(*contrib/lvi-motion-search --word* for *\**) and gets an empty argument.
+
+	It is invoked *cmd TMPFILE COUNT LINE COL ARG* (buffer text in a private temp
+	file, cursor 1-based in bytes, _ARG_ the prompted line or empty) and prints
+	one line:
+
+	- *char L C* -- a charwise target, byte column. Exclusive, like vi's search,
+	  so *d/*_pat_ stops before the match; a trailing *incl* makes it inclusive.
+	- *line L* -- a linewise target: whole lines, and the cursor lands on _L_'s
+	  first non-blank.
+	- *err TEXT* -- no target, with _TEXT_ on the message line (vi's "Pattern not
+	  found").
+	- Nothing at all -- no target and nothing to say, a silent no-op.
+
+	*contrib/lvi-motion-search* is search as a motion, in POSIX BREs; see
+	*contrib/README.md*. Note that a *map* on the same key shadows it, so an rc
+	that maps */* to a list producer has to drop that map first.
 
 *register* _name_ [*read* _cmd_] [*write* _cmd_]
 	Back the single-character register _name_ with shell commands: a yank or
@@ -897,9 +931,10 @@ column edits.
 vi names the range *before* the action, so what stands in for visual mode is
 describing a range without dragging a highlight across it. Most directly,
 a motion or text object already *is* one: *dip* takes the paragraph, *dt)* runs
-to the next *)*, *ci(* the brackets. A search is an address too -- *d/foo* deletes
-up to the next _foo_, and at the *:* prompt an address may be a pattern, so
-*:.,/END/d* deletes from here to the next line matching _END_.
+to the next *)*, *ci(* the brackets. A search is a range too: at the *:* prompt an
+address may be a pattern, so *:.,/END/d* deletes from here to the next line
+matching _END_, and wiring */* to a *motion* (*contrib/lvi-motion-search*) makes
+*d/foo* delete up to the next _foo_ the way vi's does.
 
 *Marks* are the tool for a range you assemble by moving around, and they best
 make up for not having a drawn selection. Drop one with *m*_a_, then travel
@@ -1066,6 +1101,22 @@ below, with the happy-path rc lines that turn it on:
 	does not wrap (*n* stops on the last match and says so, and *lvi-list
 	first*/*last* are the wrap done by hand), and *n* is always forward, so
 	after a *?* it is *N* that keeps going back.
+
+*lvi-motion-search* -- search as a motion
+	The other half of search: a *motion* filter, so */* moves and *d/foo* deletes
+	up to the match, jump-class and repeatable, where a list can only move you.
+	It wraps, and it keeps the last pattern itself, so *n* re-runs the match
+	against the buffer as it is now.
+
+	```
+	motion / prompt lvi-motion-search
+	motion ? prompt lvi-motion-search -b
+	motion n lvi-motion-search --last
+	motion N lvi-motion-search --last -b
+	motion * lvi-motion-search --word
+	```
+
+	A *map* on the same key shadows a *motion*, so pick one or the other for */*.
 
 *lvi-match* -- sticky pattern marks
 	Vim's *matchadd()*: keep a pattern painted while you read, rather than

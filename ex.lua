@@ -12,6 +12,7 @@ local bufs = require("bufs")
 local buffer = require("buffer")
 local disp = require("disp")   -- :pos converts a char/display column to a byte
 local vpath = require("path")   -- `path` the name is taken by locals below
+local sys = require("sys")      -- shq, to quote a prompted :motion argument
 
 local M = {}
 
@@ -567,6 +568,57 @@ function M.textobj_range(ed, cmd, around, key)
     if l1 then return tonumber(l1), 1, tonumber(l2), 1, "line" end
   end
   return nil                                          -- no object / malformed output
+end
+
+-- External motions (`:motion KEY CMD`). Same discipline as textobj_range above
+-- and for the same reasons: a SYNCHRONOUS filter, so an external motion composes
+-- with operators through the ordinary coroutine path -- `d/foo` deletes, `c/foo`
+-- can still enter insert mode -- instead of arriving over the socket after the
+-- command that wanted it has finished.
+--
+-- Contract. Invoked as:  CMD <tmpfile> <count> <line> <col> <arg>
+--   tmpfile   the current buffer's text (unsaved edits included), private temp
+--   count     the count typed before the key, or 1
+--   line col  the cursor, 1-based (line) and 1-based byte column
+--   arg       the prompted argument (a search pattern), "" for a key that does
+--             not prompt. $LVI_SOCK and $LVI_WID are in the environment (static
+--             per view) if the tool wants to keep state or call back; the rest of
+--             the $LVI_* set is refreshed only for spawned hooks, so position
+--             comes from argv, not the environment.
+-- It prints ONE line to stdout, then exits:
+--   char L C [incl]   a charwise target, 1-based, byte column. Exclusive like
+--                     vi's search unless `incl` follows, so `d/foo` stops before
+--                     the match and a tool that means "through it" says so.
+--   line L            a linewise target (whole lines, cursor to L)
+--   err TEXT          no target, and TEXT to say why (vi's "Pattern not found")
+--   (nothing)         no target and nothing to say -- a silent no-op
+-- Anything malformed is "no target". Returns tl,tc,kind,inclusive -- or nil plus
+-- a message.
+--
+-- stderr goes to /dev/null: the editor holds the terminal in raw mode on the
+-- alternate screen, so a filter's diagnostics would land in the middle of the
+-- text. `err` is the channel that reaches the user.
+function M.motion_target(ed, cmd, count, arg)
+  local tmp = vpath.tmp()
+  local wf = io.open(tmp, "wb"); if not wf then return nil end
+  wf:write(ed.buf:text()); wf:close()
+  local full = ("%s %s %d %d %d %s 2>/dev/null"):format(
+                 cmd, sys.shq(tmp), count or 1, ed.cy, ed.cx, sys.shq(arg or ""))
+  local p = io.popen(full, "r")
+  local out = p and p:read("*a") or ""
+  if p then p:close() end
+  os.remove(tmp)
+  local kind, rest = out:match("^%s*(%a+)%s+(.-)%s*$")
+  if kind == "char" then
+    local l, c, flag = rest:match("^(%d+)%s+(%d+)%s*(%a*)$")
+    if l then return tonumber(l), tonumber(c), "char", flag == "incl" end
+  elseif kind == "line" then
+    local l = rest:match("^(%d+)$")
+    if l then return tonumber(l), 1, "line", false end
+  elseif kind == "err" and rest ~= "" then
+    return nil, rest
+  end
+  return nil
 end
 
 -- Parse a key notation string into raw bytes. Names (case-insensitive):
@@ -1139,6 +1191,36 @@ def("textobj", function(ed, c)
   if #key ~= 1 then return "textobj: KEY must be a single character", "err" end
   if cmd == "" then ed.textobj_cmds[key:byte(1)] = nil; return "", "ok" end
   ed.textobj_cmds[key:byte(1)] = cmd
+  return "", "ok"
+end)
+
+-- :motion KEY [prompt] CMD -- register an external motion on the single
+-- character KEY, run by ex.motion_target above. It behaves like any other
+-- motion: bare it moves (jump-class, so Ctrl-O and `` come back), after an
+-- operator it supplies the range, so `d/foo` and `y*` compose for free.
+--
+-- `prompt` (the literal word, before CMD) makes the key read a line first, under
+-- KEY as the prompt character -- which is what makes `/` feel like `/`. The
+-- editor does the prompting, not the tool: the tool is a popen child of an editor
+-- holding the terminal in raw mode, so a `read` of its own would take raw
+-- keystrokes with no echo. A key without `prompt` works from the cursor (`*` on
+-- the word under it, `]c` on the next hunk) and gets "" as its argument.
+--
+-- KEY alone unregisters. A builtin motion of the same key always wins -- :motion
+-- only fills unclaimed keys, so `/ ? n N *` are available and `w` is not.
+-- Single character only, like :textobj: a key is one byte at the funnel, and a
+-- two-key sequence would need its own dispatch table.
+def("motion", function(ed, c)
+  local key, rest = c.args:match("^(%S+)%s*(.-)%s*$")
+  if not key or key == "" then return "usage: motion KEY [prompt] [command]", "err" end
+  if #key ~= 1 then return "motion: KEY must be a single character", "err" end
+  if rest == "" then ed.motion_cmds[key:byte(1)] = nil; return "", "ok" end
+  local prompt = false
+  if rest == "prompt" then return "motion: prompt needs a command", "err" end
+  local first, tail = rest:match("^(%S+)%s+(.*)$")
+  if first == "prompt" then prompt = true; rest = tail end
+  if rest == "" then return "motion: prompt needs a command", "err" end
+  ed.motion_cmds[key:byte(1)] = { cmd = rest, prompt = prompt }
   return "", "ok"
 end)
 

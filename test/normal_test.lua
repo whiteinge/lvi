@@ -1984,4 +1984,95 @@ describe("normal-mode interpreter", function()
   end)
 end)
 
+
+-- External motions (`:motion KEY CMD`) go through the ordinary motion contract,
+-- so the tests that matter are the ones that prove composition: a bare press
+-- moves and feeds the jumplist, an operator takes the same target as its range,
+-- and a cancelled prompt does nothing at all.
+describe("external motions (:motion)", function()
+  local function withmotion(text, spec)
+    local ed = make(text)
+    ex.dispatch(ed, spec)
+    return ed
+  end
+
+  it("a bare key moves the cursor and is jump-class", function()
+    local ed = withmotion("aaa foo\nbbb\nccc", "motion / prompt sh -c 'echo char 3 2'")
+    feed(ed, "/x\r")
+    expect(ed.cy).to.equal(3)
+    expect(ed.cx).to.equal(2)
+    expect(#ed.jumps.list).to.equal(1)          -- Ctrl-O comes back
+    expect(ed.marks["'"][1]).to.equal(1)        -- and so does ''
+  end)
+
+  it("an operator takes it as a range, exclusive like vi's search", function()
+    local ed = withmotion("aaa foo bar", "motion / prompt sh -c 'echo char 1 5'")
+    feed(ed, "d/foo\r")
+    expect(ed.buf:line(1)).to.equal("foo bar")  -- up to the match, not through it
+  end)
+
+  it("`incl` makes it inclusive, so the operator eats the target byte", function()
+    local ed = withmotion("aaa foo bar", "motion / prompt sh -c 'echo char 1 5 incl'")
+    feed(ed, "d/foo\r")
+    expect(ed.buf:line(1)).to.equal("oo bar")
+  end)
+
+  it("a linewise target is linewise for the operator and lands on the first non-blank", function()
+    local ed = withmotion("one\ntwo\n    three\nfour", "motion / sh -c 'echo line 3'")
+    feed(ed, "/")                               -- no prompt on this one
+    expect(ed.cy).to.equal(3)
+    expect(ed.cx).to.equal(5)                   -- first non-blank of "    three"
+    local ed2 = withmotion("one\ntwo\n    three\nfour", "motion / sh -c 'echo line 3'")
+    feed(ed2, "d/")                             -- operator: whole lines 1..3
+    expect(ed2.buf:nlines()).to.equal(1)
+    expect(ed2.buf:line(1)).to.equal("four")
+  end)
+
+  it("the count reaches the filter, and the prompted argument with it", function()
+    -- argv is <tmpfile> <count> <line> <col> <arg>, so under `sh -c` that is
+    -- $0 $1 $2 $3 $4.
+    local ed = withmotion("aaa\nbbb\nccc\nddd",
+                          "motion / prompt sh -c 'echo char $1 ${#4}'")
+    feed(ed, "3/ab\r")                         -- count 3, a two-byte argument
+    expect(ed.cy).to.equal(3)
+    expect(ed.cx).to.equal(2)
+  end)
+
+  it("cancelling the prompt does nothing (no move, no jumplist entry)", function()
+    local ed = withmotion("aaa foo\nbbb", "motion / prompt sh -c 'echo char 2 2'")
+    feed(ed, "/foo" .. ESC)
+    expect(ed.cy).to.equal(1)
+    expect(ed.cx).to.equal(1)
+    expect(#ed.jumps.list).to.equal(0)
+    expect(ed.mode).to.equal("normal")          -- and the prompt is closed
+  end)
+
+  it("no target is a no-op; `err` puts the reason on the message line", function()
+    local ed = withmotion("aaa", "motion / prompt sh -c 'echo err pattern not found'")
+    feed(ed, "/zz\r")
+    expect(ed.cy).to.equal(1)
+    expect(ed.message).to.equal("pattern not found")
+    expect(ed.message_hl).to.equal("Error")
+    local ed2 = withmotion("aaa", "motion / prompt true")
+    feed(ed2, "/zz\r")
+    expect(ed2.message).to_not.exist()          -- silent when the tool says nothing
+  end)
+
+  it("a builtin binding of the same key wins", function()
+    local ed = withmotion("abc", "motion x sh -c 'echo char 1 3'")
+    feed(ed, "x")                               -- the builtin delete-char, not the motion
+    expect(ed.buf:line(1)).to.equal("bc")
+    expect(ed.cx).to.equal(1)
+  end)
+
+  it("`.` replays it, pattern and all", function()
+    local ed = withmotion("aaa foo\nbbb foo", "motion / prompt sh -c 'echo char $2 5'")
+    feed(ed, "d/foo\r")
+    expect(ed.buf:line(1)).to.equal("foo")
+    feed(ed, "j0")
+    feed(ed, ".")                               -- retypes /foo<CR> into the prompt
+    expect(ed.buf:line(2)).to.equal("foo")
+  end)
+end)
+
 os.exit(lust.errors == 0 and 0 or 1)
