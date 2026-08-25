@@ -646,6 +646,46 @@ local function parse_keys(s)
   return table.concat(out)
 end
 
+-- The inverse of parse_keys: render raw key bytes back into the notation :map
+-- accepts, so a listed row pastes straight back into an rc. Only what MUST be
+-- escaped is: the control bytes (by name where they have one, else <C-x>) and
+-- '<' itself, which would otherwise re-parse as the start of a name. '|' and
+-- '\' stay literal -- they have names (<Bar>/<Bslash>) but round-trip as
+-- themselves, and '\' is the leader in every shipped binding, unreadable
+-- spelled out.
+--
+-- SPACE is the one context-dependent case, hence `lhs`: :map splits its two
+-- arguments on whitespace, so a space in the LHS must come back as <Space> to
+-- re-parse, while a space in the RHS is ordinary text (`:bg lvi-list next`)
+-- that spelling out would make every row unreadable.
+local SHOWKEY = { [13] = "CR", [10] = "NL", [27] = "Esc", [9] = "Tab", [60] = "lt" }
+local function show_keys(s, lhs)
+  return (s:gsub(".", function(ch)
+    local b = ch:byte()
+    if SHOWKEY[b] then return "<" .. SHOWKEY[b] .. ">" end
+    if b == 32 then return lhs and "<Space>" or ch end
+    if b < 32 then return "<C-" .. string.char(b + 96) .. ">" end
+    return ch
+  end))
+end
+
+-- The map table as `lhs<TAB>rhs` rows, sorted by the RAW lhs so a leader's
+-- bindings group together. `only` restricts it to one lhs (the :map LHS query).
+-- Shared with editor.lua, which stamps the same rows into $LVI_MAPS for
+-- children (contrib/lvi-cmd): one rendering, one format, both surfaces.
+function M.maplist(ed, only)
+  local keys = {}
+  for lhs in pairs(ed.maps) do
+    if not only or lhs == only then keys[#keys + 1] = lhs end
+  end
+  table.sort(keys)
+  local rows = {}
+  for _, lhs in ipairs(keys) do
+    rows[#rows + 1] = show_keys(lhs, true) .. "\t" .. show_keys(ed.maps[lhs])
+  end
+  return table.concat(rows, "\n")
+end
+
 -- True when writing buf to `p` risks clobbering another writer: p is the
 -- buffer's own file and its mtime moved since our last read/write of it (the
 -- stamp machinery wired in editor.lua; absent headless, where the check is
@@ -968,9 +1008,25 @@ def("r read", function(ed, c)
   return "", "ok"
 end)
 
+-- :map LHS RHS binds; :map alone LISTS what is bound, and :map LHS shows the
+-- one row (vim's reading, and unambiguous here -- a binding always has an RHS,
+-- so an argument count says which is meant). The listing is the :hooks/:marks
+-- mold: `lhs<TAB>rhs` rows, in the notation :map parses, so a row pastes back.
+--
+-- It exists because a map is the ONE registration seam with no way to read it
+-- back from inside the editor -- :hooks, :marks, :registers, :ls, :jumps all
+-- list, and a keymap you have to grep your rc for is the least memorable thing
+-- in the editor. That is also why it is the substrate under contrib/lvi-cmd:
+-- fuzzy recall of a fading binding beats naming it, and neither needs a new
+-- alias namespace to squat on names lvi may later own.
 def("map", function(ed, c)
   local lhs, rhs = c.args:match("^(%S+)%s+(.+)$")
-  if not lhs then return "usage: map LHS RHS", "err" end
+  if not rhs then
+    local only = (c.args ~= "") and parse_keys(c.args) or nil
+    local rows = M.maplist(ed, only)
+    if rows == "" then return only and "no mapping for " .. c.args or "no mappings", "ok" end
+    return rows, "ok"
+  end
   ed.maps[parse_keys(lhs)] = parse_keys(rhs)
   return "", "ok"
 end)

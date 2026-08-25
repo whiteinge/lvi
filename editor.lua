@@ -536,6 +536,13 @@ function M.run(opts)
     -- read off it stays valid. Multi-line, unlike every var above it; a child
     -- splits it with `printf '%s\n' "$LVI_BUFS"`.
     sys.setenv("LVI_BUFS", bufs.list(ed))
+    -- The keymap, byte-for-byte what `:map` prints (lhs<TAB>rhs per line), for
+    -- the same reason and past the same freeze as LVI_BUFS above: contrib/lvi-cmd
+    -- is a picker over your own bindings, and a picker holds the tty. Rendered
+    -- by ex.maplist so the two surfaces cannot drift -- a row here parses back
+    -- through :map exactly as the listed one does, which is what lets a child
+    -- hand an lhs to :normal. Empty when nothing is bound.
+    sys.setenv("LVI_MAPS", ex.maplist(ed))
     -- The A-Z char behind a `markset`/`markjump` fire (the global-mark seam);
     -- empty for every other spawn, so no child sees a stale mark. Set transiently
     -- by normal.lua right around the fire, same discipline as the range vars below.

@@ -549,6 +549,44 @@ can ask for `%p`. It reads the listing out of `$LVI_BUFS` instead, which lvi
 puts in every child's environment. Nothing can renumber the buffers while the
 picker holds the tty, so the index it picked is still the index it sends.
 
+### `lvi-cmd` — find the binding you forgot
+
+The same picker over your own configuration: every key you have mapped, and
+every `lvi-*` tool on your `PATH`, in one flat list. Bind it: `map \c :silent
+!lvi-cmd<CR>`.
+
+A binding you press ten times a day needs no help. The one you set up two months
+ago has faded, and so has the name of the tool behind it, and the ex prompt has
+no completion to jog either. Both are already written down: the keymap inside
+the editor, the purpose on the first line of each tool's header. This puts a
+fuzzy matcher over the two and sends your choice back to the view.
+
+```
+key  \ll              :silent !lvi-list switch<CR>
+cmd  lvi-list         external quickfix/location lists for lvi.
+```
+
+A `key` row prints its RHS, which is why there is no third row kind saying
+"`lvi-list` is bound to these keys": type `lvi-list` and every binding that runs
+it comes up beside the tool itself. The picker does that join for free.
+
+Picking a `key` row sends `normal LHS`. The keys go in through the funnel the
+keyboard uses and expand there, so it is exactly as if you had pressed them.
+Picking a `cmd` row *seeds* the `:` prompt with `silent !NAME` and stops, since
+only you know whether that tool wants a range, arguments, or nothing at all.
+Under fzf the preview pane runs `NAME --help`: the tool's full reference, beside
+its one-line summary.
+
+The keymap comes from `$LVI_MAPS`, the same trick as `lvi-buf`'s `$LVI_BUFS` and
+for the same reason — the picker holds the tty, so it cannot ask for `map` over a
+frozen socket. The tool half needs no editor at all. It is a `PATH` glob and a
+read of each script's header, a few milliseconds with no forks, so it runs fresh
+every time and a tool you installed a minute ago is in the list.
+
+It is also why lvi has no command aliases. An alias name fades the way a map
+does, and it would squat permanently on a name lvi might later own or the system
+`ex` already does. A picker over what is already there costs no namespace.
+
 ### `lvi-shell.sh` — drive lvi from your shell (save-as with real completion)
 
 This is not a tool that lvi runs, but rather a script you source in your

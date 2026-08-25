@@ -280,6 +280,14 @@ map \f :silent !lvi-open<CR>
 " ask for :ls over the socket. \b = buffers (the switch leaf).
 map \b :silent !lvi-buf<CR>
 
+" lvi-cmd is that picker turned on the config itself: every binding in this file
+" and every lvi-* tool on your PATH, in one list. It is the answer to the map you
+" set up two months ago and can no longer remember -- fuzzy-match the tool's name
+" and the bindings that run it come up beside it. Picking a binding presses it;
+" picking a tool seeds the ':' prompt so you can add a range or arguments. Under
+" fzf the preview pane shows the picked tool's whole manual. \c = command.
+map \c :silent !lvi-cmd<CR>
+
 " }}}
 " ---- tags -------------------------------------------------------------- {{{
 

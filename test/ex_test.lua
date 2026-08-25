@@ -1106,6 +1106,63 @@ describe("ex.dispatch", function()
     end)
   end)
 
+  describe(":map listing", function()
+    local function mapped(ed, lines)
+      for _, l in ipairs(lines) do
+        expect(select(2, ex.dispatch(ed, l))).to.equal("ok")
+      end
+      return ed
+    end
+
+    it("reports nothing when nothing is bound", function()
+      expect(ex.dispatch(ed_with("a"), "map")).to.equal("no mappings")
+    end)
+
+    it("lists lhs<TAB>rhs, sorted by the raw lhs", function()
+      local ed = mapped(ed_with("a"), {
+        [[map n :bg lvi-list next<CR>]],
+        [[map \ll :silent !lvi-list switch<CR>]],
+        [[map Q "ayy]],
+      })
+      expect(ex.dispatch(ed, "map")).to.equal(
+        'Q\t"ayy\n' ..
+        "\\ll\t:silent !lvi-list switch<CR>\n" ..
+        "n\t:bg lvi-list next<CR>")
+    end)
+
+    it("shows one binding when given an lhs, and says so when there is none", function()
+      local ed = mapped(ed_with("a"), { [[map \w :w<CR>]] })
+      expect(ex.dispatch(ed, [[map \w]])).to.equal("\\w\t:w<CR>")
+      expect(ex.dispatch(ed, "map zz")).to.equal("no mapping for zz")
+    end)
+
+    -- The lhs query takes key NOTATION, not the raw bytes it parses to, so the
+    -- spelling you bound with is the spelling you ask with.
+    it("takes the lhs query in key notation", function()
+      local ed = mapped(ed_with("a"), { [[map <C-a> :bg lvi-incr<CR>]] })
+      expect(ex.dispatch(ed, "map <C-a>")).to.equal("<C-a>\t:bg lvi-incr<CR>")
+    end)
+
+    -- Every row must survive a round trip back through :map -- that is what
+    -- makes the listing pasteable into an rc, and what lvi-cmd relies on to
+    -- hand an lhs back to :normal.
+    it("renders rows that parse back to the same bindings", function()
+      local src = { [[map <C-a> :bg lvi-incr<CR>]], [[map <Space>x "ayy]],
+                    [[map \gs :silent !lvi-gitchanges<CR>]], [[map Q <lt>literal]] }
+      local ed = mapped(ed_with("a"), src)
+      local again = ed_with("a")
+      for row in (ex.dispatch(ed, "map") .. "\n"):gmatch("(.-)\n") do
+        expect(select(2, ex.dispatch(again, "map " .. row:gsub("\t", " ")))).to.equal("ok")
+      end
+      expect(again.maps).to.equal(ed.maps)
+    end)
+
+    it("still binds when both arguments are present", function()
+      local ed = mapped(ed_with("a"), { [[map \q :q<CR>]] })
+      expect(ed.maps["\\q"]).to.equal(":q\r")
+    end)
+  end)
+
   describe(":marks", function()
     it("reports nothing when no marks are set", function()
       local ed = ed_with("a\nb\nc")

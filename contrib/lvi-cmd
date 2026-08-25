@@ -1,0 +1,202 @@
+#!/bin/sh
+# lvi-cmd [-w auto|WID] -- fuzzy-pick one of your keymaps, or an lvi-* tool on
+# PATH, and run it.
+#
+# The recall aid. A binding you use ten times a day needs no help; the one you
+# set up two months ago has faded, and so has the name of the tool behind it.
+# Both are already written down -- the keymap in the editor, the tool's purpose
+# in its own header -- so this puts a picker over the two and hands the choice
+# back to the view.
+#
+# SYNOPSIS
+#   map \c :silent !lvi-cmd<CR>   bind it inside lvi
+#   lvi-cmd -w auto|WID           run from another terminal
+#
+# Rows are `kind key detail`, one flat list so one fuzzy query crosses both:
+#
+#   key  \ll              :silent !lvi-list switch<CR>
+#   cmd  lvi-list         external quickfix/location lists for lvi.
+#
+# There is deliberately NO third row kind for "tool X is bound to keys Y". A
+# `key` row prints its RHS, so typing `lvi-list` matches every binding that
+# runs lvi-list along with the tool itself -- the picker does that join for
+# free, and a column computing it would only be a worse copy.
+#
+# PICKING A `key` ROW sends `normal LHS`: the keys go in through the same input
+# funnel the keyboard uses, and get expanded there, so it is exactly as if you
+# had pressed them. (Sending the RHS instead would be subtly wrong -- map
+# expansion is non-recursive at the keyboard but injected keys DO expand, so a
+# RHS holding another mapping's LHS would fire it.) One corner is refused
+# rather than mis-run: an LHS that begins or ends with a space -- a <Space>
+# leader -- cannot ride `:normal`, whose argument is trimmed by the dispatcher,
+# and injecting the trimmed remainder would run a different command than the
+# one you picked. Press those yourself.
+#
+# PICKING A `cmd` ROW SEEDS the ':' prompt with `silent !NAME` and stops there,
+# because only you know how that tool wants to be called: some want a range
+# (`:%!lvi-reflow`), some want arguments, some are filters that make no sense
+# run bare. Seeding beats guessing, and `silent !` is the safer of the two spawn
+# forms to seed -- a tool that wanted `:bg` still works from it (at the cost of
+# a screen flash), while a tool that needs the terminal, as half of contrib
+# does, would silently do nothing under `:bg`. Edit the line and press Enter.
+# (The prompt lands with no trailing space for the same dispatcher trim; type
+# one.)
+#
+# WHERE THE ROWS COME FROM. A picker needs the terminal, so the map runs it
+# under `:silent !`, which freezes lvi's event loop -- a `map` read back over
+# the socket would deadlock (the same bind lvi-buf is in; see LVI_BUFS in
+# lvi(1)). So the keymap comes from $LVI_MAPS, which lvi exports to every child
+# it spawns, in `:map`'s own notation. Run from another terminal (-w WID) lvi is
+# live and $LVI_MAPS is unset, so we ask for `map` over the socket instead.
+#
+# The tool half needs no editor at all: it is `lvi-*` on $PATH, executable,
+# first spelling of each name winning as it would when run, with the one-line
+# purpose lifted from the second line of each script (the text after ` -- ` in
+# the header every contrib tool opens with). That is a glob and a read per
+# candidate -- no forks, a few milliseconds for a full $PATH -- so it is done on
+# every run rather than cached, and a tool you installed a minute ago is in the
+# list.
+#
+# THE PREVIEW pane shows the picked tool's full header (`NAME --help`), which is
+# its complete operator reference -- env knobs, binding snippets, the lot. It is
+# fzf-only, since --preview has no equivalent in fzy or a plain filter; every
+# other picker still gets the one-line purpose in the row itself.
+#
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
+# Needs a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_MAPS exported);
+# from elsewhere pass -w.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+SELF=${0##*/}
+# How the preview pane re-invokes us: by name when we were found on PATH, by
+# path when we were not (./contrib/lvi-cmd during development).
+case $0 in */*) SELFCMD=$0 ;; *) SELFCMD=$SELF ;; esac
+
+die() { echo "lvi-cmd: $*" >&2; exit 1; }
+
+# --preview ROW: the fzf preview pane calls back into us with the picked row as
+# ONE argument, so it is re-split here. A cmd row previews the tool's own
+# header; a key row has nothing deeper to show than the RHS already in it.
+if [ "${1:-}" = "--preview" ]; then
+  shift
+  set -- $1
+  kind=${1:-}; key=${2:-}
+  case $kind in
+    cmd) command -v "$key" >/dev/null 2>&1 && exec "$key" --help ;;
+    key) shift 2; printf 'runs: %s\n' "$*" ;;
+  esac
+  exit 0
+fi
+
+want_wid=; [ "${1:-}" = "-w" ] && { want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2; }
+target=${want_wid:-${LVI_WID:-auto}}
+send() { "$LVI" -w "$target" --detach -- "$@"; }
+
+# $LVI_MAPS is the snapshot lvi handed us; -w from another terminal has no such
+# env, so ask the live view. An explicit -w always asks, so it can't offer the
+# spawning view's maps while aiming at a different one.
+if [ -n "${LVI_WID:-}" ] && [ -z "$want_wid" ]; then
+  maps=$LVI_MAPS
+else
+  maps=$("$LVI" -w "$target" -- map) || die "could not read the keymap over the socket"
+  [ "$maps" = "no mappings" ] && maps=
+fi
+
+# Every executable lvi-* on PATH, one path per line, PATH order preserved. The
+# subshell contains IFS= : so the split doesn't leak into the rest of the run.
+tool_paths() (
+  IFS=:
+  for d in $PATH; do
+    for f in "${d:-.}"/lvi-*; do
+      [ -f "$f" ] && [ -x "$f" ] && printf '%s\n' "$f"
+    done
+  done 2>/dev/null
+)
+
+# path -> `cmd<TAB>name<TAB>purpose`. First spelling of a name wins, as it would
+# when run.
+#
+# The purpose comes out of the header comment every contrib tool opens with,
+# which has two shapes: `name [args] -- what it does` on one line, or a synopsis
+# line (sometimes several) then a blank comment line then a paragraph. So: the
+# text after the first ` -- ` if one turns up before that blank line, else the
+# paragraph's first line, cut at its first sentence end. Anything with no header
+# at all -- a compiled tool that merely happens to be named lvi-* -- contributes
+# a blank purpose rather than garbage, and is still listed: it is on your PATH,
+# so it is a thing you can run.
+tool_rows() {
+  tool_paths | awk -v self="$SELF" '
+    { path = $0; name = path; sub(/.*\//, "", name)
+      if (name == self || (name in seen)) next
+      seen[name] = 1
+      purpose = ""; blank = 0
+      for (n = 0; n < 16 && (getline line < path) > 0; n++) {
+        if (n == 0) continue                        # the #! line
+        if (line !~ /^#/) break
+        sub(/^# ?/, "", line); sub(/[ \t]+$/, "", line)
+        if (line == "") { blank = 1; continue }
+        if (blank) { purpose = line; break }
+        if (line ~ /^-- /) { purpose = substr(line, 4); break }
+        p = index(line, " -- ")
+        if (p > 0) { purpose = substr(line, p + 4); break }
+      }
+      close(path)
+      sub(/^[ \t]+/, "", purpose)
+      p = index(purpose, ". ")
+      if (p > 0) purpose = substr(purpose, 1, p)
+      printf "cmd\t%s\t%s\n", name, purpose
+    }'
+}
+
+rows=$( { [ -n "$maps" ] && printf '%s\n' "$maps" | awk -F'\t' 'NF>=2 {printf "key\t%s\t%s\n", $1, $2}'
+          tool_rows; } )
+[ -n "$rows" ] || { send "msg lvi-cmd: nothing bound and no lvi-* tools on PATH"; exit 0; }
+
+# The kind and key stay in columns 1 and 2 so the selection is read straight
+# back off them, which keeps any $LVI_PICKER usable (no fzf-only --with-nth).
+# --preview is the one fzf-only flag, added only when fzf is what we have.
+set -- "$PICKER"
+case $PICKER in
+  fzf|*/fzf) set -- "$PICKER" --preview "$SELFCMD --preview {}" --preview-window=right,60%,wrap ;;
+esac
+sel=$(printf '%s\n' "$rows" | awk -F'\t' '{printf "%-4s %-18s %s\n", $1, $2, $3}' | "$@") || exit 0
+
+kind=$(printf '%s' "$sel" | awk '{print $1}')
+key=$(printf '%s' "$sel" | awk '{print $2}')
+[ -n "$key" ] || exit 0
+
+case $kind in
+  cmd) send "normal :silent !$key" ;;
+  key)
+    # Key notation back to the raw bytes :normal wants. Only the LHS passes
+    # through here, so this is a handful of names and <C-x>; the octal goes
+    # through printf, which is why every literal % and \ is escaped first.
+    fmt=$(printf '%s' "$key" | awk '
+      { s = $0; gsub(/\\/, "\\\\\\\\", s); gsub(/%/, "%%", s)
+        while (match(s, /<[^>]+>/)) {
+          tok = substr(s, RSTART, RLENGTH); name = toupper(substr(tok, 2, RLENGTH - 2)); rep = ""
+          if      (name == "CR" || name == "RETURN") rep = "\\015"
+          else if (name == "NL")     rep = "\\012"
+          else if (name == "ESC")    rep = "\\033"
+          else if (name == "TAB")    rep = "\\011"
+          else if (name == "SPACE")  rep = "\\040"
+          else if (name == "BAR")    rep = "|"
+          else if (name == "BSLASH") rep = "\\\\"      # printf turns this into one backslash
+          else if (name == "LT")     rep = "<"
+          else if (name ~ /^C-.$/)   rep = sprintf("\\%03o", index("@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_", substr(name, 3, 1)) - 1)
+          else rep = tok                              # unknown: leave it alone
+          s = substr(s, 1, RSTART - 1) rep substr(s, RSTART + RLENGTH)
+          if (rep == tok) break
+        }
+        print s }')
+    keys=$(printf "$fmt")
+    case $keys in
+      ' '*|*' ') send "msge lvi-cmd: $key starts or ends with a space; :normal would trim it -- press it yourself" ;;
+      '') exit 0 ;;
+      *) send "normal $keys" ;;
+    esac
+    ;;
+esac

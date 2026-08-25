@@ -637,12 +637,18 @@ spaces and tabs included.
 		with *:w!*; writing to a different name is allowed. Per-buffer; *lvi -R* at
 		startup sets it for the named files. (POSIX vi's *readonly*.)
 
-*map* _lhs_ _rhs_, *unmap* _lhs_
+*map* [_lhs_ [_rhs_]], *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*
 	*<Bslash>* *<lt>* and *<C-x>* for control keys. There is no wait-for-more
 	timeout: a _lhs_ fires the instant it completes, so one mapping cannot be a
 	prefix of another (map *gc* and *gcc* is unreachable) -- give the longer one
 	a distinct key.
+
+	With no _rhs_, *map* is a display instead: bare it lists every binding as
+	_lhs_<TAB>_rhs_ rows sorted by _lhs_, and *map* _lhs_ shows the one row.
+	Rows come back in the notation above, so one pastes straight into an rc.
+	Children get the same rows in *$LVI_MAPS* (see *ENVIRONMENT*);
+	*contrib/lvi-cmd* is a picker over them.
 
 *hl* _group_ [_L_:_C1_-_C2_ ...]
 	Paint _group_ over the given byte ranges (bare _L_ = whole line); no ranges
@@ -1225,6 +1231,18 @@ below, with the happy-path rc lines that turn it on:
 	map \\b :silent !lvi-buf<CR>
 	```
 
+*lvi-cmd* -- find the binding you forgot
+	The same picker over your own configuration: every key you have mapped
+	(read from *$LVI_MAPS*) and every *lvi-*\* tool on *$PATH*, in one list.
+	Picking a binding presses it; picking a tool seeds the *:* prompt, since
+	only you know whether it wants a range or arguments. A binding you press
+	daily needs no help, but the one set up months ago has faded, and the ex
+	prompt has no completion to jog it:
+
+	```
+	map \\c :silent !lvi-cmd<CR>
+	```
+
 *lvi-shell.sh* -- drive lvi from your shell
 	Shell functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the running view
 	from *sh* or any terminal, with your shell's own path completion. Source it
@@ -1407,6 +1425,13 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	event loop is frozen, so it cannot read *ls* back over the socket, and nothing
 	can renumber the buffers while it holds the tty, so an index read off the
 	snapshot is still valid when it sends *b* _N_. *contrib/lvi-buf* is that tool.
+
+*LVI_MAPS*
+	The keymap as *map* prints it, one _lhs_<TAB>_rhs_ binding per line; empty
+	when nothing is bound. Handed over for the same reason as *LVI_BUFS*: a
+	picker over your own bindings holds the terminal, so it cannot ask for
+	*map* over the socket. Rows are in *map*'s own notation, so a child can
+	hand an _lhs_ back to *normal*. *contrib/lvi-cmd* is that tool.
 
 *LVI_EVENT*
 	The event name (*change*, *write*, ...) while an *:on* hook's command runs;
