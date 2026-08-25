@@ -2,14 +2,18 @@
 # lvi-list -- external quickfix/location lists for lvi.
 #
 # A "list" is a plain file of `file:line[:col]:text` entries (grep -Hn / compiler
-# / linter output -- the vim -q format), each optionally followed by indented
-# body lines (a compiler note, a multi-line diagnostic) that `preview` shows on
-# demand -- n/N step the headers and skip the bodies. lvi knows nothing of lists:
+# / linter output -- the GNU error-message format, which vim calls quickfix; see
+# THE FORMAT below), each optionally followed by indented body lines (a compiler
+# note, a multi-line diagnostic) that `preview` shows on demand -- n/N step the
+# headers and skip the bodies. lvi knows nothing of lists:
 # this script owns them, and drives lvi purely through the socket -- jumping the
 # cursor, painting the :hl overlay, and setting a :status segment. Multiple named
 # lists coexist; one is "focused" and the bare step commands act on it.
 #
-#   producer | lvi-list put NAME [--focus] [--at-cursor[-back]]   stdin -> a list
+#   producer | lvi-list put NAME [--focus] [--at-cursor[-back]] [--cols=UNIT]
+#                                              entries on stdin -> a list
+#                                              (--cols: what this producer's columns
+#                                              count -- byte (default), char, display)
 #                                              (--at-cursor: seed the step index from
 #                                              the cursor, so the step that follows is
 #                                              relative to it -- a producer REFRESHING a
@@ -28,12 +32,14 @@
 #   lvi-list goto|switch                       fzf over entries / over list names
 #   lvi-list focus [NAME] | ls | paint [NAME]
 #   lvi-list hide [NAME]                       stop showing a list (keep it; n/N re-show)
-#   lvi-list save NAME PATH | load PATH [NAME] [--focus] | drop NAME | clear NAME | path NAME
+#   lvi-list save NAME PATH | load PATH [NAME] [--focus] [--cols=UNIT]
+#   lvi-list drop NAME | clear NAME | path NAME
 #
 # WHERE LISTS LIVE: beside the view's socket, derived from $LVI_SOCK
 # (`.../lvi-$uid/$wid`) so the path can never drift from the one the editor chose:
 #   $LVI_SOCK.lists/<name>        the entries (raw; multi-line bodies kept)  (per view)
 #   $LVI_SOCK.lists/<name>.cur    the current index  (1-based; 0 = before first)
+#   $LVI_SOCK.lists/<name>.cols   what its columns count (absent = byte)
 #   $LVI_SOCK.focus               the focused list name
 # $wid.lists is a directory, so socket discovery (which filters `[ -S ]`) skips it.
 # Persistent lists escape this disposable tree via `save`/`load` to any path.
@@ -55,15 +61,26 @@
 # The consequence is honest -- two genuinely different spellings of one file
 # THROUGH a symlink still read as different files.
 #
+# THE FORMAT has a name and a specification: it is the GNU error-message format
+# (GNU Coding Standards 4.3), which vim calls the quickfix format and which
+# every compiler, linter and `grep -Hn` on your machine already prints. The
+# shapes accepted here, all of them GNU's:
+#   file:line: text                 file:line:col: text
+#   file:line.col: text             file:line1.col1-line2.col2: text
+#   file:line1.col1-col2: text      file:line1-line2: text
+# A range lands on its START; the end says how far the complaint reaches, which
+# is a paint concern and not a second place to put the cursor. GNU's
+# `program:file:line:` form is deliberately NOT accepted: a leading bare word is
+# indistinguishable from a filename, and taking it would cost the one thing
+# holding prose out of a list. Producers that emit it (lvi-lint's backends) drop
+# the program name themselves.
+#
 # THE COLUMN FIELD is optional per ENTRY, not per list: `file:line:text` and
 # `file:line:col:text` mix freely in one file, which is what lets grep -Hn and a
 # compiler feed the same list. Of the tools here, lvi-spell and most lvi-lint
 # backends name a column; lvi-search and lvi-gitchanges cannot (grep reports
-# lines, and a diff hunk has no column). It is a 1-based BYTE column, the same
-# one lvi's cursor counts in, so tabs and multibyte characters need no
-# translation on either side. Who honors one:
-#   jump              lands on it exactly -- `:pos L C` is byte-exact. No column
-#                     means column 1, so a line-only entry still lands sensibly.
+# lines, and a diff hunk has no column). Who reads one:
+#   jump              lands on it exactly, via `:pos L C UNIT`.
 #   put --at-cursor   weighs it when seeding, so a search can resume from
 #                     between two entries on ONE line; a col-less entry is
 #                     weighed by its line alone (see the seed below).
@@ -78,12 +95,30 @@
 #                     which answers "what have I already passed" and so must
 #                     exclude your own position.
 #
+# WHAT A COLUMN COUNTS is the producer's business, and the number cannot say.
+# GNU prescribes DISPLAY columns -- tab stops every 8, Unicode widths -- and gcc
+# emits them; most linters count characters; lvi counts bytes. All three agree
+# on ASCII text without tabs, so a mismatch stays invisible until a tab or a
+# multibyte character puts the cursor near the complaint instead of on it. So
+# the producer declares once, per list: `put --cols=byte|char|display` (default
+# byte, what everything meant before this existed), recorded beside the entries
+# and handed to `:pos`, which converts -- only the editor has the line's bytes
+# to convert with. The seed still compares against a BYTE cursor column, so a
+# non-byte list can seed one entry off within a single line; the walk itself is
+# unaffected, being arithmetic on the index.
+#
 # One ambiguity is inherent to the format rather than to any parser here: a
 # col-less entry whose TEXT opens with digits and a colon (`f.c:7:42: foo`) is
-# indistinguishable from a col-bearing one and reads as column 42. It can shift
-# a seed by one entry; it cannot derail a walk, which is arithmetic on the
-# stored index and never re-reads the cursor. A producer that knows its columns
-# should emit them -- then field 3 really is one.
+# indistinguishable from a col-bearing one and reads as column 42. Vim reads it
+# that way too (its errorformat tries `%f:%l:%c:%m` before `%f:%l:%m`). It can
+# shift a seed by one entry; it cannot derail a walk. A producer that knows its
+# columns should emit them -- then field 3 really is one.
+#
+# THE FILENAME may contain anything but a colon, which is the property that
+# makes the parse deterministic (vim gets the same one from 'isfname', whose
+# default excludes `:`). It may also contain a blank, which vim's default does
+# NOT allow -- `we $ird.txt` is a real filename and an indented body line is
+# already what keeps prose out of a list.
 #
 # SPAWN DISCIPLINE: every socket call here is fire-and-forget (`lvi -w
 # --detach`). Stepping runs under `:silent !` with lvi's loop FROZEN waiting on
@@ -147,7 +182,7 @@ lf()        { printf '%s\n' "$listdir/$1"; }
 count()     { n=$(hdrs "$1" | grep -c .); echo "${n:-0}"; }  # number of ENTRIES (headers)
 hnr()       { [ "${2:-0}" -ge 1 ] 2>/dev/null || return 0; hdrs "$1" | sed -n "${2}p"; }  # raw line of entry $2's header (0 = no entry, not sed's invalid address 0)
 nth()       { r=$(hnr "$1" "$2"); [ -n "$r" ] && sed -n "${r}p" "$listdir/$1"; }  # $2's header line
-etext()     { sed -E 's/^[^:]*:[0-9]+(:[0-9]+)?:?[[:space:]]*//'; }  # entry line -> its text (drop file:line[:col]:)
+etext()     { sed -E 's/^[^:]*:[0-9]+([.:][0-9]+)?(-[0-9]+([.][0-9]+)?)?:?[[:space:]]*//'; }  # entry -> its text (drop file:line[:col][-range]:)
 show_cur()  { last_set "$1"; c=$(getcur "$1"); [ "$c" -ge 1 ] && send "msg $(nth "$1" "$c" | etext)"; }  # on step: mark last-stepped + preview text
 getcur()    { c=$(cat "$listdir/$1.cur" 2>/dev/null); case "$c" in ''|*[!0-9]*) echo 0;; *) echo "$c";; esac; }
 setcur()    { printf '%s\n' "$2" > "$listdir/$1.cur"; }
@@ -155,7 +190,11 @@ focus_get() { cat "$focusfile" 2>/dev/null; }
 focus_set() { printf '%s\n' "$1" > "$focusfile"; }
 last_set()  { printf '%s\n' "$1" > "$lastfile"; }                 # a step -> "the list you care about"
 last_get()  { l=$(cat "$lastfile" 2>/dev/null); [ -n "$l" ] && [ -f "$listdir/$l" ] && printf '%s\n' "$l"; }
-names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
+names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|*.cols|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
+# What this list's columns COUNT (see THE COLUMN FIELD). Unset/unknown reads as
+# `byte`, which is what every producer meant before there was anywhere to say.
+colunit()   { u=$(cat "$listdir/$1.cols" 2>/dev/null); case "$u" in char|display) echo "$u";; *) echo byte;; esac; }
+setcols()   { if [ -n "$2" ]; then printf '%s\n' "$2" > "$listdir/$1.cols"; else rm -f "$listdir/$1.cols"; fi; }
 
 # Entry boundaries in vim's MULTI-LINE quickfix format: a `file:line[:col]:text`
 # HEADER (digits right after the first colon) starts an entry; the lines after it,
@@ -176,7 +215,15 @@ names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|
 # would be a filename and send lvi off to open it. So the whole name is
 # optional -- but only as a whole, since a blank is fine INSIDE one (`we
 # $ird.txt`) and disqualifying only at the front.
-HDR='^([^:[:space:]][^:]*)?:[0-9]+(:|$)'
+#
+# After the line come GNU's other spellings of a position (4.3): `line.column`
+# with a DOT, and the three ranges `line1.col1-line2.col2`, `line1.col1-col2`
+# and `line1-line2`. A range is a real entry, not a malformed one -- bison emits
+# every one of these -- and dropping them silently was worse than landing on the
+# start, which is what jump does with one. The dot is spelled `[.]`, not `\.`:
+# HDR reaches awk through -v, which eats one level of backslash (the same trap
+# CANON_AWK dodges by reading $PWD from ENVIRON).
+HDR='^([^:[:space:]][^:]*)?:[0-9]+([.:][0-9]+)?(-[0-9]+([.][0-9]+)?)?(:|$)'
 
 # `hdrs` prints each header's raw line number; count/index step ENTRIES through
 # it, `span` rebuilds one for `preview`.
@@ -217,17 +264,24 @@ function canon(p,   a, n, i, j, out, s) {
 canonpath() { printf '%s\n' "$1" | awk "$CANON_AWK"'{ print canon($0) }'; }
 
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
-# there. :pos is byte-exact -- the byte columns producers emit land where they
-# point, tabs and multibyte included -- and, like a bare line address, records
-# no jumplist entry. `e -- NAME` takes the entry's filename literally (no
-# shell expansion, nothing to escape).
+# there. :pos lands exactly on the column, in whatever unit the list was put
+# with (see THE COLUMN FIELD), and, like a bare line address, records no
+# jumplist entry. `e -- NAME` takes the entry's filename literally (no shell
+# expansion, nothing to escape).
+#
+# Both of GNU's position spellings are accepted: `line:col` and `line.col`. A
+# range (`12.5-12.20`, `12-14`) lands on its START -- the end is the extent of
+# the complaint, not a second place to put the cursor.
 jump() {
   f=${1%%:*}; r=${1#*:}; ln=${r%%:*}; r=${r#*:}; c=${r%%:*}
+  ln=${ln%%-*}                                   # a range lands on its start
+  case "$ln" in *.*) c=${ln#*.}; ln=${ln%%.*} ;; esac   # GNU's `line.column`
   case "$c"  in ''|*[!0-9]*) c=1 ;; esac
   case "$ln" in ''|*[!0-9]*) return 0 ;; esac
+  u=$(colunit "$2")
   if [ -n "$f" ] && [ "$(canonpath "$f")" != "$(canonpath "$(curfile)")" ]; then
-    send "e -- $f" "pos $ln $c"
-  else send "pos $ln $c"; fi
+    send "e -- $f" "pos $ln $c $u"
+  else send "pos $ln $c $u"; fi
 }
 
 # Repaint NAME's entries for the CURRENT buffer, mark the current entry, and set
@@ -255,15 +309,18 @@ need_name() { n=$(if [ -n "${1:-}" ]; then printf '%s\n' "$1"; else focus_get; f
 
 case "$sub" in
   put)
-    name=; dofocus=; atcur=; back=
+    name=; dofocus=; atcur=; back=; cols=
     for a in "$@"; do case "$a" in
       --focus)          dofocus=1 ;;
       --at-cursor)      atcur=1 ;;
       --at-cursor-back) atcur=1; back=1 ;;
+      --cols=*)         cols=${a#--cols=} ;;
       *)                name=$a ;;
     esac; done
-    [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor[-back]]"
+    [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor[-back]] [--cols=UNIT]"
+    case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
+    setcols "$name" "$cols"
     if [ -n "$atcur" ]; then
       # Seed the index from the cursor, so the step that follows is RELATIVE to
       # where you are. Two callers, one mechanism: a REFRESHING producer (spell
@@ -325,7 +382,7 @@ case "$sub" in
     edge=
     [ "$cur" -lt 1 ]        && { cur=1;       edge=" (start)"; }
     [ "$cur" -gt "$total" ] && { cur=$total;  edge=" (end)"; }
-    setcur "$name" "$cur"; jump "$(nth "$name" "$cur")"; paint "$name"
+    setcur "$name" "$cur"; jump "$(nth "$name" "$cur")" "$name"; paint "$name"
     [ -n "$edge" ] && send "status $name [$cur/$total] $name$edge"
     show_cur "$name" ;;
 
@@ -345,7 +402,7 @@ case "$sub" in
       [ "$ef" != "$curf" ] && { target_i=$i; break; }
     done
     [ -n "$target_i" ] || { send "status $name [$cur/$total] $name (no more files)"; exit 0; }
-    setcur "$name" "$target_i"; jump "$(nth "$name" "$target_i")"; paint "$name"; show_cur "$name" ;;
+    setcur "$name" "$target_i"; jump "$(nth "$name" "$target_i")" "$name"; paint "$name"; show_cur "$name" ;;
 
   here)
     name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
@@ -354,7 +411,7 @@ case "$sub" in
           BEGIN { f = canon(cf) }
           $0 ~ hdr { n++; if (canon($1)==f && ($2+0)>=(l+0)) { print n; exit } }' "$listdir/$name")
     [ -n "$i" ] || i=1
-    setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; show_cur "$name" ;;
+    setcur "$name" "$i"; jump "$(nth "$name" "$i")" "$name"; paint "$name"; show_cur "$name" ;;
 
   current|cc)
     # Re-jump to the CURRENT entry without stepping (vim's :cc). The recall for
@@ -364,7 +421,7 @@ case "$sub" in
     # cross-file re-fold (an `on bufenter lvi-fold` that re-closed the fold).
     name=$(need_name "${1:-}") || exit 1; [ -f "$listdir/$name" ] || die "$name is empty"
     cur=$(getcur "$name"); [ "$cur" -ge 1 ] || die "not stepped into $name yet"
-    jump "$(nth "$name" "$cur")"; paint "$name"; show_cur "$name" ;;
+    jump "$(nth "$name" "$cur")" "$name"; paint "$name"; show_cur "$name" ;;
 
   preview)                                   # the full current entry (header + body) to stdout
     # Default to the LAST-STEPPED list, not the focused one: `]e` steps lint
@@ -384,7 +441,7 @@ case "$sub" in
     sel=$(awk -v hdr="$HDR" '$0 ~ hdr {printf "%d: %s\n", ++n, $0}' "$listdir/$name" \
             | "$PICKER") || exit 0
     i=${sel%%:*}
-    [ -n "$i" ] && { setcur "$name" "$i"; jump "$(nth "$name" "$i")"; paint "$name"; show_cur "$name"; } ;;
+    [ -n "$i" ] && { setcur "$name" "$i"; jump "$(nth "$name" "$i")" "$name"; paint "$name"; show_cur "$name"; } ;;
 
   switch)
     name=$(names | "$PICKER") || exit 0
@@ -404,9 +461,11 @@ case "$sub" in
 
   save) name=${1:?usage: save NAME PATH}; dest=${2:?usage: save NAME PATH}; cp "$listdir/$name" "$dest" ;;
   load)
-    src=${1:?usage: load PATH [NAME] [--focus]}
-    name=${2:-$(basename "$src")}; case "$name" in --focus) name=$(basename "$src");; esac
-    mkdir -p "$listdir"; cp "$src" "$listdir/$name" || true; setcur "$name" 0
+    src=${1:?usage: load PATH [NAME] [--focus] [--cols=UNIT]}
+    name=${2:-$(basename "$src")}; case "$name" in --focus|--cols=*) name=$(basename "$src");; esac
+    cols=; for a in "$@"; do case "$a" in --cols=*) cols=${a#--cols=} ;; esac; done
+    case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
+    mkdir -p "$listdir"; cp "$src" "$listdir/$name" || true; setcur "$name" 0; setcols "$name" "$cols"
     case " $* " in *" --focus "*) focus_set "$name" ;; esac
     paint "$name" ;;
 
@@ -416,7 +475,7 @@ case "$sub" in
     # whole (cursor + focus intact) so `n`/`N` re-show it -- a per-list :nohl.
     name=$(need_name "${1:-}") || exit 1
     case "$sub" in
-      drop)  rm -f "$listdir/$name" "$listdir/$name.cur" ;;
+      drop)  rm -f "$listdir/$name" "$listdir/$name.cur" "$listdir/$name.cols" ;;
       clear) : > "$listdir/$name"; setcur "$name" 0 ;;
       hide)  : ;;
     esac

@@ -20,6 +20,15 @@
 #     lvi calls the buffer and jump/paint work in place (the lvi-search trick).
 #   * Severity folds into the text as an `E: `/`W: ` prefix (one list, one
 #     style; splitting severities into separate lists is a possible follow-up).
+#   * COL, if the tool reports one, is passed through as the tool spells it.
+#     Tools disagree about what a column counts -- bytes, characters, or display
+#     cells with tabs expanded (what the GNU Coding Standards prescribe and gcc
+#     emits). They agree on ASCII without tabs, so a mismatch shows up only as a
+#     cursor landing near a complaint rather than on it, on a tab-indented or
+#     multibyte line. lvi-list is told once, per list, and lvi converts: set
+#     $LVI_LINT_COLS to `char` or `display` for a backend that needs it (default
+#     `byte`). The shipped adapters declare nothing, so they get `byte`; if a
+#     linter you use lands one column off on a tab-indented line, this is why.
 # Feeding the buffer on stdin -- via the tool's --stdin-filename flag -- is what
 # makes this live-buffer: no temp file, while the real path still anchors
 # filetype detection and config resolution (ruff finds your pyproject.toml). A
@@ -54,6 +63,7 @@
 # harmless; under a `:silent !` binding it is what prevents the deadlock.
 #
 # Config: LVI (client, default `lvi`), LVI_LINT_BACKEND (adapter name),
+# LVI_LINT_COLS (byte|char|display -- what the backend's columns count),
 # LVI_LINT_MAXBYTES (skip buffers larger than this, default 262144),
 # LVI_LINT_DEBUG (file to capture worker stderr). Needs lvi-list on PATH.
 
@@ -142,8 +152,9 @@ fi
 # missing-linter guard) is an error, not an ingest of empty input.
 entries=$(printf '%s\n' "$text" | "$adapter" "$fname") ||
   fail "backend '$backend' failed (is the linter installed?)"
+cols=${LVI_LINT_COLS:+--cols=$LVI_LINT_COLS}       # what this backend's columns count
 if [ -n "$entries" ]; then
-  printf '%s\n' "$entries" | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
+  printf '%s\n' "$entries" | lvi-list $wflag put lint --at-cursor ${focus:+--focus} $cols
 else
-  : | lvi-list $wflag put lint --at-cursor ${focus:+--focus}
+  : | lvi-list $wflag put lint --at-cursor ${focus:+--focus} $cols
 fi

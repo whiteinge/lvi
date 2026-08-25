@@ -194,21 +194,29 @@ from inside lvi (`lvi-highlight -h` covers the state files and the caveat).
 
 ### `lvi-search` + `lvi-list` — search and quickfix
 
-A **list** is a plain file of `file:line[:col]:text` entries — the Vim quickfix
-format that grep, a compiler, a linter, or `git diff` all speak. Vim's
+A **list** is a plain file of `file:line[:col]:text` entries — the GNU
+error-message format (GNU Coding Standards §4.3), which Vim calls the quickfix
+format and which grep, a compiler, a linter, and `git diff` all speak. Vim's
 multi-line variant works too: each `file:line:` header may carry indented body
 lines (a compiler note, a full diagnostic), and `n`/`N` step through the
 headers while the bodies are available via `lvi-list preview` to show on
 demand.
 
 The column is optional **per entry**, so the two shapes mix in one list: a
-producer that can't name a column (grep reports lines; a diff hunk has none)
-just leaves it out. Columns are 1-based *bytes*, the unit lvi's cursor counts
-in, so a jump lands on the exact byte and a cursor-seeded search can resume
-between two matches on one line. The overlay mark stays in the first column
-either way: a sign in the left margin, scanned down the edge of the screen.
-`lvi-match` is what paints the token itself, and the `lvi-list` header lists
-who reads a column and who ignores it.
+producer that can't name one (grep reports lines; a diff hunk has none) just
+leaves it out. GNU's other spellings work too — `file:line.col`, and the ranges
+`line1.col1-line2.col2`, `line1.col1-col2` and `line1-line2`, which bison emits
+and which land on their start.
+
+Tools disagree about what a column *counts*. GNU prescribes display cells with
+tabs expanded, most linters count characters, and lvi counts bytes; the three
+agree on ASCII without tabs, so the mismatch shows up only as a cursor landing
+near a complaint instead of on it. A number can't say which it is, so the
+producer declares once — `lvi-list put --cols=char|display` — and lvi converts,
+since only the editor has the line's bytes to convert with. The overlay mark
+stays in the first column regardless: a sign in the left margin, scanned down
+the edge of the screen. `lvi-match` is what paints the token itself, and the
+`lvi-list` header lists who reads a column and who ignores it.
 
 lvi knows nothing about lists: `lvi-list` owns them and drives the view over
 the socket, jumping the cursor, painting the `:hl` overlay, and setting a
