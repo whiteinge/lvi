@@ -1414,6 +1414,13 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	can renumber the buffers while it holds the tty, so an index read off the
 	snapshot is still valid when it sends *b* _N_. *contrib/lvi-buf* is that tool.
 
+*LVI_MAPS*
+	The keymap as *map* prints it, one _lhs_<TAB>_rhs_ binding per line; empty
+	when nothing is bound. Handed over for the same reason as *LVI_BUFS*: a
+	picker over your own bindings holds the terminal, so it cannot ask for
+	*map* over the socket. Rows are in *map*'s own notation, so a child can
+	hand an _lhs_ back to *normal*. *contrib/lvi-cmd* is that tool.
+
 *LVI_EVENT*
 	The event name (*change*, *write*, ...) while an *:on* hook's command runs;
 	empty for every other child (*:bg*, *:!*, *g@*). Lets one tool serve both
