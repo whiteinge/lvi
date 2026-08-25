@@ -59,6 +59,15 @@ end
 -- macros replay the expansion, not the LHS). Leader-style maps (LHS starting
 -- with a non-command key like '\\') avoid ambiguity; there is no timeout, so a
 -- partial LHS blocks until the next key.
+--
+-- FIRST is load-bearing, not incidental. An operator reads its motion with a
+-- bare getkey (the operator branch in command(), and read_gtarget for gu/gU/gq),
+-- so no map expands there. That is what lets a `map` and a `:motion` share one
+-- key: a bare press takes the map, an operator-pending press takes the motion.
+-- contrib/lvi-search binds `/` both ways at once -- a list to walk when pressed
+-- alone, a synchronous target when `d/foo` needs one before the command ends --
+-- and that only works because expansion stops here. Adding map expansion to the
+-- operator-pending reads would break it silently; normal_test.lua pins it.
 local function first_key(ed)
   if #ed.pending > 0 then return getkey(ed) end -- RHS: raw, logged
   local k = getkey_raw(ed)
@@ -2228,6 +2237,8 @@ local function command(ed)
     elseif k2 == k then -- dd / yy / cc
       op_lines(ed, op, ed.cy, ed.cy + (total or 1) - 1, reg)
     else
+      -- Bare getkey above, so a `map` on this key cannot shadow a `:motion` on
+      -- it here the way it does for a bare press (see first_key).
       local m = motions[k2] or external_motion(ed, k2, total)
       if m then apply_operator(ed, op, m, total, reg) end
     end
@@ -2256,7 +2267,9 @@ local function command(ed)
     actions[k](ed, count1, reg)
   else
     -- Last, so a builtin binding of the same key always wins: :motion fills
-    -- unclaimed keys (`/ ? n N *`), it does not override `w`.
+    -- unclaimed keys (`/ ? n N *`), it does not override `w`. A `map` on the key
+    -- won earlier still, back in first_key -- which is why one key can carry
+    -- both, the map for this bare press and the motion for `d`+key.
     local m = external_motion(ed, k, count1)
     if m then do_motion(ed, m, count1) end
   end

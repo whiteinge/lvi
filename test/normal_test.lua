@@ -2058,6 +2058,33 @@ describe("external motions (:motion)", function()
     expect(ed2.message).to_not.exist()          -- silent when the tool says nothing
   end)
 
+  -- The property contrib/lvi-search leans on: one key carries a `map` for the
+  -- bare press and a `:motion` for the operator-pending one, because maps expand
+  -- only in first_key. Break that and `d/foo` silently starts running the map's
+  -- RHS instead of the motion, with nothing else to catch it.
+  it("a map on the same key takes the bare press, the motion takes the operator", function()
+    local ed = withmotion("aaa foo bar\nsecond\nthird",
+                          "motion / prompt sh -c 'echo char 1 5'")
+    ex.dispatch(ed, "map / G")                  -- stands in for the list producer
+    feed(ed, "/")
+    expect(ed.cy).to.equal(3)                   -- the map ran (G), not the motion
+    expect(ed.buf:nlines()).to.equal(3)
+
+    local ed2 = withmotion("aaa foo bar\nsecond\nthird",
+                           "motion / prompt sh -c 'echo char 1 5'")
+    ex.dispatch(ed2, "map / G")
+    feed(ed2, "d/foo\r")
+    expect(ed2.buf:line(1)).to.equal("foo bar") -- the motion supplied the range
+    expect(ed2.buf:nlines()).to.equal(3)        -- and G never ran
+
+    -- Registration order does not decide it; the read site does.
+    local ed3 = make("aaa foo bar\nsecond")
+    ex.dispatch(ed3, "map / G")
+    ex.dispatch(ed3, "motion / prompt sh -c 'echo char 1 5'")
+    feed(ed3, "y/foo\r")
+    expect(ed3.regs['"'].text).to.equal("aaa ")
+  end)
+
   it("a builtin binding of the same key wins", function()
     local ed = withmotion("abc", "motion x sh -c 'echo char 1 3'")
     feed(ed, "x")                               -- the builtin delete-char, not the motion
