@@ -1157,15 +1157,17 @@ below, with the happy-path rc lines that turn it on:
 	```
 
 *lvi-spell* -- spell check, as a toggle
-	Toggle spell check; while on, misspellings are marked in place and stepped,
-	with a suggestion picker and a dictionary add:
+	Toggle spell check; while on, one *spellbad* list both marks each misspelling
+	at its exact extent and steps them, with a suggestion picker and a dictionary
+	add. Theme *spellbad* (and *spellbad-cur* for the one you are on) to see them:
 
 	```
 	map \\s :bg lvi-spell<CR>
-	map ]s :bg lvi-list next spell<CR>
-	map [s :bg lvi-list prev spell<CR>
+	map ]s :bg lvi-list next spellbad<CR>
+	map [s :bg lvi-list prev spellbad<CR>
 	map z= :silent !lvi-spell fix<CR>
 	map zg :bg lvi-spell add<CR>
+	hi spellbad underline pri=20
 	```
 
 *lvi-hl-col* -- mark what runs past a column limit

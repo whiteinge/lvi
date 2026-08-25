@@ -419,11 +419,12 @@ header for the contract.
 ### `lvi-spell` — spell checking as a toggle
 
 Vim's `:set spell` but as an external script. It reads-from then writes-to the
-editor: one aspell/hunspell pass over the live buffer feeds exact word extents
-to a `spellbad` `:hl` group to show misspellings visually, and a `spell`
-list via `]s`/`[s` to step through the list. It can be toggled on and off.
-`z=` picks a correction through your `$LVI_PICKER` choice and splices it in
-place; `zg` adds the word to your personal dictionary.
+editor: one aspell/hunspell pass over the live buffer builds a `spellbad` list
+whose entries carry each misspelling's exact extent, and `--paint=extent` makes
+that list its own overlay — the words are marked where they sit, and `]s`/`[s`
+step them, off one set of positions. It can be toggled on and off. `z=` picks a
+correction through your `$LVI_PICKER` choice and splices it in place; `zg` adds
+the word to your personal dictionary.
 
 Whole-buffer for simplicity and by design — spell-checking code will
 mean some unwanted visual noise so toggle it on and off as needed. See the

@@ -3,13 +3,13 @@
 #
 # vim's `:set spell`, rebuilt outside the editor: an ispell-pipe checker
 # (aspell/hunspell) reads the LIVE buffer over the control socket, and one scan
-# feeds TWO consumers at once --
-#   * the styled :hl overlay, group `spellbad`, with exact word extents (L:C1-C2)
-#     so misspellings are marked mid-line, not with whole-line signs (as
-#     lvi-highlight does);
-#   * an `lvi-list` named `spell`, so ]s/[s step the misspellings and the status
-#     line counts them (as lvi-search does).
-# Same scan, two views of it: the overlay to read, the list to step through.
+# builds one `lvi-list` named `spellbad`, which is both views of it at once:
+#   * marked in the text, group `spellbad`, at the word's exact extent (L:C1-C2)
+#     -- mid-line, not a whole-line sign the way lvi-highlight marks;
+#   * steppable, so ]s/[s walk the misspellings and the status line counts them
+#     (as lvi-search does).
+# The overlay to read, the list to step through, one set of positions behind
+# both.
 #
 #   lvi-spell [toggle]    enable/disable (the default subcommand)
 #   lvi-spell scan        re-check now (the hook target; instant no-op when off)
@@ -29,13 +29,24 @@
 #
 # Bindings (rc):
 #     map \s :bg lvi-spell<CR>                " toggle
-#     map ]s :bg lvi-list next spell<CR>      " step misspellings (pinned keys;
-#     map [s :bg lvi-list prev spell<CR>      "  or focus the list and use n/N)
+#     map ]s :bg lvi-list next spellbad<CR>   " step misspellings (pinned keys;
+#     map [s :bg lvi-list prev spellbad<CR>   "  or focus the list and use n/N)
 #     map z= :silent !lvi-spell fix<CR>       " suggestion picker (needs the tty)
 #     map zg :bg lvi-spell add<CR>            " add word to personal dictionary
 #     hi spellbad underline pri=20            " un-themed = invisible, so theme it
-# The list's own groups (spell/spell-cur, column-1 signs) are left un-themed
-# here -- the word marks already show the spot -- but `hi spell ...` works if
+#     hi spellbad-cur underline bold pri=21   " ...and the one you are standing on
+# THE LIST PAINTS THE WORDS. Entries carry the misspelling's extent
+# (`file:LINE.COL-END: word`) and the list is put `--paint=extent`, so the one
+# `hl spellbad` lvi-list already sends per repaint IS the word overlay -- there is
+# no second paint here, and no second place the extent is computed. `spellbad-cur`
+# is the same range for the word you are stepping on, so a theme can set it apart
+# (see PAINT POLICY in contrib/lvi-list). Both are un-themed by default, which
+# renders as plain text: theme them in the rc, as above.
+#
+# The old arrangement painted `spellbad` from here and let the list sign column 1
+# separately, which meant computing every extent twice and having two writers on
+# one group. The list name IS the group name now, which is why it is `spellbad`
+# rather than `spell`.
 # you want signs too.
 #
 # SPAWN DISCIPLINES: `scan` self-backgrounds a --worker (reading the buffer
@@ -123,15 +134,18 @@ if [ -n "$worker" ]; then
         /^[&#]/ { off = ($1 == "&") ? $4 : $3; sub(/:$/, "", off)
                   print ln, off, $2 }')     # -> "LINE COL WORD" triplets
 
-  # List first (put paints its signs + status), then the word-extent overlay.
+  # One list, and the paint comes with it. Each entry carries the word's extent
+  # in GNU's `line.col-endcol`, and `--paint=extent` is what turns that into the
+  # `spellbad` overlay -- so the columns are computed once, here, and lvi-list is
+  # the only writer on the group (see THE LIST PAINTS THE WORDS).
+  # --cols=byte is explicit because the extent depends on it: aspell's offsets are
+  # byte offsets (LC_ALL=C above), and `:hl` takes byte ranges.
   # --at-cursor: a re-scan (after a fix, or just more typing) keeps your place
   # in the walk -- and on the first scan it means ]s steps FORWARD from the
   # cursor, vim's ]s posture, rather than from the top of the file.
-  printf '%s\n' "$found" | awk -v f="$fname" 'NF { print f ":" $1 ":" $2 ": " $3 }' \
-    | lvi-list $wflag put spell --at-cursor
-  specs=$(printf '%s\n' "$found" \
-    | LC_ALL=C awk 'NF { printf " %s:%s-%s", $1, $2, $2 + length($3) - 1 }')
-  send "hl spellbad$specs"                  # empty specs = clear -- one branch
+  printf '%s\n' "$found" \
+    | LC_ALL=C awk -v f="$fname" 'NF { print f ":" $1 "." $2 "-" ($2 + length($3) - 1) ": " $3 }' \
+    | lvi-list $wflag put spellbad --at-cursor --cols=byte --paint=extent
   exit 0
 fi
 
@@ -151,9 +165,8 @@ spell_on() {
 }
 
 spell_off() {
-  rm -f "$flag"                             # first: gates any in-flight scan
-  send 'hl spellbad'
-  lvi-list $wflag drop spell 2>/dev/null    # unpaints signs + clears the counter
+  rm -f "$flag"                                 # first: gates any in-flight scan
+  lvi-list $wflag drop spellbad 2>/dev/null     # clears the marks and the counter
 }
 
 spell_fix() {

@@ -320,16 +320,17 @@ hi lint-cur bg=124 pri=11
 " ---- spell check ------------------------------------------------------- {{{
 
 " lvi-spell is a toggle (vim's :set spell): while on, the buffer re-checks as
-" you type -- misspelled words get exact-extent `spellbad` marks plus a `spell`
-" list to step. The toggle installs its own change/bufenter hooks once per
-" view, so do NOT add them here; everything below is keys and theme. Fix/add
+" you type, and one `spellbad` list both marks each misspelling at its exact
+" extent and steps them. The toggle installs its own change/bufenter hooks once
+" per view, so do NOT add them here; everything below is keys and theme. Fix/add
 " keep vim's native z-keys (z=, zg); the toggle is the one leader leaf (\s).
-map \s :bg lvi-spell<CR>               " toggle
-map ]s :bg lvi-list next spell<CR>     " step misspellings
-map [s :bg lvi-list prev spell<CR>
-map z= :silent !lvi-spell fix<CR>      " pick a suggestion for the word under
-map zg :bg lvi-spell add<CR>           " the cursor / add it to the dictionary
-hi spellbad underline pri=20           " the word marks themselves
+map \s :bg lvi-spell<CR>                  " toggle
+map ]s :bg lvi-list next spellbad<CR>     " step misspellings
+map [s :bg lvi-list prev spellbad<CR>
+map z= :silent !lvi-spell fix<CR>         " pick a suggestion for the word under
+map zg :bg lvi-spell add<CR>              " the cursor / add it to the dictionary
+hi spellbad underline pri=20              " the word marks themselves
+hi spellbad-cur underline bold pri=21     " ...and the one you are standing on
 
 " }}}
 " ---- invisible characters ---------------------------------------------- {{{

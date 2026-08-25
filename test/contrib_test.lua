@@ -336,6 +336,66 @@ describe("contrib", function()
       cleanup(d); cleanup(e)
     end)
 
+    -- A fake ispell -a pipe, so the test needs no aspell: banner, then per input
+    -- line a `# WORD OFFSET` for each hit and a blank to close it. OFFSET is
+    -- 0-based counting lvi-spell's own `^` escape, which lands on the real line's
+    -- 1-based byte column -- the two adjustments cancel.
+    -- A file, not an inline command: the env goes into the wrapper as
+    -- export VAR='...', so a value with a quote in it would not survive.
+    local function fakespell(d)
+      local path = d .. "/fakespell"
+      write(path, "#!/bin/sh\n" ..
+        [[exec awk 'BEGIN{print "@(#) Fake Ispell"} NR==1{next} ]] ..
+        [[{ split("brwn jumpd", w, " "); for (i in w) { p = index($0, w[i]); ]] ..
+        [[if (p) printf "# %s %d\n", w[i], p - 1 } print "" }']] .. "\n")
+      os.execute("chmod +x '" .. path .. "'")
+      return path
+    end
+
+    -- One list is both views of the scan: the entries carry each misspelling's
+    -- extent, and --paint=extent is what marks the words. No second paint, and no
+    -- second place the columns are computed.
+    it("lvi-spell puts word extents and lets the list paint them", function()
+      local d = stub({ buffer = "the quick brwn fox\njumpd over\n", path = "doc.txt\n" })
+      write(d .. "/sock.spell", "")                 -- the enabled flag
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+                    LVI_FILE = "doc.txt", LVI_LINE = "1", LVI_COL = "1",
+                    LVI_SPELL_CMD = fakespell(d),
+                    PATH = pwd .. "/contrib:" .. os.getenv("PATH") }
+      run(env, "contrib/lvi-spell --worker")
+      expect(read(d .. "/sock.lists/spellbad")).to.equal(
+        "doc.txt:1.11-14: brwn\ndoc.txt:2.1-5: jumpd\n")
+      expect(read(d .. "/sock.lists/spellbad.paint")).to.equal("extent\n")
+      expect(read(d .. "/sock.lists/spellbad.cols")).to.equal("byte\n")
+      local log = read(d .. "/log")
+      expect(log:find("hl spellbad 1:11%-14 2:1%-5")).to.exist()
+      expect(log:find("status spellbad %[0/2%] spellbad")).to.exist()
+      -- stepping moves the cursor onto the word and marks that one apart
+      run(env, "contrib/lvi-list next spellbad")
+      log = read(d .. "/log")
+      expect(log:find("\npos 1 11 byte jump\n")).to.exist()
+      expect(log:find("\nhl spellbad%-cur 1:11%-14\n")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-spell off drops the list, which is what clears the marks", function()
+      local d = stub({ buffer = "brwn\n", path = "doc.txt\n" })
+      write(d .. "/sock.spell", "")
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+                    LVI_FILE = "doc.txt", LVI_LINE = "1", LVI_COL = "1",
+                    LVI_SPELL_CMD = fakespell(d),
+                    PATH = pwd .. "/contrib:" .. os.getenv("PATH") }
+      run(env, "contrib/lvi-spell --worker")
+      write(d .. "/log", "")
+      run(env, "contrib/lvi-spell off")
+      local log = read(d .. "/log")
+      expect(log:find("hl spellbad\n")).to.exist()       -- empty paint == cleared
+      expect(log:find("hl spellbad%-cur\n")).to.exist()
+      expect(log:find("status spellbad\n")).to.exist()
+      expect(exists(d .. "/sock.spell")).to.equal(false)  -- and the toggle is off
+      cleanup(d)
+    end)
+
     it("lvi-search --worker reports no-match via msge and clears the paint", function()
       local d = stub({ buffer = "haystack\n", path = "x.txt\n" })
       run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "x.txt" },
