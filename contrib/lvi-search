@@ -1,30 +1,68 @@
 #!/bin/sh
-# lvi-search [-w auto|WID] [-i] [-b] [PATTERN]
+# lvi-search [-w auto|WID] [-i] [-b] [--word] [--last] [PATTERN]
+# lvi-search --motion [-i] [-b] [--word] [--last] TMPFILE COUNT LINE COL ARG
 #
-# Search a running lvi from outside it, as a `lvi-list` producer: grep the *live*
-# buffer over the control socket, build the `search` list, focus it, and jump to
-# the first match past the cursor. `n`/`N` then step it like any other list --
-# search is just a degenerate quickfix. Because it reads the buffer via `%p` it searches UNSAVED
-# content, and the line numbers map straight back. PATTERN is a POSIX BRE, vi's
-# own dialect.
+# Search a running lvi from outside it, in two shapes. As a LIST producer it
+# greps the *live* buffer over the control socket, builds the `search` list,
+# focuses it, and jumps to the first match past the cursor -- `n`/`N` then step
+# it like any other list, so search is a degenerate quickfix. As a `:motion`
+# FILTER (`--motion`) it answers with one target instead, which is the half a
+# list cannot be: an operator needs its range before the command finishes, and a
+# list arrives over the socket afterwards, so `d/foo` is not something the list
+# shape can do.
 #
-# Bind it inside lvi (WID comes from $LVI_WID). `/` prompts, so it needs the tty
-# (`:silent !`); the rest touch no tty, so they use `:bg` -- a detached spawn with
-# no terminal handover, which avoids the alt-screen flash when you hold n/N:
-#     map / :silent !lvi-search<CR>             " prompt for a pattern
+# Because it reads the buffer via `%p` it searches UNSAVED content, and the line
+# numbers map straight back. PATTERN is a POSIX BRE, vi's own dialect.
+#
+# BOTH SHAPES, SAME KEYS. A `map` and a `motion` on one key do not collide: lvi
+# expands maps only for the FIRST key of a command (normal.lua's `first_key`), so
+# a bare press takes the map and an operator-pending press takes the motion.
+# `/` gives you every hit to walk; `d/` deletes to the next one. Bind both:
+#     map / :silent !lvi-search<CR>             " prompt, then walk the list
 #     map ? :silent !lvi-search -b<CR>          " ...searching backward
-#     map * :bg lvi-search "$LVI_CWORD"<CR>     " search the word under the cursor
-#     map # :bg lvi-search -b "$LVI_CWORD"<CR>  " ...backward
+#     map * :bg lvi-search --word<CR>           " the word under the cursor
+#     map # :bg lvi-search --word -b<CR>        " ...backward
 #     map n :bg lvi-list next<CR>               " step the focused list
 #     map N :bg lvi-list prev<CR>
+#     motion / prompt lvi-search --motion       " d/foo, c/foo, y/foo
+#     motion ? prompt lvi-search --motion -b    " d?foo
+#     motion * lvi-search --motion --word       " d*
+#     motion # lvi-search --motion --word -b
 # From another terminal, pass a WID: `lvi-search -w auto foo`.
 #
-# WHERE A SEARCH STARTS: at the cursor, as vi's does. The list is seeded from
-# the cursor position (`lvi-list put --at-cursor`) and then stepped, so the
-# first hop lands on the match AFTER the cursor rather than at the top of the
-# file. `-b` is the backward search, vi's `?` and `#`: the mirror seed, then a
-# step back. A search that ignored the cursor would just be a project-wide grep
-# narrowed to one file, which is a different tool.
+# `n`/`N` are deliberately NOT motions here. Bare `n` steps whichever list is
+# focused -- lint, spell, git hunks -- so a `dn` that meant "to the next search
+# match" would not mirror it. To delete back to a point you reached by stepping
+# a list, use the previous-context mark instead -- `d` then two backticks. Every
+# list step is jump-class, so the mark is already where you left. Add
+# `motion n lvi-search --motion --last` if you
+# want it anyway; it is well defined (the next match of the last pattern), just
+# not the same place `n` goes.
+#
+# WHY ONE SCRIPT. The two shapes share the pattern, the case policy, the BRE
+# dialect and the matcher. Split across two programs, "the last pattern" was a
+# contract two stores had to keep in step by hand, and `/foo` followed by `d/`
+# could disagree. One program owns it, so they cannot.
+#
+# TWO INVOCATION STYLES, TWO SPAWN DISCIPLINES -- the one thing to know before
+# editing. The list half is a self-backgrounding socket client: reading the
+# buffer from a `:silent !` child would deadlock, since lvi's loop is frozen
+# waiting on that child, so it double-forks a worker and returns at once. The
+# motion half must do neither. The editor blocks on our stdout, so backgrounding
+# loses the answer, and a socket call deadlocks for the same reason in reverse:
+# nothing is servicing the socket while we run. `--motion` therefore has to be
+# the FIRST argument, and it switches the whole program -- argv shape, output,
+# error reporting. The two halves share only the helpers above the dispatch, all
+# of which are pure.
+#
+# WHERE A SEARCH STARTS: at the cursor, as vi's does. The list is seeded from the
+# cursor position (`lvi-list put --at-cursor`) and then stepped, so the first hop
+# lands on the match AFTER the cursor rather than at the top of the file. `-b` is
+# the backward search, vi's `?` and `#`: the mirror seed, then a step back. A
+# search that ignored the cursor would just be a project-wide grep narrowed to
+# one file, which is a different tool. The motion shape takes the COUNTth match
+# strictly past the cursor for the same reason, so `/` never lands where you
+# already are and `3/foo` skips two.
 #
 # THE MATCHER, and why it is not grep. Entries carry the match's EXTENT
 # (`file:LINE.C1-C2:`), one per OCCURRENCE, so a second match further along a
@@ -33,28 +71,42 @@
 # the shared backend: it speaks vi's BRE and reports POSITIONS, which no single
 # obvious tool does (grep will not say where a match sits, awk speaks ERE), by
 # marking each match with sed and counting the offsets. It hands back
-# LINE<TAB>COL<TAB>LEN per occurrence and we shape those into entries; see its
-# header for the mechanism, the case-folding fallback and the exit codes.
+# LINE<TAB>COL<TAB>LEN per occurrence and we shape those into entries or into one
+# target; see its header for the mechanism, the case-folding fallback and the
+# exit codes.
 #
-# Two limits, both loud rather than silent: a zero-width match (`o*`, `^`) has no
-# extent, so it lands as a bare `LINE.COL` entry; and a marker byte in the
-# pattern or in the buffer -- a binary file, in practice -- falls back to `grep
-# -n`, whose per-line entries are what this script emitted before. (See
-# contrib/lvi-list for the entry format and who reads a column.)
+# Two limits on the list side, both loud rather than silent: a zero-width match
+# (`o*`, `^`) has no extent, so it lands as a bare `LINE.COL` entry; and a marker
+# byte in the pattern or in the buffer -- a binary file, in practice -- falls back
+# to `grep -n`, whose per-line entries are what this script emitted before. The
+# motion side has nowhere to put either, so a zero-width match is skipped and a
+# marker byte is an error. (See contrib/lvi-list for the entry format and who
+# reads a column.)
 #
-# TWO DEVIATIONS FROM VI, both from search being a list you walk rather than a
-# motion the editor repeats:
+# THREE DEVIATIONS FROM VI, all from the list being a walk rather than a motion
+# the editor repeats. They apply to the LIST shape only; the motion shape is vi's
+# on all three:
 #   * No WRAPSCAN. A list is a walk with two ends, not a ring, so `n` stops on
 #     the last match -- the status segment says `(end)` -- instead of resuming
-#     from the top. `lvi-list first`/`last` are the wrap, done by hand.
+#     from the top. `lvi-list first`/`last` are the wrap, done by hand. The
+#     motion wraps, because a motion that stops dead at the end of the buffer is
+#     not the motion vi has.
 #   * `n` does not inherit the DIRECTION of the last search. n/N are plain
 #     `lvi-list next`/`prev` and a list remembers only its index, not which way
 #     it was seeded, so after a `?` it is `N` that keeps going backward.
+#   * `n` walks a SNAPSHOT. The list is the buffer as it was when you searched;
+#     the motion re-runs the matcher against the buffer as it is now, so nothing
+#     goes stale as you type.
 #
-# It self-backgrounds a --worker: reading the buffer needs lvi's event loop,
-# which is frozen while this `:silent !` child runs, so a foreground read would
-# deadlock (same reason lvi-highlight self-backgrounds). The pattern PROMPT,
-# though, runs in the foreground -- a backgrounded worker has no tty.
+# THE LAST PATTERN is ours, in `$LVI_SOCK.search-pat`, written by both shapes so
+# they always agree. It records how the search MATCHED and not just what it
+# matched -- whole-word-ness and the resolved case folding travel with the
+# pattern -- so `--last` repeats the search exactly as it was made, whatever the
+# case policy has done since. An empty ARG reuses it too, so a bare `/<CR>`
+# repeats the last search the way vi's does. The list shape writes it in the
+# FOREGROUND, before the worker forks, so a `d/` pressed immediately after cannot
+# race it. A search driven from another terminal (`-w`) has no $LVI_SOCK of its
+# own and so leaves the store alone.
 #
 # Case: -i forces case-insensitive; LVI_SEARCH_CASE picks the default policy --
 # `sensitive` (default), `ignore`, or `smart` (the vi/vim rule: insensitive unless
@@ -63,21 +115,132 @@
 # How the folding is done (sed's `I` flag where there is one, `tr` where there is
 # not) is lvi-bre-locate's business, not ours.
 #
+# `--word` keeps only whole-word matches (grep's -w) and is what makes `*`
+# behave. Where the word comes from differs by shape, because the `$LVI_*` env is
+# refreshed only for ordinary spawns and a `:motion` filter is not one: the list
+# shape reads `$LVI_CWORD`, the motion shape reads it off TMPFILE itself. The
+# boundary test is the backend's.
+#
 # Config: LVI (client, default `lvi`), LVI_SEARCH_CASE (sensitive|ignore|smart),
-# LVI_SEARCH_DEBUG (capture worker stderr). Needs lvi-list and lvi-bre-locate on
-# PATH.
+# LVI_SEARCH_DEBUG (capture worker stderr). Needs lvi-bre-locate on PATH, and
+# lvi-list for the list shape (the motion shape needs neither it nor the socket).
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 
-worker= want_wid= icase= back= pat=
+worker= want_wid= icase= back= word= last= pat= fromstore=
+
+# ---- the shared pattern store ------------------------------------------------
+# Three fields: whole-word-ness, the RESOLVED case folding, then the pattern
+# (last, so it may hold anything). Storing the resolved folding rather than
+# re-deciding at repeat time is what makes a repeat exact -- the policy can be
+# per-binding, and `--last` must not pick up a different one.
+store=${LVI_SOCK:+$LVI_SOCK.search-pat}
+
+store_put() {                                   # word icase pattern
+  [ -n "$store" ] || return 0
+  printf '%s\n%s\n%s\n' "$1" "$2" "$3" > "$store" 2>/dev/null || :
+}
+store_get() {                                   # sets word/icase/pat; 1 if none
+  [ -n "$store" ] && [ -f "$store" ] || return 1
+  word=$(sed -n 1p "$store")
+  icase=$(sed -n 2p "$store")
+  pat=$(sed -n '3,$p' "$store")
+  [ -n "$pat" ] && fromstore=1
+}
+# An explicit -i wins; otherwise the policy decides. Never called on a pattern
+# that came from the store -- that one carries its own answer.
+resolve_case() {
+  [ -n "$icase" ] && return 0
+  case "${LVI_SEARCH_CASE:-sensitive}" in
+    ignore) icase=1 ;;
+    smart)  case "$1" in *[[:upper:]]*) ;; *) icase=1 ;; esac ;;
+  esac
+}
+
+# ---- the motion shape --------------------------------------------------------
+# First, and self-contained: no socket, no background, one line on stdout. See
+# TWO INVOCATION STYLES. The editor appends five positionals, so flag parsing
+# stops when five remain -- an ARG that looks like a flag is still an ARG.
+if [ "${1:-}" = --motion ]; then
+  shift
+  while [ $# -gt 5 ]; do
+    case $1 in
+      -b|--back) back=1; shift ;;
+      --word)    word=1; shift ;;
+      --last)    last=1; shift ;;
+      -i)        icase=1; shift ;;
+      *)         break ;;
+    esac
+  done
+  [ $# -eq 5 ] || { echo "err lvi-search --motion: bad arguments"; exit 0; }
+  tmpf=$1 count=$2 cl=$3 cc=$4 arg=$5
+
+  # The pattern, from one of three places. `--word` reads it off the buffer;
+  # --last and an empty prompt read the store (restoring how that search
+  # matched, so a repeat is exact); otherwise it is what was typed.
+  if [ -n "$word" ]; then
+    pat=$(LC_ALL=C awk -v l="$cl" -v c="$cc" 'NR == l {
+            s = $0
+            # Walk out from the cursor byte to the word edges (vi word bytes).
+            if (substr(s, c, 1) !~ /[[:alnum:]_]/) exit
+            a = c; while (a > 1 && substr(s, a - 1, 1) ~ /[[:alnum:]_]/) a--
+            b = c; while (b < length(s) && substr(s, b + 1, 1) ~ /[[:alnum:]_]/) b++
+            print substr(s, a, b - a + 1)
+          }' "$tmpf")
+    [ -n "$pat" ] || { echo "err no word under the cursor"; exit 0; }
+    resolve_case "$pat"
+  elif [ -n "$last" ] || [ -z "$arg" ]; then
+    store_get || { echo "err no previous search"; exit 0; }
+  else
+    pat=$arg
+    resolve_case "$pat"
+  fi
+
+  hits=$(lvi-bre-locate ${icase:+-i} ${word:+--word} -- "$pat" "$tmpf" 2>/dev/null)
+  case $? in
+    0) ;;
+    2|4) echo "err bad pattern: $pat"; exit 0 ;;
+    3) echo "err buffer holds a marker byte"; exit 0 ;;
+    *) echo "err lvi-search: lvi-bre-locate failed (is it on PATH?)"; exit 0 ;;
+  esac
+
+  # Remember it, unless we just read it back. Rewriting on every `n` would churn
+  # the file to say what it already says.
+  [ -z "$fromstore" ] && store_put "$word" "$icase" "$pat"
+
+  printf '%s\n' "$hits" | LC_ALL=C awk -F'\t' -v back="$back" -v n="$count" \
+                                       -v cl="$cl" -v cc="$cc" '
+    $3 > 0 { k++; L[k] = $1; C[k] = $2 }          # zero-width: nowhere to land
+    END {
+      if (!k) { print "err pattern not found"; exit }
+      # The COUNTth match past the cursor, wrapping at the end -- vi wrapscan.
+      # The list is in buffer order, so forward walks it up from the first match
+      # past the cursor and backward walks it down from the last one before.
+      step = back ? -1 : 1
+      start = 0
+      if (!back) { for (i = 1; i <= k; i++) if (L[i] > cl || (L[i] == cl && C[i] > cc)) { start = i; break }
+                   if (!start) start = 1 }                     # everything behind: wrap
+      else       { for (i = k; i >= 1; i--) if (L[i] < cl || (L[i] == cl && C[i] < cc)) { start = i; break }
+                   if (!start) start = k }                     # everything ahead: wrap
+      idx = start + (n - 1) * step
+      # Wrap the count too, so 5/foo in a three-match buffer keeps going round.
+      idx = ((idx - 1) % k + k) % k + 1
+      printf "char %d %d\n", L[idx], C[idx]
+    }'
+  exit 0
+fi
+
+# ---- the list shape ----------------------------------------------------------
 while [ $# -gt 0 ]; do
   case $1 in
     --worker) worker=1; shift ;;
     -w) want_wid=${2:-}; [ -n "$want_wid" ] || { echo "lvi-search: -w needs auto|WID" >&2; exit 2; }; shift 2 ;;
     -i) icase=1; shift ;;
     -b) back=1; shift ;;
+    --word) word=1; shift ;;
+    --last) last=1; shift ;;
     --) pat=${2:-}; break ;;          # end of flags: what follows is the pattern
     *)  pat=$1; break ;;
   esac
@@ -88,18 +251,36 @@ wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 dir=/; seed=--at-cursor;      step=next
 [ -n "$back" ] && { dir='?'; seed=--at-cursor-back; step=prev; }
 
-# Prompt in the foreground (where `:!` handed us the tty). Skip when a pattern
-# was supplied (e.g. `*` passes $LVI_CWORD) or when we are already the worker.
-if [ -z "$worker" ] && [ -z "$pat" ]; then
-  printf '%s' "$dir" >&2                          # prompt with the key you pressed
-  IFS= read -r pat || exit 0
-  [ -n "$pat" ] || exit 0
-fi
+# A notice with no tty to print on and a loop that may be frozen: background it,
+# so this is safe from a `:silent !` child as well as a `:bg` one.
+notify() { ( "$LVI" -w "$target" --detach -- "$@" >/dev/null 2>&1 & ) ; }
 
-# Detach the buffer-reading half; return at once so lvi's loop resumes and can
-# service the worker's socket traffic.
+# Resolve the pattern in the FOREGROUND -- this is where the tty is (`:!` handed
+# it to us) and where the store write has to happen, before the worker forks.
 if [ -z "$worker" ]; then
-  ( "$0" --worker $wflag ${icase:+-i} ${back:+-b} -- "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
+  if [ -n "$word" ]; then
+    pat=${LVI_CWORD:-}
+    [ -n "$pat" ] || { notify "msge no word under the cursor"; exit 0; }
+    resolve_case "$pat"
+  elif [ -n "$last" ]; then
+    store_get || { notify "msge no previous search"; exit 0; }
+  else
+    if [ -z "$pat" ]; then
+      printf '%s' "$dir" >&2                      # prompt with the key you pressed
+      IFS= read -r pat || exit 0
+      [ -n "$pat" ] || exit 0
+    fi
+    resolve_case "$pat"
+  fi
+  # Before the fork: a `d/` pressed the instant this returns must not race the
+  # worker for the store (see THE LAST PATTERN).
+  [ -z "$fromstore" ] && store_put "$word" "$icase" "$pat"
+
+  # Detach the buffer-reading half; return at once so lvi's loop resumes and can
+  # service the worker's socket traffic. The case folding is passed resolved, so
+  # the worker never has to decide it a second time.
+  ( "$0" --worker $wflag ${icase:+-i} ${back:+-b} ${word:+--word} -- "$pat" \
+      >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
   exit 0
 fi
 
@@ -111,22 +292,10 @@ fi
 # cross-file :e in the first place.
 file=${LVI_FILE:-$("$LVI" -w "$target" -- path)}
 
-# Resolve case policy: an explicit -i wins, else LVI_SEARCH_CASE decides (smart
-# looks for an uppercase letter in the pattern, so a locale-aware [[:upper:]]).
-iflag=
-if [ -n "$icase" ]; then
-  iflag=-i
-else
-  case "${LVI_SEARCH_CASE:-sensitive}" in
-    ignore) iflag=-i ;;
-    smart)  case "$pat" in *[[:upper:]]*) ;; *) iflag=-i ;; esac ;;
-  esac
-fi
-
 # Validate the pattern BEFORE reading the buffer -- `PATTERN /dev/null` runs
 # lvi-bre-locate's checks against no input at all -- so a typo costs nothing and
 # is reported where there is still someone to tell.
-lvi-bre-locate ${iflag:+-i} -- "$pat" /dev/null 2>/dev/null
+lvi-bre-locate ${icase:+-i} -- "$pat" /dev/null 2>/dev/null
 case $? in
   2) "$LVI" -w "$target" --detach -- "hl search" "hl search-cur" "status search" \
                                      "msge bad pattern $dir$pat$dir"
@@ -143,7 +312,7 @@ trap 'rm -f "$buf" "$hits"' EXIT HUP INT TERM
 "$LVI" -w "$target" -- '%p' > "$buf"
 
 # LINE<TAB>COL<TAB>LEN per occurrence, in vi's own BRE (see THE MATCHER).
-lvi-bre-locate ${iflag:+-i} -- "$pat" "$buf" > "$hits" 2>/dev/null
+lvi-bre-locate ${icase:+-i} ${word:+--word} -- "$pat" "$buf" > "$hits" 2>/dev/null
 locate=$?
 if [ "$locate" = 0 ]; then
   # A zero-width match (`o*`, `^`) has a position and no extent, so it lands as a
@@ -156,7 +325,7 @@ else
   # Marker bytes in the pattern (4) or in the buffer (3): no extents are
   # trustworthy, so fall back to `grep -n` and the per-line entries this script
   # emitted before the marker pass existed.
-  matches=$(grep -n $iflag -- "$pat" "$buf" | awk -v f="$file" '{print f":"$0}')
+  matches=$(grep -n ${icase:+-i} ${word:+-w} -- "$pat" "$buf" | awk -v f="$file" '{print f":"$0}')
 fi
 if [ -z "$matches" ]; then
   # Clear the paint (both groups -- the current-entry mark would otherwise stay
