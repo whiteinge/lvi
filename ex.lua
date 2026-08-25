@@ -10,6 +10,7 @@
 
 local bufs = require("bufs")
 local buffer = require("buffer")
+local disp = require("disp")   -- :pos converts a char/display column to a byte
 local vpath = require("path")   -- `path` the name is taken by locals below
 
 local M = {}
@@ -1383,8 +1384,8 @@ def("fire", function(ed, c)
   return "", "ok"
 end)
 
--- :pos [LINE [COL]] -- query or set the cursor. Bare :pos reports line<TAB>col
--- (COL is a 1-based BYTE column, matching :marks and Vim's `" mark). With
+-- :pos [LINE [COL [UNIT]]] -- query or set the cursor. Bare :pos reports
+-- line<TAB>col (a 1-based BYTE column, matching :marks and Vim's `" mark). With
 -- arguments it MOVES the cursor there: the byte-exact setter contrib/lvi-pos
 -- needs to restore a saved column, and normal-mode motions can't reach one --
 -- `l` steps by character and `|` by display column, so neither lands on a raw
@@ -1392,14 +1393,43 @@ end)
 -- jumplist entry; LINE/COL are clamped into the buffer (a position that
 -- outlived an edit lands as near as it can, viminfo's tolerance), and refresh's
 -- normal.clamp gives the resting column its final char-aware snap.
+--
+-- UNIT says what COL counts, because the tools that name a column do not agree
+-- and the number alone cannot say which they meant. `byte` (the default, and
+-- lvi's own unit everywhere else), `char` (a UTF-8 character, what most linters
+-- report), or `display` (a screen cell, tabs expanded -- what the GNU Coding
+-- Standards prescribe for compiler diagnostics, and what gcc emits). The three
+-- coincide for ASCII text with no tabs, which is why a mismatch is invisible
+-- until it isn't. Converting is the editor's job and only the editor's: the
+-- line's bytes are needed to do it, and a tool driving the socket does not have
+-- them (contrib/lvi-list records its list's unit and passes it here).
+--
+-- `display` counts tab stops at the view's own `tabstop`, since that is what
+-- lvi's `|` means and what the screen shows. GNU fixes them at 8 -- as does
+-- lvi's default -- so a GNU column is exact unless you have changed it.
 def("pos", function(ed, c)
   if c.args == "" then return ed.cy .. "\t" .. ed.cx, "ok" end
-  local l, col = c.args:match("^(%d+)%s+(%d+)$")
+  local l, col, unit = c.args:match("^(%d+)%s+(%d+)%s+(%a+)$")
+  if not l then l, col = c.args:match("^(%d+)%s+(%d+)$") end
   l = l or c.args:match("^(%d+)$")
-  if not l then return "usage: pos [LINE [COL]]", "err" end
+  if not l then return "usage: pos [LINE [COL [byte|char|display]]]", "err" end
+  if unit and unit ~= "byte" and unit ~= "char" and unit ~= "display" then
+    return "pos: unknown column unit: " .. unit, "err"
+  end
   ed.cy = clampline(ed, tonumber(l))
-  local len = #(ed.buf:line(ed.cy) or "")
-  ed.cx = math.max(1, math.min(col and tonumber(col) or 1, math.max(1, len)))
+  local line = ed.buf:line(ed.cy) or ""
+  local cx = col and tonumber(col) or 1
+  if col and unit == "display" then
+    cx = disp.byte_at_dispcol(line, ed.opts.tabstop, cx - 1)
+  elseif col and unit == "char" then
+    local i = 1
+    for _ = 2, cx do
+      if i > #line then break end
+      i = disp.next_char(line, i)
+    end
+    cx = i
+  end
+  ed.cx = math.max(1, math.min(cx, math.max(1, #line)))
   return "", "ok"
 end)
 

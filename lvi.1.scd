@@ -782,11 +782,19 @@ spaces and tabs included.
 	segments render in _name_ order. Generic -- an external tool drives it (a
 	list's *[3/57]* counter, a git branch), the way *hl* drives highlights.
 
-*f*, *pos* [_line_ [_col_]], *echo* _text_, *silent* _cmd_
+*f*, *pos* [_line_ [_col_ [_unit_]]], *echo* _text_, *silent* _cmd_
 	Show the file name and line count; with no argument report the cursor as
-	_line_<TAB>_col_, or with arguments move it there (_col_ is a byte column,
-	clamped into the buffer, and unlike a motion it leaves no jumplist entry);
-	echo _text_; run _cmd_ suppressing its interactive prompt.
+	_line_<TAB>_col_, or with arguments move it there (clamped into the buffer,
+	and unlike a motion it leaves no jumplist entry); echo _text_; run _cmd_
+	suppressing its interactive prompt.
+
+	_col_ is a byte column, both reported and set. A tool that got its column
+	from somewhere else says so with _unit_: *byte* (the default), *char* (a
+	UTF-8 character, what most linters count), or *display* (a screen cell with
+	tabs expanded, what the GNU Coding Standards prescribe for compiler
+	diagnostics). Only the editor can convert one to another, since only it has
+	the line's bytes. The three agree on ASCII text without tabs. *display*
+	expands tabs at this view's *tabstop*; GNU assumes 8, which is the default.
 
 *path*
 	The buffer's file path, machine-readable: exactly the path (the value hooks

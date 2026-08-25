@@ -751,6 +751,30 @@ describe("ex.dispatch", function()
     it(":pos rejects a non-numeric argument", function()
       expect(select(2, ex.dispatch(ed_with("x"), "pos foo"))).to.equal("err")
     end)
+    -- The three units a producer may have counted in. A tab-indented line is
+    -- where a GNU/gcc display column diverges (tab stops at 8), and a multibyte
+    -- line is where a linter's character column does.
+    it(":pos UNIT converts a display column to a byte", function()
+      local ed = ed_with("\tundefined_thing();")
+      ex.dispatch(ed, "pos 1 9 display")        -- gcc's column for the token
+      expect(ed.cx).to.equal(2)                 -- the byte after the tab
+    end)
+    it(":pos UNIT converts a character column to a byte", function()
+      local ed = ed_with("na\195\175ve caf\195\169 tail")
+      ex.dispatch(ed, "pos 1 7 char")           -- the 7th character, `c`
+      expect(ed.cx).to.equal(8)
+      ex.dispatch(ed, "pos 1 7 byte")           -- same number, other unit
+      expect(ed.cx).to.equal(7)
+    end)
+    it(":pos UNIT byte is the default, and an unknown unit errors", function()
+      local ed = ed_with("\tabc")
+      ex.dispatch(ed, "pos 1 2 byte")
+      expect(ed.cx).to.equal(2)
+      ex.dispatch(ed, "pos 1 2")
+      expect(ed.cx).to.equal(2)
+      expect(select(2, ex.dispatch(ed, "pos 1 2 furlongs"))).to.equal("err")
+      expect(ed.cx).to.equal(2)                 -- and does not move the cursor
+    end)
     it(":top reports the viewport top line", function()
       local ed = ed_with("a\nb\nc\nd"); ed.top = 2
       expect((ex.dispatch(ed, "top"))).to.equal("2")
