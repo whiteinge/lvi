@@ -1466,6 +1466,73 @@ describe("contrib", function()
         cleanup(d); cleanup(bin)
       end)
 
+      -- The bug this closes: $LVI_FILE is the path AS OPENED, so `lvi doc.txt`
+      -- puts a RELATIVE name in the environment. Resolved against a shell that
+      -- has cd'd, that names a different file -- and lvi-rm deleted it.
+      it("resolves a relative $LVI_FILE against lvi's cwd, not the shell's", function()
+        local d = stub({})
+        local dir = tmpdir()
+        os.execute("mkdir -p '" .. dir .. "/sub'")
+        write(dir .. "/doc.txt", "the editor's file\n")
+        write(dir .. "/sub/doc.txt", "an innocent bystander\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "doc.txt", LVI_CWD = dir }
+        bash(env, "cd " .. dir .. "/sub && lvi-rm")
+        expect(exists(dir .. "/doc.txt")).to.be(false)        -- the right one
+        expect(exists(dir .. "/sub/doc.txt")).to.be(true)     -- the bystander
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("lvi-mv takes its destination from the shell's cwd", function()
+        local d = stub({})
+        local dir = tmpdir()
+        os.execute("mkdir -p '" .. dir .. "/sub'")
+        write(dir .. "/doc.txt", "x\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "doc.txt", LVI_CWD = dir }
+        -- source resolved against lvi's cwd, destination against this shell's
+        bash(env, "cd " .. dir .. "/sub && lvi-mv moved.txt")
+        expect(exists(dir .. "/sub/moved.txt")).to.be(true)
+        expect(read(d .. "/log")).to.equal("f -- " .. dir .. "/sub/moved.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("captures lvi's cwd at source time, before any cd", function()
+        local dir = tmpdir()
+        local out = bash({ LVI = STUB, LVI_WID = "w1" },
+                         "cd " .. dir .. " && printf %s \"$LVI_CWD\"")
+        expect(out).to_not.equal(dir)                        -- not where we cd'd
+        expect(out:find("lvi", 1, true)).to.exist()          -- the repo we sourced from
+        cleanup(dir)
+      end)
+
+      -- Outside a shell-out there is no LVI_CWD, so a relative path from :path
+      -- cannot be resolved. Guessing is what deleted the wrong file, so refuse.
+      it("refuses a relative path when lvi's cwd is unknowable", function()
+        local d = stub({ path = "doc.txt\n" })
+        local env = { LVI = STUB, STUB_DIR = d }             -- no LVI_WID, no LVI_CWD
+        local out, ok = bash(env, "lvi-rm")
+        expect(ok).to_not.be.truthy()
+        expect(out:find("relative path", 1, true)).to.exist()
+        expect(read(d .. "/log")).to.equal("path\n")         -- asked, then stopped
+        cleanup(d)
+      end)
+
+      -- lvi-sudow is exempt: its command leaves "$LVI_FILE" for the editor's
+      -- own shell to expand, in the editor's cwd, so relative is already right.
+      it("lvi-sudow works with a relative path outside a shell-out", function()
+        local d = stub({ path = "doc.txt\n" })
+        local bin = tmpdir()
+        write(bin .. "/sudo", "#!/bin/sh\nexit 0\n")
+        os.execute("chmod +x '" .. bin .. "/sudo'")
+        local env = { LVI = STUB, STUB_DIR = d, PATH = bin }   -- no LVI_WID
+        local _, ok = bash(env, "lvi-sudow")
+        expect(ok).to.be.truthy()
+        expect(read(d .. "/log")).to.equal(
+          'path\nw !sudo tee -- "$LVI_FILE" > /dev/null\ne!\n')
+        cleanup(d); cleanup(bin)
+      end)
+
       it("lvi-help lists every command it ships", function()
         local out = bash({ LVI = STUB }, "lvi-help")
         for _, fn in ipairs({ "lvi-e", "lvi-r", "lvi-saveas", "lvi-mv",

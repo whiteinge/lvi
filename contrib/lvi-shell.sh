@@ -51,6 +51,14 @@
 #     auto refuses -- run it from the target view's own :sh instead, where
 #     LVI_WID already picks the right one.
 #
+# Your `cd` in here is process-local: it cannot move lvi's cwd, and nothing in
+# this file can read it back afterwards either. So paths get absolutized on
+# both sides, against different directories. A path you TYPE is resolved
+# against this shell -- you meant where you are standing. The file the view is
+# editing is resolved against LVI_CWD, lvi's own directory, because $LVI_FILE
+# holds the path AS OPENED and `lvi doc.txt` makes that `doc.txt`: resolving it
+# where you have cd'd to would name a different file, or someone else's.
+#
 # Paths are absolutized before sending (your cd's don't move lvi's cwd) and
 # lvi's expansion metacharacters are escaped (your shell already expanded ~
 # and $VAR at the prompt; the name must land in lvi verbatim, not expand
@@ -73,7 +81,20 @@
 #
 # Config: LVI (the client binary; default `lvi`); LVI_PS1_TAG (prompt marker;
 # default `(lvi FILE) `, empty disables); LVI_SHELL_BANNER (empty disables the
-# shell-out banner).
+# shell-out banner). LVI_CWD is SET by this file rather than read as config --
+# lvi's own directory, captured at source time -- but an inherited value wins,
+# so an outer shell-out's stays right through a nested one.
+
+# lvi's working directory, captured while we still know it. A shell-out
+# inherits it, so at SOURCE time -- your rc, before you have had the chance to
+# cd -- $PWD is lvi's. That is the only chance: cd here is process-local, and
+# there is no asking a frozen editor. Exported, so a nested shell keeps lvi's
+# directory rather than re-capturing its parent's cd. The :- defers to a value
+# already in the environment, should core ever export LVI_CWD itself.
+if [ -n "$LVI_WID" ]; then
+  LVI_CWD=${LVI_CWD:-$PWD}
+  export LVI_CWD
+fi
 
 # Tag the prompt when this shell lives under an lvi view (see header). The
 # ${VAR-default} form (no colon) is deliberate: set-but-empty LVI_PS1_TAG
@@ -151,6 +172,21 @@ lvi__file() {
     echo "${1:-lvi}: the buffer has no file name" >&2
     return 1
   fi
+  # Resolve against LVI_CWD, never this shell's -- see the header. Outside a
+  # shell-out there is no LVI_CWD to resolve against, and guessing is how you
+  # delete the wrong file, so a relative path is refused rather than resolved.
+  # `raw` (a second argument) skips all of that, for the one caller that hands
+  # the name straight back to the EDITOR's shell, where relative is correct.
+  case $f in
+    /*) ;;
+    *)  if [ "$2" = raw ]; then :                  # caller hands it back to lvi
+        elif [ -n "$LVI_CWD" ]; then f=$LVI_CWD/$f
+        else
+          echo "${1:-lvi}: lvi opened '$f' by a relative path, and only its own" \
+               ":sh knows what it is relative to -- run this from there" >&2
+          return 1
+        fi ;;
+  esac
   printf '%s\n' "$f"
 }
 
@@ -197,7 +233,7 @@ lvi-rm() {
 # this terminal while the editor's terminal owns the interaction.
 lvi-sudow() {
   [ $# -eq 0 ] || { echo "usage: lvi-sudow" >&2; return 2; }
-  lvi__file lvi-sudow > /dev/null || return 1
+  lvi__file lvi-sudow raw > /dev/null || return 1   # only: does it have a name
   sudo -v || return 1
   local wid=${LVI_WID:-auto}
   "${LVI:-lvi}" -w "$wid" -d -- 'w !sudo tee -- "$LVI_FILE" > /dev/null' &&
@@ -231,11 +267,15 @@ Recipes
   save it as root                   lvi-sudow
   anything else, by hand            lvi -w "$LVI_WID" -d -- 'set wrap'
 
-Two things that bite
+Three things that bite
 
   Quote an ex command in SINGLE quotes. A `!` inside double quotes is history
   expansion, so `"bd!"` strands your prompt at `dquote>` instead of reaching
   lvi.
+
+  Your `cd` in here is yours alone; it never moves lvi. So a path you type is
+  resolved where you are standing, and the file lvi is editing is resolved
+  where lvi is standing.
 
   A queued command's reply is thrown away, so a refusal is silent. lvi-saveas
   onto a file that changed on disk just leaves the buffer modified, with
