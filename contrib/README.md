@@ -174,12 +174,14 @@ in a private temp file and the cursor 1-based in bytes, and both print one line:
   (jump-class), after an operator it supplies the range. `prompt` makes the
   EDITOR read a line first under `KEY` as the prompt character, since a filter is
   a child of an editor holding the terminal in raw mode and a `read` of its own
-  would take raw keystrokes with no echo. `lvi-motion-search` implements `/ ? n N
+  would take raw keystrokes with no echo. `lvi-search --motion` implements `/ ?
   * #`.
 
 A builtin binding of the same key always wins, so a `:motion` fills unclaimed
-keys and never shadows `w` — but a `map` on that key *does* shadow it, so pick
-one or the other for `/`.
+keys and never shadows `w`. A `map` on that key doesn't collide with it either:
+maps expand only for the **first key of a command**, so a bare press takes the
+map and an operator-pending press takes the motion. That is what lets `/` be a
+list producer and `d/` a motion at once.
 
 **The BRE locator.** Three tools here need the same unlikely thing: vi's own
 regex dialect *and* the column a match landed on. Neither obvious tool has both —
@@ -190,8 +192,8 @@ have no ERE spelling. But *locating* a match is a different job from *finding*
 one, and it needs no second dialect — only a BRE engine that reports position.
 sed is one: `&` in an `s///g` wraps every leftmost-longest match in a marker byte,
 and awk counts the offsets. `lvi-bre-locate` is that, on its own, printing
-`LINE⇥COL⇥LEN` per occurrence; `lvi-search`, `lvi-match` and `lvi-motion-search`
-each shape those into entries, marks or a target. It owns the case-folding
+`LINE⇥COL⇥LEN` per occurrence; `lvi-search` (in both its shapes) and `lvi-match`
+shape those into entries, marks or a target. It owns the case-folding
 fallback (sed's `I` flag where there is one, `tr` where there isn't) and the
 whole-word test, and its exit status separates a bad pattern from a buffer that
 holds a marker byte — which each caller reports its own way.
@@ -285,12 +287,13 @@ is a BRE engine reporting a position rather than a second dialect to learn. The
 `lvi-search` header has the mechanics and the two cases it cannot cover.
 
 A search starts where you are, as vi's does — the list is seeded from the
-cursor, then stepped once. Two deviations come with search being a list you
+cursor, then stepped once. Three deviations come with search being a list you
 walk rather than a motion the editor repeats. It doesn't wrap: `n` stops on
 the last match and says `(end)` in the status line, and `lvi-list first` /
-`last` are the wrap done by hand. And `n` is always forward, since a list
+`last` are the wrap done by hand. `n` is always forward, since a list
 remembers its index but not which way it was seeded, so after a `?` it's `N`
-that keeps going back.
+that keeps going back. And `n` walks the buffer as it was when you searched.
+All three are the list's; the motion shape below is vi's on every one.
 
 You read an entry two ways. Stepping echoes its text to lvi's **message
 line** via `:msg` — ephemeral, cleared by your next motion, so a lint
@@ -306,39 +309,45 @@ Lists are ephemeral and live beside the view's socket (auto-cleaned per
 view); use `lvi-list save`/`load` to persist a list to a location that
 isn't automatically cleaned. See the `lvi-list` header for all arguments.
 
-### `lvi-motion-search` — search as a *motion*
+### `lvi-search --motion` — search as a *motion*
 
 A list is the wrong shape for `d/foo`. An operator needs its target before the
-command finishes, and a list arrives over the socket afterwards, so `lvi-search`
-can move you but can never be an operator's range. The `:motion` seam is the
-other half — a synchronous filter, run the way `:textobj` is run (see **the
-synchronous filter contracts** above), that prints one target and exits.
+command finishes, and a list arrives over the socket afterwards, so the list
+shape can move you but can never be an operator's range. The `:motion` seam is
+the other half — a synchronous filter, run the way `:textobj` is run (see **the
+synchronous filter contracts** above), that prints one target and exits. Same
+script, one flag:
 
 ```
-motion / prompt lvi-motion-search       " /pattern
-motion ? prompt lvi-motion-search -b    " ?pattern
-motion n lvi-motion-search --last       " next / previous
-motion N lvi-motion-search --last -b
-motion * lvi-motion-search --word       " the word under the cursor
-motion # lvi-motion-search --word -b
+motion / prompt lvi-search --motion       " /pattern
+motion ? prompt lvi-search --motion -b    " ?pattern
+motion * lvi-search --motion --word       " the word under the cursor
+motion # lvi-search --motion --word -b
 ```
 
-Then `/` moves, `d/foo` deletes up to the match, `y?bar` yanks back to one, and
-every one of them is jump-class, so `Ctrl-O` and `` ` `` come back. The editor
-does the prompting (that's what `prompt` in the rc line asks for), and the
-pattern is a POSIX BRE, located by the same `lvi-bre-locate` `lvi-search` uses.
+These go *alongside* the maps above, on the same keys. A bare `/` still builds
+the list; `d/foo` deletes up to the match, `y?bar` yanks back to one, and every
+one of them is jump-class, so `Ctrl-O` and `` ` `` come back. The keys don't
+fight because lvi expands maps only for the first key of a command: the press
+that follows an operator never sees them.
 
-Two ways it differs from the list. It **wraps**, because a motion that stops dead
-at the end of the buffer is not the motion vi has. And the last pattern is the
-tool's to keep, in a file beside the socket, which is what makes `n` re-run the
-matcher against the buffer as it is *now* rather than walk a snapshot: nothing
-goes stale as you type. An empty pattern reuses the last one, like a bare
-`/<CR>`.
+The editor does the prompting (that's what `prompt` in the rc line asks for),
+and the pattern is a POSIX BRE from the same `lvi-bre-locate`. On this side the
+search **wraps**, because a motion that stops dead at the end of the buffer is
+not the motion vi has, and it re-runs the matcher against the buffer as it is
+*now* rather than walking a snapshot, so nothing goes stale as you type.
 
-The two searches coexist — `/` as a motion, `\ls` (or whatever key) as a list
-when you want to see all the hits at once — but not on the same key, and a `map`
-shadows a `motion`, so an rc that maps `/` to `lvi-search` has to drop that map
-first.
+Both shapes share one stored pattern, beside the socket. It records how the
+search matched (whole-word, case folding) and not just what it matched, so a
+`/foo` and a later `d/` can never disagree, and an empty pattern repeats the
+last one like a bare `/<CR>`. That shared store is why the two are one script.
+
+`n`/`N` stay with the list on purpose. Bare `n` steps whichever list is focused
+— lint, spell, git hunks — so a `dn` meaning "the next search match" wouldn't
+mirror it. To delete back to a spot you reached by stepping a list, use the
+previous-context mark instead: `d` followed by two backticks. Every list step is
+jump-class, so the mark is already where you left. `motion n lvi-search --motion
+--last` works if you want it anyway.
 
 ### `lvi-match` — sticky pattern marks (vim's `matchadd`)
 
