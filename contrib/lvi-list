@@ -321,9 +321,12 @@ function epos(s, p,   f, n, a, b, m) {
 
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
 # there. :pos lands exactly on the column, in whatever unit the list was put
-# with (see THE COLUMN FIELD), and, like a bare line address, records no
-# jumplist entry. `e -- NAME` takes the entry's filename literally (no shell
-# expansion, nothing to escape).
+# with (see THE COLUMN FIELD), and asks for `jump`, so stepping a list feeds the
+# jumplist and the previous-context mark: Ctrl-O walks back out of a walk, and
+# `''` returns to where you set off from. That is what vi does with a search and
+# what vim does with a quickfix jump; a step is navigation, not a restore.
+# `e -- NAME` takes the entry's filename literally (no shell expansion, nothing
+# to escape).
 #
 # Both of GNU's position spellings are accepted: `line:col` and `line.col`. A
 # range (`12.5-12.20`, `12-14`) lands on its START -- the end is the extent of
@@ -336,8 +339,8 @@ jump() {
   case "$ln" in ''|*[!0-9]*) return 0 ;; esac
   u=$(colunit "$2")
   if [ -n "$f" ] && [ "$(canonpath "$f")" != "$(canonpath "$(curfile)")" ]; then
-    send "e -- $f" "pos $ln $c $u"
-  else send "pos $ln $c $u"; fi
+    send "e -- $f" "pos $ln $c $u jump"
+  else send "pos $ln $c $u jump"; fi
 }
 
 # Repaint NAME's entries for the CURRENT buffer, mark the current entry, and set

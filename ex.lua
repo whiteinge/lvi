@@ -1384,15 +1384,37 @@ def("fire", function(ed, c)
   return "", "ok"
 end)
 
--- :pos [LINE [COL [UNIT]]] -- query or set the cursor. Bare :pos reports
+-- Record a departure position the way a jump-class motion does: the jumplist,
+-- plus BOTH spellings of the previous-context mark (` and ' index the one mark,
+-- so vi's `` and '' both return here). Distinct tables, never a shared
+-- reference -- the splice hook adjusts each entry in ed.marks once, and an alias
+-- would double-shift it. normal.lua requires us, so the require is lazy: at load
+-- time it would be a cycle.
+local function record_jump(ed, l, c)
+  require("normal").record_pos(ed.jumps, l, c)
+  ed.marks["`"] = { l, c }
+  ed.marks["'"] = { l, c }
+end
+
+-- :pos [LINE [COL [UNIT]]] [jump] -- query or set the cursor. Bare :pos reports
 -- line<TAB>col (a 1-based BYTE column, matching :marks and Vim's `" mark). With
 -- arguments it MOVES the cursor there: the byte-exact setter contrib/lvi-pos
 -- needs to restore a saved column, and normal-mode motions can't reach one --
 -- `l` steps by character and `|` by display column, so neither lands on a raw
--- byte offset once a line has tabs or multibyte. Like :top it records no
--- jumplist entry; LINE/COL are clamped into the buffer (a position that
--- outlived an edit lands as near as it can, viminfo's tolerance), and refresh's
--- normal.clamp gives the resting column its final char-aware snap.
+-- byte offset once a line has tabs or multibyte. LINE/COL are clamped into the
+-- buffer (a position that outlived an edit lands as near as it can, viminfo's
+-- tolerance), and refresh's normal.clamp gives the resting column its final
+-- char-aware snap.
+--
+-- A trailing `jump` makes the move JUMP-CLASS: it records where you left, so
+-- Ctrl-O and `` bring you back. Without it :pos is silent like :top, which is
+-- right for a restore (contrib/lvi-pos putting the cursor back where it was) and
+-- wrong for a navigation -- and navigation over the socket is most of what
+-- drives :pos: a list step, a tag jump, the next diff hunk, the next
+-- misspelling. Those are jumps in vi too (/ ? n N and vim's quickfix all set the
+-- previous-context mark), so a tool that means one asks for one. It stays opt-in
+-- rather than the default because the two callers are indistinguishable from
+-- here, and only the tool knows which it is.
 --
 -- UNIT says what COL counts, because the tools that name a column do not agree
 -- and the number alone cannot say which they meant. `byte` (the default, and
@@ -1409,13 +1431,18 @@ end)
 -- lvi's default -- so a GNU column is exact unless you have changed it.
 def("pos", function(ed, c)
   if c.args == "" then return ed.cy .. "\t" .. ed.cx, "ok" end
-  local l, col, unit = c.args:match("^(%d+)%s+(%d+)%s+(%a+)$")
-  if not l then l, col = c.args:match("^(%d+)%s+(%d+)$") end
-  l = l or c.args:match("^(%d+)$")
-  if not l then return "usage: pos [LINE [COL [byte|char|display]]]", "err" end
+  -- Pop `jump` off the end first: UNIT is \a+ and would swallow it.
+  local args, isjump = c.args, false
+  local rest = args:match("^(.*%S)%s+jump$") or args:match("^jump$") and ""
+  if rest then args, isjump = rest, true end
+  local l, col, unit = args:match("^(%d+)%s+(%d+)%s+(%a+)$")
+  if not l then l, col = args:match("^(%d+)%s+(%d+)$") end
+  l = l or args:match("^(%d+)$")
+  if not l then return "usage: pos [LINE [COL [byte|char|display]]] [jump]", "err" end
   if unit and unit ~= "byte" and unit ~= "char" and unit ~= "display" then
     return "pos: unknown column unit: " .. unit, "err"
   end
+  local oy, ox = ed.cy, ed.cx
   ed.cy = clampline(ed, tonumber(l))
   local line = ed.buf:line(ed.cy) or ""
   local cx = col and tonumber(col) or 1
@@ -1429,7 +1456,12 @@ def("pos", function(ed, c)
     end
     cx = i
   end
-  ed.cx = math.max(1, math.min(cx, math.max(1, #line)))
+  cx = math.max(1, math.min(cx, math.max(1, #line)))
+  -- Only a move that lands somewhere else is a jump, matching do_motion: a
+  -- no-op :pos jump (a list re-jumping you to the entry you are on) must not
+  -- push a stray entry and cost you the one Ctrl-O would have gone to.
+  if isjump and (ed.cy ~= oy or cx ~= ox) then record_jump(ed, oy, ox) end
+  ed.cx = cx
   return "", "ok"
 end)
 

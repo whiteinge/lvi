@@ -492,7 +492,9 @@ describe("contrib", function()
       run(env, "contrib/lvi-list next")
       log = read(d .. "/log")
       expect(log:find("\ne %-%- /oth/we %$ird%.txt\n")).to.exist()  -- literal splice
-      expect(log:find("\npos 3 9 byte\n")).to.exist()               -- exact jump, unit named
+      -- Exact jump, unit named, and jump-class: a step is navigation, so Ctrl-O
+      -- walks back out of a walk and `''` returns to where you set off from.
+      expect(log:find("\npos 3 9 byte jump\n")).to.exist()
       cleanup(d)
     end)
 
@@ -508,12 +510,12 @@ describe("contrib", function()
                [[/cur/parse.y:44-46: spans lines\n' | contrib/lvi-list put gnu --focus]])
       expect(read(d .. "/log"):find("\nstatus gnu %[0/3%] gnu\n")).to.exist()
       run(env, "contrib/lvi-list next")
-      expect(read(d .. "/log"):find("\npos 12 5 byte\n")).to.exist()
+      expect(read(d .. "/log"):find("\npos 12 5 byte jump\n")).to.exist()
       expect(read(d .. "/log"):find("\nmsg rule useless\n")).to.exist()  -- prefix stripped
       run(env, "contrib/lvi-list next")
-      expect(read(d .. "/log"):find("\npos 30 7 byte\n")).to.exist()
+      expect(read(d .. "/log"):find("\npos 30 7 byte jump\n")).to.exist()
       run(env, "contrib/lvi-list next")
-      expect(read(d .. "/log"):find("\npos 44 1 byte\n")).to.exist()     -- no column in that form
+      expect(read(d .. "/log"):find("\npos 44 1 byte jump\n")).to.exist()     -- no column in that form
       cleanup(d)
     end)
 
@@ -525,7 +527,7 @@ describe("contrib", function()
       run(env, [[printf '/cur/f.c:2:9: E: implicit declaration\n' ]] ..
                [[| contrib/lvi-list put cc --focus --cols=display]])
       run(env, "contrib/lvi-list next")
-      expect(read(d .. "/log"):find("\npos 2 9 display\n")).to.exist()
+      expect(read(d .. "/log"):find("\npos 2 9 display jump\n")).to.exist()
       -- The sidecar is not a list: `ls` must not offer it as one to step.
       local out = run(env, "contrib/lvi-list ls")
       expect(out:find("cc%.cols")).to_not.exist()
@@ -605,7 +607,7 @@ describe("contrib", function()
       expect(read(d .. "/log"):find("^hl qq 4:1%-1 \n")).to.exist()    -- painted, not skipped
       run(env, "contrib/lvi-list next")
       local log = read(d .. "/log")
-      expect(log:find("\npos 4 1 byte\n")).to.exist()
+      expect(log:find("\npos 4 1 byte jump\n")).to.exist()
       expect(log:find("\ne %-%-")).to_not.exist()                     -- already there: no :e
       cleanup(d)
     end)
@@ -705,7 +707,7 @@ describe("contrib", function()
       env.LVI_WID = "w1"                                   -- now there is a view
       run(env, ("cd '%s' && %s"):format(r, GC))
       local log = read(d .. "/log")
-      expect(log:find("\npos 2 1 byte\n")).to.exist()
+      expect(log:find("\npos 2 1 byte jump\n")).to.exist()
       expect(log:find("e %-%-")).to_not.exist()   -- absolute entry IS the buffer: no :e
       cleanup(d); cleanup(r)
     end)

@@ -782,11 +782,17 @@ spaces and tabs included.
 	segments render in _name_ order. Generic -- an external tool drives it (a
 	list's *[3/57]* counter, a git branch), the way *hl* drives highlights.
 
-*f*, *pos* [_line_ [_col_ [_unit_]]], *echo* _text_, *silent* _cmd_
+*f*, *pos* [_line_ [_col_ [_unit_]]] [*jump*], *echo* _text_, *silent* _cmd_
 	Show the file name and line count; with no argument report the cursor as
 	_line_<TAB>_col_, or with arguments move it there (clamped into the buffer,
-	and unlike a motion it leaves no jumplist entry); echo _text_; run _cmd_
-	suppressing its interactive prompt.
+	and by default leaving no jumplist entry, unlike a motion); echo _text_; run
+	_cmd_ suppressing its interactive prompt.
+
+	A trailing *jump* makes the move jump-class: it records where you left, so
+	*Ctrl-O* and *``* come back. Silence is right for a restore -- putting the
+	cursor back where it was -- and wrong for navigation, which is most of what
+	drives *pos* from a socket tool: a list step, a tag jump, the next diff hunk.
+	Those are jumps in vi too, so a tool that means one says so.
 
 	_col_ is a byte column, both reported and set. A tool that got its column
 	from somewhere else says so with _unit_: *byte* (the default), *char* (a

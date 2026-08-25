@@ -96,14 +96,15 @@ go)
   case "$col"  in ''|*[!0-9]*) col=1  ;; esac
   # Open the file only when it isn't already current, then move. :pos is the
   # byte-exact setter (a plain NG lands on the first non-blank) and clamps a stale
-  # line/col into the buffer if the file shrank since we marked it.
+  # line/col into the buffer if the file shrank since we marked it. `jump` because
+  # `'A` is jump-class in vi: Ctrl-O comes back, and so does `'` at the far end.
   cur=; [ -n "${LVI_FILE:-}" ] && cur=$(abspath "$LVI_FILE")
   if [ "$file" = "$cur" ]; then
-    send "pos $line $col"
+    send "pos $line $col byte jump"
   else
     # `e -- NAME` takes the stored path literally -- no shell expansion, so
     # nothing to escape.
-    send "e -- $file" "pos $line $col"
+    send "e -- $file" "pos $line $col byte jump"
   fi
   ;;
 list)

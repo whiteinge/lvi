@@ -104,4 +104,8 @@ rows=$($CTAGS -f - --sort=no --fields=+n "$tmpf" 2>/dev/null | awk -F'\t' '
 sel=$(printf '%s\n' "$rows" | awk -F'\t' '{printf "%6s  %-4s %-24s %s\n", $1, $2, $3, $4}' | "$PICKER") || exit 0
 line=$(printf '%s' "$sel" | awk '{print $1}')
 case "$line" in ''|*[!0-9]*) exit 0 ;; esac
-send "$line"                                          # tag is in this buffer -> just jump
+# In this buffer already, so just move. Jump-class, since `:tag` is one in vi:
+# Ctrl-] out, Ctrl-O back. A bare line address would move too, and did, but
+# leaves no jumplist entry; `^` afterwards keeps the landing an address gave for
+# free -- the first non-blank, not the indentation in front of it.
+send "pos $line 1 byte jump" "normal ^"

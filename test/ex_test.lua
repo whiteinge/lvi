@@ -775,6 +775,41 @@ describe("ex.dispatch", function()
       expect(select(2, ex.dispatch(ed, "pos 1 2 furlongs"))).to.equal("err")
       expect(ed.cx).to.equal(2)                 -- and does not move the cursor
     end)
+    -- Navigation over the socket -- a list step, a tag jump, the next diff hunk
+    -- -- is a jump in vi, so the tool that means one says `jump` and gets the
+    -- jumplist and both previous-context marks. A restore (contrib/lvi-pos) says
+    -- nothing and stays silent, as before.
+    it(":pos jump records the departure, plain :pos does not", function()
+      local ed = ed_with("a\nb\nc\nd\ne"); ed.cy, ed.cx = 2, 1
+      ex.dispatch(ed, "pos 5 1")
+      expect(#ed.jumps.list).to.equal(0)
+      expect(ed.marks["'"]).to_not.exist()
+      ed.cy, ed.cx = 2, 1
+      local _, st = ex.dispatch(ed, "pos 5 1 jump")
+      expect(st).to.equal("ok")
+      expect(ed.cy).to.equal(5)
+      expect(#ed.jumps.list).to.equal(1)
+      expect(ed.jumps.list[1][1]).to.equal(2)   -- where we left from
+      expect(ed.marks["'"][1]).to.equal(2)      -- '' and `` both come back
+      expect(ed.marks["`"][1]).to.equal(2)
+    end)
+    it(":pos jump takes a unit, and a no-op jump records nothing", function()
+      local ed = ed_with("na\195\175ve caf\195\169 tail\nbb")
+      ex.dispatch(ed, "pos 2 1 jump")
+      expect(#ed.jumps.list).to.equal(1)
+      -- Landing where you already stand is not a jump: a list re-jumping you to
+      -- the entry you are on must not cost you the entry Ctrl-O would return to.
+      -- (A push here would ADD line 2, which the list does not hold yet.)
+      ex.dispatch(ed, "pos 2 1 jump")
+      expect(#ed.jumps.list).to.equal(1)
+      -- The unit converts before the comparison, so the recorded column is the
+      -- byte one, whatever the caller counted in.
+      ex.dispatch(ed, "pos 1 7 char jump")      -- the 7th character, `c`
+      expect(ed.cx).to.equal(8)
+      expect(#ed.jumps.list).to.equal(2)
+      expect(ed.jumps.list[2][1]).to.equal(2)
+    end)
+
     it(":top reports the viewport top line", function()
       local ed = ed_with("a\nb\nc\nd"); ed.top = 2
       expect((ex.dispatch(ed, "top"))).to.equal("2")
