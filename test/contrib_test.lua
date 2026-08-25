@@ -350,6 +350,92 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- lvi-match: the state file is the documented interface, so the matcher tests
+    -- write it and run --worker directly. That keeps the paint deterministic --
+    -- `add` backgrounds its own scan, which would race the log.
+    local function matchstate(d, lines) write(d .. "/sock.match", lines) end
+    local TAB = "\t"
+
+    -- The dialect. Under the old awk `match()` these were an error (`foo(`) or a
+    -- silent mismatch (`a+b`); a back-reference had no ERE spelling at all.
+    it("lvi-match marks a POSIX BRE, extents and all", function()
+      local d = stub({ buffer = "aaa foo(bar) foo\nxx a+b yy\n", path = "x.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" }
+      for _, c in ipairs({ { "foo(", "hl g 1:5-8" },
+                           { "a+b", "hl g 2:4-6" },
+                           { "\\(o\\)\\1", "hl g 1:6-7 1:15-16" },
+                           { "^aaa", "hl g 1:1-3" },
+                           { "y$", "hl g 2:9-9" } }) do
+        write(d .. "/log", "")
+        matchstate(d, "1" .. TAB .. "g" .. TAB .. "-" .. TAB .. c[1] .. "\n")
+        run(env, "contrib/lvi-match --worker")
+        expect(read(d .. "/log"):find(c[2], 1, true)).to.exist()
+      end
+      cleanup(d)
+    end)
+
+    it("lvi-match honors -i and --word, and paints nothing for a zero-width match", function()
+      local d = stub({ buffer = "Foo food foo\nxx\n", path = "x.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" }
+      matchstate(d, "1" .. TAB .. "g" .. TAB .. "i" .. TAB .. "FOO\n")
+      run(env, "contrib/lvi-match --worker")
+      expect(read(d .. "/log"):find("hl g 1:1-3 1:5-7 1:10-12", 1, true)).to.exist()
+      write(d .. "/log", "")
+      matchstate(d, "1" .. TAB .. "g" .. TAB .. "w" .. TAB .. "foo\n")
+      run(env, "contrib/lvi-match --worker")
+      expect(read(d .. "/log"):find("hl g 1:10-12\n", 1, true)).to.exist()  -- not "food"
+      write(d .. "/log", "")
+      matchstate(d, "1" .. TAB .. "g" .. TAB .. "-" .. TAB .. "z*\n")
+      run(env, "contrib/lvi-match --worker")
+      expect(read(d .. "/log"):find("hl g\n", 1, true)).to.exist()          -- empty: clears
+      cleanup(d)
+    end)
+
+    -- One sed pass per pattern, merged afterwards: two patterns in one group are
+    -- one `hl` (a whole-group replace), and a group that has stopped matching
+    -- still gets an empty one, which is what clears it.
+    it("lvi-match merges a shared group and clears one that stopped matching", function()
+      local d = stub({ buffer = "foo bar\n", path = "x.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" }
+      matchstate(d, "1" .. TAB .. "g" .. TAB .. "-" .. TAB .. "foo\n"
+               .. "2" .. TAB .. "g" .. TAB .. "-" .. TAB .. "bar\n"
+               .. "3" .. TAB .. "other" .. TAB .. "-" .. TAB .. "nope\n")
+      run(env, "contrib/lvi-match --worker")
+      local log = read(d .. "/log")
+      expect(log:find("hl g 1:1-3 1:5-7", 1, true)).to.exist()
+      expect(log:find("hl other\n", 1, true)).to.exist()
+      expect(log:find("status match [match 3: 2]", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    -- sed's `I` flag is GNU/BSD, not POSIX. Shadow sed with one that refuses it
+    -- to drive the tr-fold fallback, which must find the same columns: folding is
+    -- byte-length preserving, so they still land on the unfolded line.
+    it("lvi-match folds case with tr when sed has no I flag", function()
+      local d = stub({ buffer = "Foo and foo\n", path = "x.txt\n" })
+      write(d .. "/sed", "#!/bin/sh\ncase \"$1\" in *I) exit 1 ;; esac\nexec /bin/sed \"$@\"\n")
+      os.execute("chmod +x '" .. d .. "/sed'")
+      matchstate(d, "1" .. TAB .. "g" .. TAB .. "i" .. TAB .. "FOO\n")
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            PATH = d .. ":" .. os.getenv("PATH") },
+        "contrib/lvi-match --worker")
+      expect(read(d .. "/log"):find("hl g 1:1-3 1:9-11", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-match refuses a bad BRE and a pattern holding a marker byte", function()
+      local d = stub({ buffer = "x\n", path = "x.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" }
+      expect(select(2, run(env, [[contrib/lvi-match add 'a\{2']]))).to.equal(false)
+      expect(select(2, run(env, [[contrib/lvi-match add "$(printf 'a\001b')"]]))).to.equal(false)
+      expect(exists(d .. "/sock.match")).to.equal(false)   -- neither reached the state
+      -- -F escapes the BRE metacharacters and only those: escaping an ERE's `+`
+      -- would turn it into GNU BRE's one-or-more operator.
+      run(env, [[contrib/lvi-match add -F 'a.b*+c']])
+      expect(read(d .. "/sock.match")).to.equal("1\tmatch1\t-\ta\\.b\\*+c\n")
+      cleanup(d)
+    end)
+
     it("lvi-lint --worker reports a missing backend, never a clean [0/0]", function()
       local d = stub({ buffer = "x\n", path = "x.zz\n" })
       local _, ok = run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1",

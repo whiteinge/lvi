@@ -19,12 +19,27 @@
 # prompts for one -- at the cost that a mistyped subcommand is read as a
 # pattern rather than refused (the message line names what it added).
 #
-# PATTERN is a POSIX ERE, not lvi-search's BRE -- the extents come from awk's
-# `match()`, which is ERE-only, and a mark needs a column range where a search
-# needs only a line. `-F` takes PATTERN literally (it escapes the ERE
-# metacharacters for you), `--word` keeps only matches with a non-word byte on
-# both sides (grep's -w, and what makes `*` on the cursor word behave), and `-i`
-# folds case by lowercasing both sides.
+# PATTERN is a POSIX BRE, the same dialect as vi's `/` and lvi-search's. `-F`
+# takes PATTERN literally (it escapes the BRE metacharacters for you), `--word`
+# keeps only matches with a non-word byte on both sides (grep's -w, and what makes
+# `*` on the cursor word behave), and `-i` folds case.
+#
+# THE MATCHER: a mark needs a column RANGE, and the obvious tool for that is
+# awk's `match()`/RSTART/RLENGTH -- which is where these patterns used to come
+# from, at the price of speaking ERE while every other pattern you type at lvi is
+# a BRE. sed gets both: substitute each match with itself wrapped in a marker byte
+# (`&` is POSIX, `s///g` is leftmost-longest repeated) and count the offsets. 0x01
+# marks, 0x02 delimits the `s` command so a pattern is never escaped, and awk
+# reads the original buffer alongside the marked one -- so a column is a byte
+# offset into the real line, which is also what `--word` needs to look at the
+# bytes on either side.
+#
+# ONE SED PASS PER PATTERN, not one pass with N substitutions. Marking is
+# destructive to the text the next pattern would read: mark `ab` in `abc` and a
+# following `bc` no longer matches, because two marker bytes now sit inside it.
+# That failure is silent, so the patterns get separate passes over the buffer and
+# the results are merged afterwards. Cost is a sed and an awk per pattern per
+# scan, which is why the buffer cap below matters more than the pattern count.
 #
 # GROUPS AND COLOR: each pattern paints one `:hl` group, and successive adds
 # take `match1`, `match2`, ... so several patterns read apart at a glance (the
@@ -68,10 +83,15 @@
 # paint the new one. Matches are byte columns, and the buffer is capped (a
 # pathological pattern is capped too -- past LVI_MATCH_MAXHITS the rest of that
 # pattern goes unpainted and the message line says so). A zero-width match
-# (`x*`) paints nothing rather than hanging. Under `-i` a case-distinguishing
-# bracket expression loses its meaning ([[:upper:]] matches nothing), which is
-# the point of asking for -i. A socket-side edit (lvi-fmt, a filter) leaves the
+# (`x*`) paints nothing rather than hanging. Case folding prefers sed's `I` flag
+# (GNU, BSD) and falls back to `tr`-folding the buffer and the pattern, which is
+# ASCII-only but byte-length preserving, so the columns still land on the
+# unfolded line. Either way a case-distinguishing bracket expression loses its
+# meaning under `-i`, which is the point of asking for it. A socket-side edit (lvi-fmt, a filter) leaves the
 # marks stale until your next keystroke; `lvi-match scan` re-paints on demand.
+# A buffer holding either marker byte (a binary file) cannot be scanned at all --
+# the columns would be wrong -- so the scan stops and says so on the status line
+# rather than painting nonsense.
 #
 # Config: LVI (client, default `lvi`), LVI_MATCH_STYLES (the default palette;
 # empty pushes none), LVI_MATCH_MAXBYTES (skip buffers larger than this, default
@@ -120,75 +140,111 @@ styled="$sock.match.styled"
 
 send() { "$LVI" -w "$target" --detach -- "$@"; }   # fire-and-forget (see header)
 
+# The two control bytes the matcher uses: 0x01 wraps a match, 0x02 delimits the
+# `s` command so no pattern ever needs escaping (see THE MATCHER). `add` needs
+# them too, to refuse a pattern holding one and to validate the rest.
+M=$(printf '\001'); D=$(printf '\002')
+
 # ---- worker: the actual scan (runs with lvi's loop live) ---------------------
 if [ -n "$worker" ]; then
   [ -s "$state" ] || exit 0           # cleared while we were queued
-  text=$("$LVI" -w "$target" -- '%p') || die "cannot read view $target"
-  nbytes=$(printf '%s' "$text" | wc -c)
+  tdir=${sock%/*}; [ -n "$tdir" ] && [ -d "$tdir" ] || tdir=${TMPDIR:-/tmp}
+  buf=$(mktemp "$tdir/lvi-match.buf.XXXXXX")  || die "cannot make a temp file"
+  mk=$(mktemp  "$tdir/lvi-match.mk.XXXXXX")   || die "cannot make a temp file"
+  hitsf=$(mktemp "$tdir/lvi-match.hits.XXXXXX") || die "cannot make a temp file"
+  trap 'rm -f "$buf" "$mk" "$hitsf"' EXIT HUP INT TERM
+
+  # To a file, not a variable: awk reads the buffer TWICE (the original lines for
+  # a column and for --word, then the marked stream), and a variable would lose
+  # the trailing blank lines that `$(...)` strips.
+  "$LVI" -w "$target" -- '%p' > "$buf" || die "cannot read view $target"
+  nbytes=$(wc -c < "$buf")
   if [ "$nbytes" -gt "$MAXBYTES" ]; then
     echo "lvi-match: ${nbytes}B over cap ${MAXBYTES}B; skipping (raise LVI_MATCH_MAXBYTES)" >&2
     send "status match [lvi-match off: over ${MAXBYTES}B cap]"
     exit 0
   fi
+  # A marker byte in the buffer would be counted as text by one pass and as a
+  # mark by the next, so every column past it would be wrong. Refuse, loudly.
+  if LC_ALL=C grep -q "[$M$D]" "$buf"; then
+    send "status match [lvi-match off: control bytes in buffer]"
+    exit 0
+  fi
 
-  # One awk over both files: the state first (FNR==NR), then the buffer on
-  # stdin, so every pattern is tried against each line in one pass and each
-  # group's ranges accumulate into ONE `hl` (the paint is a whole-group
-  # replace). A group still in the state but matching nothing emits an empty
-  # `hl`, which clears it -- the same branch, no special case.
+  # sed's `I` flag is GNU/BSD, not POSIX; probe once and fall back to folding
+  # both sides with tr.
+  sedI=; printf '' | sed "s${D}x${D}y${D}gI" >/dev/null 2>&1 && sedI=1
+
+  : > "$hitsf"
+  while IFS="$TAB" read -r id grp fl pat; do
+    [ -n "$id" ] && [ -n "$grp" ] || continue
+    p=$pat; flags=g; fold=
+    case $fl in *i*) if [ -n "$sedI" ]; then flags=gI
+                     else fold=1; p=$(printf '%s' "$pat" | tr '[:upper:]' '[:lower:]'); fi ;;
+    esac
+    # A pattern that sed rejects paints nothing and says nothing here: `add`
+    # already refused it, so reaching this is a state file edited by hand.
+    if [ -n "$fold" ]; then tr '[:upper:]' '[:lower:]' < "$buf" | sed "s${D}${p}${D}${M}&${M}${D}${flags}" > "$mk" 2>/dev/null
+    else                    sed "s${D}${p}${D}${M}&${M}${D}${flags}" "$buf" > "$mk" 2>/dev/null; fi || continue
+    # id<TAB>group<TAB>line<TAB>start<TAB>end, one line per hit. The cap, the
+    # counting and the notice all live in the merge below, so this stays a
+    # matcher and nothing else.
+    LC_ALL=C awk -v m="$M" -v id="$id" -v grp="$grp" \
+                 -v word="$(case $fl in *w*) echo 1;; esac)" '
+      NR == FNR { o[FNR] = $0; next }                 # the original lines
+      index($0, m) {
+        rest = $0; seen = 0
+        while ((i = index(rest, m)) > 0) {
+          seen += i - 1                               # real text before the mark
+          c = seen + 1
+          rest = substr(rest, i + 1)
+          j = index(rest, m)
+          if (j == 0) break                           # unpaired: leave the line
+          len = j - 1; seen += len
+          rest = substr(rest, j + 1)
+          # A zero-width match has no cell to paint (`x*` marks nothing).
+          if (len < 1) continue
+          if (word) {                                 # grep -w, on the raw line
+            if (c > 1 && substr(o[FNR], c - 1, 1) ~ /[[:alnum:]_]/) continue
+            if (substr(o[FNR], c + len, 1) ~ /[[:alnum:]_]/) continue
+          }
+          printf "%s\t%s\t%d\t%d\t%d\n", id, grp, FNR, c, c + len - 1
+        }
+      }' "$buf" "$mk" >> "$hitsf"
+  done < "$state"
+
+  # Merge: the state first (FNR==NR) so every group it names gets an `hl` even
+  # when it matched nothing -- that empty paint is what CLEARS it, the same
+  # branch, no special case -- then the hits.
   set --
   while IFS= read -r cmd; do [ -n "$cmd" ] && set -- "$@" "$cmd"; done <<EOF
-$(printf '%s\n' "$text" | LC_ALL=C awk -v cap="$MAXHITS" -v notify="$notify" '
-    FNR == NR && FILENAME != "-" {                # a state line
-      i = index($0, "\t"); if (!i) next
-      id = substr($0, 1, i - 1); r = substr($0, i + 1)
-      i = index(r, "\t"); grp = substr(r, 1, i - 1); r = substr(r, i + 1)
-      i = index(r, "\t"); fl = substr(r, 1, i - 1); pat = substr(r, i + 1)
-      k++; ID[k] = id; G[k] = grp; FL[k] = fl; P[k] = pat
-      RE[k] = index(fl, "i") ? tolower(pat) : pat
-      seen[grp] = 1
+$(LC_ALL=C awk -F"$TAB" -v cap="$MAXHITS" -v notify="$notify" '
+    FNR == NR {                                       # a state line
+      k++; ID[k] = $1; G[k] = $2; P[k] = $4
+      seen[$2] = 1
       next
     }
     {
-      for (j = 1; j <= k; j++) {
-        s = index(FL[j], "i") ? tolower($0) : $0
-        base = 0                                  # bytes of the line consumed
-        while (length(s) > 0 && match(s, RE[j])) {
-          st = RSTART; ln = RLENGTH
-          # A zero-width match would never consume: step past it and move on,
-          # so `x*` paints nothing instead of spinning forever.
-          if (ln < 1) { s = substr(s, st + 1); base += st; continue }
-          c = base + st
-          keep = 1
-          if (index(FL[j], "w")) {                # grep -w, on the raw line
-            if (c > 1 && substr($0, c - 1, 1) ~ /[[:alnum:]_]/) keep = 0
-            else if (substr($0, c + ln, 1) ~ /[[:alnum:]_]/) keep = 0
-          }
-          # Hits are counted past the cap even though they stop being painted,
-          # so the status total stays honest about what is out there.
-          if (keep) {
-            if (hits[j] < cap) R[G[j]] = R[G[j]] sprintf(" %d:%d-%d", FNR, c, c + ln - 1)
-            else over[j] = 1
-            hits[j]++
-          }
-          s = substr(s, st + ln); base = c + ln - 1
-        }
-      }
+      hits[$1]++
+      # Hits are counted past the cap even though they stop being painted, so
+      # the status total stays honest about what is out there.
+      if (hits[$1] <= cap) R[$2] = R[$2] sprintf(" %d:%d-%d", $3, $4, $5)
+      else over[$1] = 1
     }
     END {
       for (g in seen) printf "hl %s%s\n", g, R[g]
       tot = 0; ov = 0
-      for (j = 1; j <= k; j++) { tot += hits[j]; if (over[j]) ov = 1 }
+      for (j = 1; j <= k; j++) { tot += hits[ID[j]]; if (over[ID[j]]) ov = 1 }
       printf "status match [match %d: %d]\n", k, tot
       # The just-added pattern reports itself -- an add that matches nothing
       # would otherwise be indistinguishable from a mark you cannot see.
       for (j = 1; j <= k; j++)
         if (notify != "" && ID[j] == notify) {
-          if (hits[j]) printf "msg match /%s/ %d (%s)\n", P[j], hits[j], G[j]
+          if (hits[ID[j]]) printf "msg match /%s/ %d (%s)\n", P[j], hits[ID[j]], G[j]
           else printf "msge match /%s/ no match\n", P[j]
         }
       if (ov) printf "msge match: over %d hits, rest unpainted (LVI_MATCH_MAXHITS)\n", cap
-    }' "$state" -)
+    }' "$state" "$hitsf")
 EOF
   # No commands means awk itself failed (the state vanished under us, say) --
   # sending nothing beats sending an empty request.
@@ -256,11 +312,14 @@ match_add() {
     IFS= read -r pat || exit 0
     [ -n "$pat" ] || exit 0
   fi
-  [ -n "$fixed" ] && pat=$(printf '%s\n' "$pat" | sed 's/[][\\^$.|?*+(){}]/\\&/g')
-  # A bad ERE is fatal inside the worker's awk, which would leave every OTHER
-  # pattern unpainted -- so reject it here, where there is someone to tell.
-  awk -v p="$pat" 'BEGIN { if ("" ~ p) x = 1 }' </dev/null 2>/dev/null \
-    || die "bad pattern /$pat/"
+  # BRE metacharacters only: escaping an ERE's would be actively wrong here,
+  # since GNU BRE reads `\+` and `\?` as the operators `+` and `?` are not.
+  [ -n "$fixed" ] && pat=$(printf '%s\n' "$pat" | sed 's/[][\\^$.*]/\\&/g')
+  case $pat in *"$M"*|*"$D"*) die "pattern holds a control byte the matcher uses" ;; esac
+  # A bad BRE would paint nothing and say nothing from inside the worker, so
+  # reject it here, where there is someone to tell. Validating against EMPTY
+  # input is enough: sed parses the whole script before it reads a byte.
+  printf '' | sed "s${D}${pat}${D}x${D}" >/dev/null 2>&1 || die "bad pattern /$pat/"
 
   # The lowest free matchN, so a del frees its color for the next add; past six
   # they share a group (and a color) rather than going invisible.

@@ -286,8 +286,9 @@ Each pattern gets its own `:hl` group — `match1`, `match2`, …, colored by
 default at `pri=12`, above syntax (0) and search (10) — so the three
 identifiers you are tracing through a function read apart at a glance. `-g`
 puts several patterns in one group, and one color, when they are one family.
-Patterns are POSIX EREs rather than lvi-search's BREs, since the extents come
-from awk's `match()`; `-F` takes the pattern literally, `--word` is grep's `-w` (what makes
+Patterns are POSIX BREs, the same dialect as `/`. A mark needs a column range,
+which the sed marker pass above produces without a second dialect to learn.
+`-F` takes the pattern literally, `--word` is grep's `-w` (what makes
 marking the cursor word behave), `-i` folds case. The first add installs the
 `change`/`bufenter` hooks itself, so the rc needs only keys and, if you don't
 want the built-in palette, your own `hi match1`… lines.
