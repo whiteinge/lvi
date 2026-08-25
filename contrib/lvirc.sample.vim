@@ -155,9 +155,15 @@ hi Error   fg=red bold
 " rest touch no tty, so they use :bg -- a detached spawn with NO terminal
 " handover, which avoids the alt-screen flash that :! causes when you hold down n/N.
 map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus it
+map ? :silent !lvi-search -b<CR>              " ...searching backward from the cursor
 map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
+map # :bg lvi-search -b "$LVI_CWORD"<CR>      " ...backward
 map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
+" A search starts at the cursor, as vi's does, but the list it builds is a walk
+" with two ends rather than a ring: `n` stops on the last match (the status says
+" `(end)`) instead of wrapping, \l[ / \l] are the wrap by hand, and `n` is always
+" forward -- after `?` it is `N` that keeps going back. See `lvi-search -h`.
 " list MENU (\l): switch focus / goto within / skip file / jump to an end /
 " re-center / hide / preview.
 map \ll :silent !lvi-list switch<CR>          " re-aim n/N: pick the focused list

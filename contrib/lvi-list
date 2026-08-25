@@ -9,11 +9,13 @@
 # cursor, painting the :hl overlay, and setting a :status segment. Multiple named
 # lists coexist; one is "focused" and the bare step commands act on it.
 #
-#   producer | lvi-list put NAME [--focus] [--at-cursor]   entries on stdin -> a list
+#   producer | lvi-list put NAME [--focus] [--at-cursor[-back]]   stdin -> a list
 #                                              (--at-cursor: seed the step index from
-#                                              the cursor -- for producers that REFRESH
-#                                              a list mid-walk, so `next` continues
-#                                              forward instead of restarting at 1)
+#                                              the cursor, so the step that follows is
+#                                              relative to it -- a producer REFRESHING a
+#                                              list mid-walk continues forward instead of
+#                                              restarting at 1, and a search starts where
+#                                              you are. -back seeds for a backward step)
 #   lvi-list next|prev|nfile|pfile [NAME]     step (NAME defaults to the focused list)
 #   lvi-list first|last [NAME]                 go to the first / last entry (vim :cfirst/:clast);
 #                                              no list wraps, so these are the manual wrap
@@ -223,29 +225,51 @@ need_name() { n=$(if [ -n "${1:-}" ]; then printf '%s\n' "$1"; else focus_get; f
 
 case "$sub" in
   put)
-    name=; dofocus=; atcur=
+    name=; dofocus=; atcur=; back=
     for a in "$@"; do case "$a" in
-      --focus)     dofocus=1 ;;
-      --at-cursor) atcur=1 ;;
-      *)           name=$a ;;
+      --focus)          dofocus=1 ;;
+      --at-cursor)      atcur=1 ;;
+      --at-cursor-back) atcur=1; back=1 ;;
+      *)                name=$a ;;
     esac; done
-    [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor]"
+    [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor[-back]]"
     mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
     if [ -n "$atcur" ]; then
-      # Seed the index from the cursor so a REFRESHING producer (spell after a
-      # fix, lint on write) doesn't send the walk back to entry 1: cur = the
-      # last entry at or before the cursor, so `next` continues with the first
-      # one past it. Assumes the producer emits the current file's entries in
-      # position order (ours all do); on a cross-file list the seed is the
-      # last CURRENT-file entry at or before the cursor.
+      # Seed the index from the cursor, so the step that follows is RELATIVE to
+      # where you are. Two callers, one mechanism: a REFRESHING producer (spell
+      # after a fix, lint on write) seeds so `next` continues the walk instead
+      # of sending it back to entry 1, and lvi-search seeds so `/` and `?` set
+      # off from the cursor the way vi's do. cur = the last entry the cursor has
+      # already PASSED, so `next` lands on the first one it hasn't;
+      # --at-cursor-back seeds the mirror -- the first entry NOT yet passed, or
+      # one past the end when every entry is behind you -- so `prev` lands on
+      # the last one it has. An entry the cursor sits exactly on counts as
+      # passed in both directions, which is what makes `*` and `#` step OFF the
+      # word under the cursor rather than onto it.
+      #
+      # An entry with no column is passed the moment the cursor reaches its
+      # LINE, and (going back) not until the cursor leaves it, so a col-less
+      # producer like lvi-search walks line by line and neither direction can
+      # land you on the line you set off from. Assumes the producer emits the
+      # current file's entries in position order (ours all do); on a cross-file
+      # list only the CURRENT file's entries are weighed, and the step that
+      # follows may still land in another file's run.
       cf=$(curfile)
       cl=${LVI_LINE:-}; cc=${LVI_COL:-}
       [ -n "$cl" ] || { set -- $("$LVI" -w "$target" -- pos); cl=${1:-1}; cc=${2:-1}; }
-      i=$(awk -F: -v cf="$cf" -v l="${cl:-1}" -v c="${cc:-1}" -v hdr="$HDR" "$CANON_AWK"'
+      i=$(awk -F: -v cf="$cf" -v l="${cl:-1}" -v c="${cc:-1}" -v back="${back:-}" \
+              -v hdr="$HDR" "$CANON_AWK"'
             BEGIN { f = canon(cf) }
             $0 ~ hdr { n++
-              if (canon($1)==f && (($2+0)<(l+0) || (($2+0)==(l+0) && ($3+0)<=(c+0)))) hit=n }
-            END{print hit+0}' "$listdir/$name")
+              if (canon($1) != f) next
+              col = ($3 ~ /^[0-9]+$/) ? $3+0 : ""      # "": no column -- the whole line
+              if (back == "") {
+                if ($2+0 < l+0 || ($2+0 == l+0 && (col == "" || col <= c+0))) hit = n
+              } else if (!hit) {
+                if ($2+0 > l+0 || ($2+0 == l+0 && (col == "" || col >= c+0))) hit = n
+              }
+            }
+            END { print back == "" ? hit+0 : (hit ? hit : n+1) }' "$listdir/$name")
       setcur "$name" "$i"
     else
       setcur "$name" 0                                        # a following `next` lands on 1

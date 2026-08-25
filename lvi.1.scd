@@ -1038,11 +1038,18 @@ below, with the happy-path rc lines that turn it on:
 
 	```
 	map / :silent !lvi-search<CR>
+	map ? :silent !lvi-search -b<CR>
 	map * :bg lvi-search "$LVI_CWORD"<CR>
+	map # :bg lvi-search -b "$LVI_CWORD"<CR>
 	map n :bg lvi-list next<CR>
 	map N :bg lvi-list prev<CR>
 	on bufenter lvi-list paint
 	```
+
+	A search starts at the cursor, as vi's does. Two deviations follow from
+	its being a list you walk: it does not wrap (*n* stops on the last match,
+	and *lvi-list first*/*last* are the manual wrap), and *n* is always
+	forward, so after a *?* it is *N* that keeps going back.
 
 *lvi-match* -- sticky pattern marks
 	Vim's *matchadd()*: keep a pattern painted while you read, rather than

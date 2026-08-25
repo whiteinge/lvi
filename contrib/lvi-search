@@ -1,20 +1,46 @@
 #!/bin/sh
-# lvi-search [-w auto|WID] [-i] [PATTERN]
+# lvi-search [-w auto|WID] [-i] [-b] [PATTERN]
 #
 # Search a running lvi from outside it, as a `lvi-list` producer: grep the *live*
 # buffer over the control socket, build the `search` list, focus it, and jump to
-# the first match. `n`/`N` then step it like any other list -- search is just a
-# degenerate quickfix. Because it reads the buffer via `%p` it searches UNSAVED
+# the first match past the cursor. `n`/`N` then step it like any other list --
+# search is just a degenerate quickfix. Because it reads the buffer via `%p` it searches UNSAVED
 # content, and the line numbers map straight back. PATTERN is a POSIX grep BRE.
 #
 # Bind it inside lvi (WID comes from $LVI_WID). `/` prompts, so it needs the tty
 # (`:silent !`); the rest touch no tty, so they use `:bg` -- a detached spawn with
 # no terminal handover, which avoids the alt-screen flash when you hold n/N:
-#     map / :silent !lvi-search<CR>          " prompt for a pattern
-#     map * :bg lvi-search "$LVI_CWORD"<CR>  " search the word under the cursor
-#     map n :bg lvi-list next<CR>            " step the focused list
+#     map / :silent !lvi-search<CR>             " prompt for a pattern
+#     map ? :silent !lvi-search -b<CR>          " ...searching backward
+#     map * :bg lvi-search "$LVI_CWORD"<CR>     " search the word under the cursor
+#     map # :bg lvi-search -b "$LVI_CWORD"<CR>  " ...backward
+#     map n :bg lvi-list next<CR>               " step the focused list
 #     map N :bg lvi-list prev<CR>
 # From another terminal, pass a WID: `lvi-search -w auto foo`.
+#
+# WHERE A SEARCH STARTS: at the cursor, as vi's does. The list is seeded from
+# the cursor position (`lvi-list put --at-cursor`) and then stepped, so the
+# first hop lands on the match AFTER the cursor rather than at the top of the
+# file. `-b` is the backward search, vi's `?` and `#`: the mirror seed, then a
+# step back. A search that ignored the cursor would just be a project-wide grep
+# narrowed to one file, which is a different tool.
+#
+# Matches are per LINE, not per occurrence -- grep reports the lines that match,
+# so a second match further along one line is not a separate stop. The seed
+# weighs such an entry by its line alone, which is what keeps `/` and `?` from
+# landing you back on the line you set off from. (The list format carries an
+# optional column and every consumer honours it, so a matcher that reported
+# columns would need nothing else; POSIX grep is not one -- see contrib/lvi-list
+# for the format.)
+#
+# TWO DEVIATIONS FROM VI, both from search being a list you walk rather than a
+# motion the editor repeats:
+#   * No WRAPSCAN. A list is a walk with two ends, not a ring, so `n` stops on
+#     the last match -- the status segment says `(end)` -- instead of resuming
+#     from the top. `lvi-list first`/`last` are the wrap, done by hand.
+#   * `n` does not inherit the DIRECTION of the last search. n/N are plain
+#     `lvi-list next`/`prev` and a list remembers only its index, not which way
+#     it was seeded, so after a `?` it is `N` that keeps going backward.
 #
 # It self-backgrounds a --worker: reading the buffer needs lvi's event loop,
 # which is frozen while this `:silent !` child runs, so a foreground read would
@@ -33,23 +59,27 @@
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 LVI=${LVI:-lvi}
 
-worker= want_wid= icase= pat=
+worker= want_wid= icase= back= pat=
 while [ $# -gt 0 ]; do
   case $1 in
     --worker) worker=1; shift ;;
     -w) want_wid=${2:-}; [ -n "$want_wid" ] || { echo "lvi-search: -w needs auto|WID" >&2; exit 2; }; shift 2 ;;
     -i) icase=1; shift ;;
+    -b) back=1; shift ;;
     --) pat=${2:-}; break ;;          # end of flags: what follows is the pattern
     *)  pat=$1; break ;;
   esac
 done
 target=${want_wid:-${LVI_WID:-auto}}
 wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
+# One flag, three spellings: the prompt character, the seed, and the step.
+dir=/; seed=--at-cursor;      step=next
+[ -n "$back" ] && { dir='?'; seed=--at-cursor-back; step=prev; }
 
 # Prompt in the foreground (where `:!` handed us the tty). Skip when a pattern
 # was supplied (e.g. `*` passes $LVI_CWORD) or when we are already the worker.
 if [ -z "$worker" ] && [ -z "$pat" ]; then
-  printf '/' >&2
+  printf '%s' "$dir" >&2                          # prompt with the key you pressed
   IFS= read -r pat || exit 0
   [ -n "$pat" ] || exit 0
 fi
@@ -57,7 +87,7 @@ fi
 # Detach the buffer-reading half; return at once so lvi's loop resumes and can
 # service the worker's socket traffic.
 if [ -z "$worker" ]; then
-  ( "$0" --worker $wflag ${icase:+-i} -- "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
+  ( "$0" --worker $wflag ${icase:+-i} ${back:+-b} -- "$pat" >"${LVI_SEARCH_DEBUG:-/dev/null}" 2>&1 & )
   exit 0
 fi
 
@@ -87,7 +117,8 @@ if [ -z "$matches" ]; then
   # Clear the paint (both groups -- the current-entry mark would otherwise stay
   # on screen) and the stale counter; the notice itself is ephemeral, so :msge,
   # not a status segment. grep exit 2 is a bad BRE, not an empty result.
-  notice="/$pat/ no match"; [ "$rc" -ge 2 ] && notice="bad pattern /$pat/"
+  notice="$dir$pat$dir no match"                   # echo the pattern as you typed it
+  [ "$rc" -ge 2 ] && notice="bad pattern $dir$pat$dir"
   "$LVI" -w "$target" --detach -- "hl search" "hl search-cur" "status search" "msge $notice"
   exit 0
 fi
@@ -97,5 +128,9 @@ fi
 # pri=10 lifts the mark above syntax highlighting (pri 0) so it shows through a
 # styled first column (e.g. a Markdown `1.` ordered-list marker).
 "$LVI" -w "$target" --detach -- "hi search reverse pri=10"
-printf '%s\n' "$matches" | awk -v f="$file" '{print f":"$0}' | lvi-list $wflag put search --focus
-lvi-list $wflag next
+# Seed from the cursor, then take one step off it -- that pair is the whole of
+# "search starts where I am" (see WHERE A SEARCH STARTS). lvi-list owns the
+# index; we name a direction and it does the arithmetic.
+printf '%s\n' "$matches" | awk -v f="$file" '{print f":"$0}' \
+  | lvi-list $wflag put search --focus "$seed"
+lvi-list $wflag "$step"
