@@ -637,12 +637,18 @@ spaces and tabs included.
 		with *:w!*; writing to a different name is allowed. Per-buffer; *lvi -R* at
 		startup sets it for the named files. (POSIX vi's *readonly*.)
 
-*map* _lhs_ _rhs_, *unmap* _lhs_
+*map* [_lhs_ [_rhs_]], *unmap* _lhs_
 	Map/unmap keys. Notation: *<CR>* *<Esc>* *<Space>* *<Tab>* *<Bar>*
 	*<Bslash>* *<lt>* and *<C-x>* for control keys. There is no wait-for-more
 	timeout: a _lhs_ fires the instant it completes, so one mapping cannot be a
 	prefix of another (map *gc* and *gcc* is unreachable) -- give the longer one
 	a distinct key.
+
+	With no _rhs_, *map* is a display instead: bare it lists every binding as
+	_lhs_<TAB>_rhs_ rows sorted by _lhs_, and *map* _lhs_ shows the one row.
+	Rows come back in the notation above, so one pastes straight into an rc.
+	Children get the same rows in *$LVI_MAPS* (see *ENVIRONMENT*);
+	*contrib/lvi-cmd* is a picker over them.
 
 *hl* _group_ [_L_:_C1_-_C2_ ...]
 	Paint _group_ over the given byte ranges (bare _L_ = whole line); no ranges
