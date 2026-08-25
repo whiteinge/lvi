@@ -434,6 +434,21 @@ local function expand_files(ed, s)
   return files
 end
 
+-- Write bytes to a path, replacing or appending. The plain-bytes counterpart
+-- to Buffer:write, for the writes that are NOT the buffer saving itself: a
+-- partial range, an append, the :wbuf snapshot. None of those carry the
+-- buffer's identity, so they skip the backup-then-write dance -- the .lvi~
+-- copy protects the file the buffer IS, and a foreign target has no buffer to
+-- be recovered from. Returns true, or nil + a message.
+local function write_text(path, body, append)
+  local f, oerr = io.open(path, append and "ab" or "wb")
+  if not f then return nil, ("cannot open %s: %s"):format(path, tostring(oerr)) end
+  local ok, werr = f:write(body)
+  f:close()
+  if not ok then return nil, ("short write to %s: %s"):format(path, tostring(werr)) end
+  return true
+end
+
 -- Run a shell command. On a tty (ed.shell present) it runs interactively with
 -- the real terminal; otherwise (socket/headless) its stdout is captured and
 -- returned as the payload. ed._silent suppresses the interactive "Press ENTER".
@@ -469,6 +484,24 @@ local function do_filter(ed, a, b, cmd)
   ed.buf:splice(from, to - from + 1, lines)
   ed.cy, ed.cx = clampline(ed, from), 1
   return "", "ok"
+end
+
+-- :[range]w !cmd -- the range's text on a command's stdin (POSIX's write-to-a-
+-- command form). do_filter's sibling minus the splice: here the buffer is the
+-- INPUT and nothing comes back into it. Same temp-file hand-off for the same
+-- reason (a bidirectional pipe would deadlock), and the same tty rules as :! --
+-- on a terminal the command owns the screen, so `w !sudo tee -- "$LVI_FILE"`
+-- can prompt for a password; over the socket its stdout is the reply. The
+-- redirect wraps cmd in a subshell so the input reaches the whole pipeline,
+-- not just the last stage of a `cmd1 && cmd2`.
+local function do_write_cmd(ed, from, to, cmd)
+  if cmd == "" then return "no command", "err" end
+  local tmp = vpath.tmp()                       -- carries buffer text: keep it private
+  local ok, werr = write_text(tmp, ed.buf:text(from, to))
+  if not ok then os.remove(tmp); return "write failed: " .. werr, "err" end
+  local payload, status = do_shell(ed, ("(%s) < %s"):format(cmd, tmp))
+  os.remove(tmp)
+  return payload, status
 end
 
 -- Delegate a command lvi does not implement itself to the system ex (the whole
@@ -784,11 +817,44 @@ def("q quit", function(ed, c)
   return "", "ok"
 end)
 
+-- POSIX write, all three forms; the range defaults to the whole buffer:
+--
+--   :[range]w [file]     write, replacing file
+--   :[range]w >>[file]   append to file instead of replacing it
+--   :[range]w !cmd       pipe the lines to a command's standard input
+--
+-- Only the first form writing the WHOLE buffer is the buffer saving ITSELF, and
+-- only it carries the buffer's identity: it goes through Buffer:write, so it
+-- gets the .lvi~ safety copy, repoints buf.path (lvi's save-as deviation) and
+-- clears `modified`. The other three cases -- a partial range, an append, a
+-- pipe -- write FROM the buffer to somewhere else, so they leave its name and
+-- dirty state alone. POSIX says the same thing from the other side: only a
+-- complete write clears the modification flag.
+--
+-- `w !cmd` vs `w!file` turns on the blank, and the dispatcher's parse already
+-- makes that split for us -- `w!` becomes the bang, a blank before the `!`
+-- leaves it at the head of args -- which is exactly POSIX's rule.
+--
+-- The `write` hook fires for every form that names a file, including a save-as
+-- elsewhere (as it always has). It does NOT fire for `w !cmd`: the command is
+-- opaque, so lvi cannot say whether a file was written or which one.
 def("w write", function(ed, c)
   -- In the command window, bare :w runs the current line instead of writing.
   -- :w <file> still saves normally -- a handy "dump my recent commands to disk".
   if ed.buf.cmdwin_origin and c.args == "" then return cmdwin_exec(ed) end
-  local p, xerr = expand_file(ed, c.args)
+  local nlines = ed.buf:nlines()
+  local from, to = 1, nlines
+  if c.a then from, to = line_range(ed, c.a, c.b) end
+  local whole = (from == 1 and to == nlines)
+
+  if c.args:sub(1, 1) == "!" then
+    return do_write_cmd(ed, from, to, c.args:sub(2))
+  end
+
+  local target, append = c.args, false
+  local tail = c.args:match("^>>%s*(.*)$")
+  if tail then target, append = tail, true end       -- bare `>>` appends to our own file
+  local p, xerr = expand_file(ed, target)
   if xerr then return xerr, "err" end
   p = p or ed.buf.path
   if not p then return "No file name", "err" end
@@ -798,11 +864,24 @@ def("w write", function(ed, c)
   if not c.bang and write_conflict(ed, ed.buf, p) then
     return "File changed since last read (add ! to override)", "err"
   end
-  local ok, n = pcall(ed.buf.write, ed.buf, p)
-  if not ok then return "write failed: " .. tostring(n), "err" end
-  if ed.stamp then ed.stamp(ed.buf) end
+
+  local n
+  if whole and not append then
+    local ok, err = pcall(ed.buf.write, ed.buf, p)
+    if not ok then return "write failed: " .. tostring(err), "err" end
+    n = err
+  else
+    local body = ed.buf:text(from, to)
+    local ok, werr = write_text(p, body, append)
+    if not ok then return "write failed: " .. werr, "err" end
+    n = #body
+  end
+  -- Re-stamp only when we moved the mtime of the file this buffer claims;
+  -- writing elsewhere tells us nothing new about our own.
+  if ed.stamp and p == ed.buf.path then ed.stamp(ed.buf) end
   if ed.fire_event then ed.fire_event("write") end
-  return ('"%s" %dL, %dB written'):format(p, ed.buf:nlines(), n), "ok"
+  return ('"%s" %dL, %dB %s'):format(p, to - from + 1, n,
+                                     append and "appended" or "written"), "ok"
 end)
 
 -- Snapshot the live buffer (unsaved edits and all) to the per-view scratch
@@ -816,11 +895,8 @@ end)
 def("wbuf", function(ed)
   local p = ed.buffer_scratch
   if not p then return "no buffer scratch path", "err" end
-  local ok, err = pcall(function()
-    local f = assert(io.open(p, "wb"))
-    f:write(ed.buf:text()); f:close()
-  end)
-  if not ok then return "wbuf failed: " .. tostring(err), "err" end
+  local ok, err = write_text(p, ed.buf:text())
+  if not ok then return "wbuf failed: " .. err, "err" end
   return "", "ok"
 end)
 

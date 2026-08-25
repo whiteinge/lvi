@@ -427,7 +427,7 @@ argument is taken verbatim, no expansion (*:e -- foo $bar.txt* opens exactly
 that file). Without it the script must backslash-escape every metacharacter,
 spaces and tabs included.
 
-*w*[*!*] [_file_], *wq*, *x*
+\[_range_]*w*[*!*] [[*>>*]_file_ | *!*_cmd_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
 	untouched). *ZZ* is *x*. If the file on disk changed since lvi last read or
@@ -435,6 +435,26 @@ spaces and tabs included.
 	write the full new text sits in a sibling _file.lvi~_ safety copy, removed
 	when the write completes -- a surviving _.lvi~_ means the write was cut
 	short and holds the intended contents.
+
+	*>>* appends to _file_ rather than replacing it, and *!*_cmd_ pipes the lines
+	to _cmd_'s standard input rather than to a file. _range_ defaults to the whole
+	buffer. A blank separates the two bangs: *w!*_file_ is a forced write,
+	*w !*_cmd_ is a pipe. On a terminal _cmd_ owns the screen while it runs, so it
+	can prompt. That is how you write a file you forgot to open as root:
+
+		:w !sudo tee -- "$LVI_FILE" > /dev/null
+
+	Then *e!* to re-read it, since a pipe does not tell lvi what it wrote.
+
+	Only writing the whole buffer to a file saves the buffer *as* that file: it
+	takes the name and clears the modified flag, and it alone gets the _.lvi~_
+	copy. A partial range, an append, and a pipe write bytes elsewhere, so they
+	leave the buffer's name and modified flag untouched.
+
+	Two deviations. *w* _file_ renames the buffer to _file_ (vim's *saveas*),
+	where POSIX leaves the current pathname alone; use *f* _file_ to rename
+	without writing. And *wq*/*x* take neither *>>* nor *!*_cmd_: an append leaves
+	the buffer modified, so *wq >>* would quit and discard your changes.
 
 *wa*[*!*], *xa*[*!*]
 	Write every modified buffer to its own path (*wa*, alias *wall*), or write

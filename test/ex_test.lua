@@ -346,6 +346,111 @@ describe("ex.dispatch", function()
     end)
   end)
 
+  -- POSIX's other two write forms, plus the range every form takes. Only a
+  -- whole-buffer write to a file is the buffer saving itself; the rest write
+  -- FROM the buffer and must leave its name and dirty state alone.
+  describe("ranged / append / pipe writes", function()
+    local function slurp(p)
+      local f = io.open(p, "rb"); local body = f:read("*a"); f:close(); return body
+    end
+
+    it("writes only the addressed range, leaving the buffer modified", function()
+      local ed = ed_with("a\nb\nc\nd\n")
+      local tmp = os.tmpname()
+      ed.buf.path = "/nonexistent/original"
+      ed.buf.modified = true
+      local p, s = ex.dispatch(ed, "2,3w " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("b\nc\n")
+      expect(p:find("2L", 1, true)).to.exist()
+      expect(ed.buf.path).to.equal("/nonexistent/original")   -- no repoint
+      expect(ed.buf.modified).to.be(true)                     -- partial: still dirty
+      os.remove(tmp)
+    end)
+
+    it("a whole-buffer write is still a save-as: repoints and cleans", function()
+      local ed = ed_with("a\nb\n")
+      local tmp = os.tmpname()
+      local _, s = ex.dispatch(ed, "1,2w " .. tmp)   -- addressed, but the whole buffer
+      expect(s).to.equal("ok")
+      expect(ed.buf.path).to.equal(tmp)
+      expect(ed.buf.modified).to.be(false)
+      os.remove(tmp)
+    end)
+
+    it("appends with >> instead of replacing", function()
+      local ed = ed_with("c\nd\n")
+      local tmp = os.tmpname()
+      local f = io.open(tmp, "wb"); f:write("a\nb\n"); f:close()
+      ed.buf.modified = true
+      local p, s = ex.dispatch(ed, "w >>" .. tmp)
+      expect(s).to.equal("ok")
+      expect(p:find("appended", 1, true)).to.exist()
+      expect(slurp(tmp)).to.equal("a\nb\nc\nd\n")
+      expect(ed.buf.path).to.be(nil)                 -- an append names no identity
+      expect(ed.buf.modified).to.be(true)
+      os.remove(tmp)
+    end)
+
+    it("appends only the addressed range", function()
+      local ed = ed_with("a\nb\nc\n")
+      local tmp = os.tmpname()
+      local f = io.open(tmp, "wb"); f:write("x\n"); f:close()
+      local _, s = ex.dispatch(ed, "3w >> " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("x\nc\n")
+      os.remove(tmp)
+    end)
+
+    it("an interior slice of a noeol buffer still ends newline-terminated", function()
+      local ed = ed_with("a\nb")                     -- no final newline
+      expect(ed.buf.noeol).to.be(true)
+      local tmp = os.tmpname()
+      ex.dispatch(ed, "1w " .. tmp)
+      expect(slurp(tmp)).to.equal("a\n")            -- interior: terminated
+      ex.dispatch(ed, "2w " .. tmp)
+      expect(slurp(tmp)).to.equal("b")               -- reaches the end: noeol honored
+      os.remove(tmp)
+    end)
+
+    it("pipes the range to a command with :w !cmd", function()
+      local ed = ed_with("a\nb\nc\n")
+      local tmp = os.tmpname()
+      ed.buf.modified = true
+      local _, s = ex.dispatch(ed, "2,3w !cat > " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("b\nc\n")
+      expect(ed.buf.modified).to.be(true)            -- a pipe is not a save
+      os.remove(tmp)
+    end)
+
+    it("feeds the whole pipeline, not just its last stage", function()
+      local ed = ed_with("b\na\n")
+      local tmp = os.tmpname()
+      local _, s = ex.dispatch(ed, "w !sort | cat > " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("a\nb\n")
+      os.remove(tmp)
+    end)
+
+    it("reports a failing :w !cmd", function()
+      local ed = ed_with("a\n")
+      local _, s = ex.dispatch(ed, "w !exit 3")
+      expect(s).to.equal("err")
+    end)
+
+    it("w! before a name is still a forced file write, not a pipe", function()
+      local ed = ed_with("a\n")
+      local tmp = os.tmpname()
+      ed.buf.path = tmp
+      ed.file_changed = function() return true end
+      local _, s = ex.dispatch(ed, "w!")             -- bang, no args: forced write
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("a\n")
+      os.remove(tmp)
+    end)
+  end)
+
   -- File arguments are shell-expanded per POSIX (expand_file in ex.lua): an
   -- arg containing a metacharacter round-trips through `sh -c 'echo <arg>'`,
   -- so ~, $VAR, and globs mean whatever sh says. Plain names (every other
