@@ -213,10 +213,18 @@ tabs expanded, most linters count characters, and lvi counts bytes; the three
 agree on ASCII without tabs, so the mismatch shows up only as a cursor landing
 near a complaint instead of on it. A number can't say which it is, so the
 producer declares once — `lvi-list put --cols=char|display` — and lvi converts,
-since only the editor has the line's bytes to convert with. The overlay mark
-stays in the first column regardless: a sign in the left margin, scanned down
-the edge of the screen. `lvi-match` is what paints the token itself, and the
-`lvi-list` header lists who reads a column and who ignores it.
+since only the editor has the line's bytes to convert with.
+
+A second declaration, `--paint=`, says what the mark *looks* like. A list is
+either something you read or something you see, and only the producer knows
+which. The default is a **sign** — the entry's first cell, a mark in the left
+margin scanned down the edge of the screen. That is right for a linter, whose
+lines you read, and wrong for a search, where the match is what you are looking
+at, so `--paint=extent` lights each entry's own range instead and `--paint=cur`
+lights only the one you are standing on. An extent needs byte columns: `:hl`
+takes byte ranges and lvi-list cannot convert, since a col-bearing entry's text
+is a message rather than the line. A char or display list signs rather than
+mispaint. The `lvi-list` header lists who reads a column and who ignores it.
 
 lvi knows nothing about lists: `lvi-list` owns them and drives the view over
 the socket, jumping the cursor, painting the `:hl` overlay, and setting a
