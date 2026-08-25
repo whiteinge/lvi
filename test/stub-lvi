@@ -19,7 +19,7 @@ dir=${STUB_DIR:?stub-lvi: STUB_DIR not set}
 [ "$1" = -l ] && { cat "$dir/list" 2>/dev/null; exit 0; }
 wid=
 [ "$1" = -w ] && { wid=$2; shift 2; }
-[ "$1" = --detach ] && shift
+{ [ "$1" = --detach ] || [ "$1" = -d ]; } && shift
 [ "$1" = -- ] && shift
 for c in "$@"; do
   printf '%s\n' "$c" >> "$dir/log"

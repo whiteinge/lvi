@@ -1344,6 +1344,98 @@ describe("contrib", function()
         cleanup(d)
       end)
     end)
+
+    -- lvi-shell.sh is sourced, not run, so these drive its functions from a
+    -- shell whose $LVI is the stub. LVI_WID set is the shell-out case (queued,
+    -- and $LVI_FILE is the only source for the current file); unset is the
+    -- live case, where the file comes back over the socket.
+    describe("lvi-shell.sh", function()
+      -- The file declares itself zsh/bash/mksh, not POSIX sh: `lvi-mv` is not a
+      -- name dash will even parse. So these run under bash, unlike every other
+      -- test here. -i for the two that need $- to say interactive, since that
+      -- is what gates the prompt tag and the banner.
+      local function bash(env, cmd, interactive)
+        return run(env, ("bash --norc %s-c '. contrib/lvi-shell.sh; %s'")
+                        :format(interactive and "-i " or "", cmd))
+      end
+
+      it("lvi-mv moves the file and repoints the buffer with :f", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/old.txt", "x\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/old.txt" }
+        local _, ok = bash(env, "lvi-mv " .. dir .. "/new.txt")
+        expect(ok).to.be.truthy()
+        expect(exists(dir .. "/new.txt")).to.be(true)
+        expect(exists(dir .. "/old.txt")).to.be(false)
+        -- :f, not :w -- renaming must not decide to save the buffer.
+        expect(read(d .. "/log")).to.equal("f -- " .. dir .. "/new.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("lvi-mv into a directory keeps the basename", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/doc.txt", "x\n")
+        os.execute("mkdir -p '" .. dir .. "/arch'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/doc.txt" }
+        bash(env, "lvi-mv " .. dir .. "/arch")
+        expect(exists(dir .. "/arch/doc.txt")).to.be(true)
+        expect(read(d .. "/log")).to.equal("f -- " .. dir .. "/arch/doc.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("lvi-rm deletes the file and always forces the buffer away", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/gone.txt", "x\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/gone.txt" }
+        bash(env, "lvi-rm")
+        expect(exists(dir .. "/gone.txt")).to.be(false)
+        expect(read(d .. "/log")).to.equal("bd!\n")   -- never bare bd
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("a failed rm sends nothing", function()
+        local d = stub({})
+        local dir = tmpdir()
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/never-existed" }
+        local _, ok = bash(env, "lvi-rm")
+        expect(ok).to_not.be.truthy()
+        expect(read(d .. "/log")).to.equal("")
+        cleanup(d); cleanup(dir)
+      end)
+
+      -- Under a shell-out lvi is frozen, so asking it for the path would block
+      -- on an editor that is blocked on us. $LVI_FILE is the only source there.
+      it("a pathless buffer under a shell-out errors without asking lvi", function()
+        local d = stub({ path = "" })
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "" }
+        local out, ok = bash(env, "lvi-mv /tmp/x.txt")
+        expect(ok).to_not.be.truthy()
+        expect(out:find("no file name", 1, true)).to.exist()
+        expect(read(d .. "/log")).to.equal("")
+        cleanup(d)
+      end)
+
+      it("outside a shell-out the current file comes from :path", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/live.txt", "x\n")
+        write(d .. "/path", dir .. "/live.txt\n")
+        write(d .. "/list", "w1\t/sock\t" .. dir .. "/live.txt\n")
+        local env = { LVI = STUB, STUB_DIR = d }        -- no LVI_WID: live
+        bash(env, "lvi-mv " .. dir .. "/moved.txt")
+        expect(exists(dir .. "/moved.txt")).to.be(true)
+        expect(read(d .. "/log")).to.equal("path\nf -- " .. dir .. "/moved.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+    end)
   end)
 end)
 

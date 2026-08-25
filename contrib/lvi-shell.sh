@@ -13,6 +13,27 @@
 #   lvi-saveas [-f] PATH   write the buffer as PATH (-f forces, i.e. :w!)
 #   lvi-e FILE             open FILE in the running view
 #   lvi-r FILE             read FILE into the buffer after the cursor line
+#   lvi-mv DST             move/rename the file AND the buffer in one command
+#   lvi-rm [-f]            delete the file and drop the buffer
+#   lvi-sudow              write the current file through sudo
+#
+# lvi-mv, lvi-rm and lvi-sudow exist because each is a sequence with an
+# ordering you have to know, and getting it wrong is quiet rather than loud:
+#
+#   - lvi-mv moves the file, then repoints the BUFFER at the new name with
+#     `:f` -- which renames without writing, so unsaved edits stay unsaved and
+#     stay yours. Skip the repoint and the buffer still holds the old path,
+#     where the next bare :w silently recreates the file you just moved.
+#
+#   - lvi-rm always sends `bd!`, never `bd`. You just deleted the file;
+#     refusing to drop the buffer over unsaved changes would be refusing to
+#     finish the job, and a QUEUED refusal is invisible (see below). Its -f is
+#     rm's, not lvi's.
+#
+#   - lvi-sudow runs `sudo -v` at YOUR prompt first, so the password is asked
+#     for here where you are typing, then queues `:w !sudo tee` (which pipes
+#     the buffer to a command that runs as root) and `:e!` to re-read. Without
+#     the priming the prompt appears on the editor's screen after you exit.
 #
 # Where they work, and how they behave there:
 #
@@ -92,3 +113,81 @@ lvi-r() {
   [ $# -eq 1 ] || { echo "usage: lvi-r FILE" >&2; return 2; }
   lvi__send "r $(lvi__path "$1")" lvi-r
 }
+
+# The file the view is editing. Empty means a buffer with no name (a scratch
+# view, `lvi` with no file), which none of the callers below can act on.
+#
+# The two branches are not interchangeable. Under a shell-out lvi is frozen, so
+# asking it anything would block until we exit -- and we would be waiting on an
+# editor that is waiting on us. $LVI_FILE is the only source there, and empty
+# means empty. Anywhere else the socket answers, so ask: `:path` is the
+# machine-readable spelling of `:f`, exactly the path and nothing else.
+lvi__file() {
+  local f
+  if [ -n "$LVI_WID" ]; then
+    f=$LVI_FILE
+  else
+    f=$("${LVI:-lvi}" -w auto -- path) || return 1
+  fi
+  if [ -z "$f" ]; then
+    echo "${1:-lvi}: the buffer has no file name" >&2
+    return 1
+  fi
+  printf '%s\n' "$f"
+}
+
+# Move or rename the file and the buffer together. DST may be a directory, as
+# mv's may. The repoint is `:f`, not `:w`: renaming a buffer should not decide
+# to save it, and if you are mid-edit the write would be one you did not ask
+# for. The file moves now, the buffer follows on your exit -- in between, the
+# view names a path that is gone, which matters only if you run something else
+# against it in that window.
+lvi-mv() {
+  [ $# -eq 1 ] || { echo "usage: lvi-mv DST" >&2; return 2; }
+  local src dst
+  src=$(lvi__file lvi-mv) || return 1
+  dst=$1
+  [ -d "$dst" ] && dst="${dst%/}/${src##*/}"
+  mv -- "$src" "$dst" || return 1
+  lvi__send "f $(lvi__path "$dst")" lvi-mv
+}
+
+# Delete the file and drop the buffer. `bd!` unconditionally: the file is gone
+# by the time it runs, so the unsaved changes it would refuse over have nothing
+# left to be saved to -- and queued, that refusal would be silent anyway. -f is
+# rm's (a write-protected file, a missing one), not lvi's.
+lvi-rm() {
+  local rmflag=
+  [ "$1" = -f ] && { rmflag=-f; shift; }
+  [ $# -eq 0 ] || { echo "usage: lvi-rm [-f]" >&2; return 2; }
+  local src
+  src=$(lvi__file lvi-rm) || return 1
+  rm $rmflag -- "$src" || return 1
+  lvi__send 'bd!' lvi-rm
+}
+
+# Write the current file as root, for when you opened it without sudo. `:w
+# !cmd` pipes the buffer to a command's stdin, so tee writing as root needs no
+# temp file of ours; `$LVI_FILE` is left for the EDITOR's shell to expand, so
+# the name never passes through our quoting. `:e!` then re-reads it -- the pipe
+# is opaque, so lvi cannot know its own file was written and would otherwise
+# hold a stale conflict stamp and a modified flag.
+#
+# `sudo -v` runs first so the password is asked for at your prompt, on this
+# terminal, rather than on the editor's screen once you exit. Both commands are
+# sent detached even outside a shell-out: a synchronous send would sit blocking
+# this terminal while the editor's terminal owns the interaction.
+lvi-sudow() {
+  [ $# -eq 0 ] || { echo "usage: lvi-sudow" >&2; return 2; }
+  lvi__file lvi-sudow > /dev/null || return 1
+  sudo -v || return 1
+  local wid=${LVI_WID:-auto}
+  "${LVI:-lvi}" -w "$wid" -d -- 'w !sudo tee -- "$LVI_FILE" > /dev/null' &&
+    "${LVI:-lvi}" -w "$wid" -d -- 'e!' &&
+    if [ -n "$LVI_WID" ]; then
+      echo "lvi-sudow: queued -- writes when you exit to lvi" >&2
+    else
+      echo "lvi-sudow: sent -- tee runs on the editor's terminal" >&2
+    fi
+}
+
