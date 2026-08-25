@@ -1040,7 +1040,8 @@ below, with the happy-path rc lines that turn it on:
 	or force the language with *lang* _name_ when detection guesses wrong.
 
 *lvi-search* + *lvi-list* -- search and quickfix
-	*lvi-search* greps the live (unsaved) buffer into a *lvi-list* list; every
+	*lvi-search* turns a POSIX-BRE search of the live (unsaved) buffer into a
+	*lvi-list* list, one entry per match; every
 	list (search, grep, lint, git hunks) shares one pair of step keys, acting on
 	whichever is _focused_:
 

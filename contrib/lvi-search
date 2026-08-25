@@ -5,7 +5,8 @@
 # buffer over the control socket, build the `search` list, focus it, and jump to
 # the first match past the cursor. `n`/`N` then step it like any other list --
 # search is just a degenerate quickfix. Because it reads the buffer via `%p` it searches UNSAVED
-# content, and the line numbers map straight back. PATTERN is a POSIX grep BRE.
+# content, and the line numbers map straight back. PATTERN is a POSIX BRE, vi's
+# own dialect.
 #
 # Bind it inside lvi (WID comes from $LVI_WID). `/` prompts, so it needs the tty
 # (`:silent !`); the rest touch no tty, so they use `:bg` -- a detached spawn with
@@ -25,13 +26,31 @@
 # step back. A search that ignored the cursor would just be a project-wide grep
 # narrowed to one file, which is a different tool.
 #
-# Matches are per LINE, not per occurrence -- grep reports the lines that match,
-# so a second match further along one line is not a separate stop. The seed
-# weighs such an entry by its line alone, which is what keeps `/` and `?` from
-# landing you back on the line you set off from. (The list format carries an
-# optional column and every consumer honors it, so a matcher that reported
-# columns would need nothing else; POSIX grep is not one -- see contrib/lvi-list
-# for the format.)
+# THE MATCHER, and why it is not grep. Entries carry the match's EXTENT
+# (`file:LINE.C1-C2:`), one per OCCURRENCE, so a second match further along a
+# line is its own stop, the seed can resume from between two matches on one line,
+# and `--paint=extent` lights the match itself. Getting there with POSIX tools
+# looks impossible at first: grep speaks vi's BRE but will not say where a match
+# sits, and awk reports offsets but speaks ERE, where `foo(` errors and `a+b`,
+# `(x)` and `x|y` all match the wrong thing in silence. A BRE-to-ERE translator
+# bridges them and is worse than either, since back-references have no ERE
+# spelling at all.
+#
+# But locating a match is a different job from finding one, and it needs no
+# second DIALECT -- only a BRE engine that reports POSITION. sed is one:
+# substitute every match with itself wrapped in a marker byte (`&` is POSIX, and
+# `s///g` is leftmost-longest repeated, which is vi's own rule), then count the
+# offsets. Two control bytes do it -- 0x01 marks, 0x02 delimits the `s` command so
+# no pattern ever needs escaping -- and awk turns the offsets into columns, taking
+# the line number from its own NR. The buffer goes through sed and awk and grep
+# never runs, which is also what lets `^` and `$` anchor against the real line
+# instead of a numbered one.
+#
+# Two limits, both loud rather than silent: a zero-width match (`o*`, `^`) has no
+# extent, so it lands as a bare `LINE.COL` entry; and a buffer holding either
+# marker byte -- a binary file, in practice -- falls back to `grep -n`, whose
+# per-line entries are what this script emitted before. (See contrib/lvi-list for
+# the entry format and who reads a column.)
 #
 # TWO DEVIATIONS FROM VI, both from search being a list you walk rather than a
 # motion the editor repeats:
@@ -51,6 +70,11 @@
 # `sensitive` (default), `ignore`, or `smart` (the vi/vim rule: insensitive unless
 # PATTERN has an uppercase letter). Set it per binding to taste, e.g.
 #     map / :silent !LVI_SEARCH_CASE=smart lvi-search<CR>
+# GNU and BSD sed take an `I` flag on `s///` and that is what gets used; a strict
+# POSIX sed has none, so we probe once and fall back to folding both the buffer
+# and the pattern with `tr` -- ASCII-only, but byte-length preserving, so the
+# columns it finds still land on the unfolded line. Folding the pattern folds a
+# bracket range with it (`[A-Z]` becomes `[a-z]`), which is what you asked for.
 #
 # Config: LVI (client, default `lvi`), LVI_SEARCH_CASE (sensitive|ignore|smart),
 # LVI_SEARCH_DEBUG (capture worker stderr). Needs lvi-list on PATH.
@@ -111,14 +135,72 @@ else
   esac
 fi
 
-matches=$("$LVI" -w "$target" -- '%p' | grep -n $iflag -- "$pat")
-rc=$?
+# The `s` command, built once (see THE MATCHER). 0x01 wraps a match, 0x02
+# delimits, so the pattern goes in verbatim -- unless it holds one of the two,
+# which only a pattern typed out of a binary buffer would.
+M=$(printf '\001'); D=$(printf '\002')
+prog="s${D}${pat}${D}${M}&${M}${D}g"
+fold=
+case $pat in
+  *"$M"*|*"$D"*) prog= ;;                        # -> the grep fallback below
+  *) # Validate against EMPTY input: sed parses the whole script before it reads
+     # a byte, so a bad BRE is caught here without touching the buffer.
+     if ! printf '' | sed "$prog" >/dev/null 2>&1; then
+       "$LVI" -w "$target" --detach -- "hl search" "hl search-cur" "status search" \
+                                       "msge bad pattern $dir$pat$dir"
+       exit 0
+     fi
+     # Case-insensitive wants sed's `I`; probe for it, else fold both sides.
+     if [ -n "$iflag" ]; then
+       if printf '' | sed "${prog}I" >/dev/null 2>&1; then prog="${prog}I"
+       else
+         fold=1
+         prog="s${D}$(printf '%s' "$pat" | tr '[:upper:]' '[:lower:]')${D}${M}&${M}${D}g"
+       fi
+     fi ;;
+esac
+
+# The buffer goes to a file, not a variable: awk reads it TWICE -- once for the
+# original lines (an entry's text, and the only copy the fold path has not
+# flattened) and once for the marked stream. Beside the socket when we know where
+# that is, since the file holds buffer content.
+tdir=${LVI_SOCK%/*}; [ -n "$tdir" ] && [ -d "$tdir" ] || tdir=${TMPDIR:-/tmp}
+buf=$(mktemp "$tdir/lvi-search.XXXXXX") || exit 1
+trap 'rm -f "$buf"' EXIT HUP INT TERM
+"$LVI" -w "$target" -- '%p' > "$buf"
+
+if [ -z "$prog" ]; then
+  # Marker bytes in the pattern: no extents, per-line entries as before.
+  matches=$(grep -n $iflag -- "$pat" "$buf" | awk -v f="$file" '{print f":"$0}')
+else
+  # sed runs in the caller's locale so `.` still matches a multibyte character;
+  # awk runs under LC_ALL=C so its offsets are BYTES, which is the unit `:pos`
+  # and `:hl` want and what the list is put with.
+  if [ -n "$fold" ]; then marked=$(tr '[:upper:]' '[:lower:]' < "$buf" | sed "$prog")
+  else                    marked=$(sed "$prog" "$buf"); fi
+  matches=$(printf '%s\n' "$marked" | LC_ALL=C awk -v m="$M" -v f="$file" '
+    NR == FNR { o[FNR] = $0; next }                  # the original lines
+    index($0, m) {
+      rest = $0; seen = 0
+      while ((i = index(rest, m)) > 0) {
+        seen += i - 1                                # real text before the mark
+        start = seen + 1
+        rest = substr(rest, i + 1)
+        j = index(rest, m)
+        if (j == 0) break                            # unpaired: leave the line
+        len = j - 1; seen += len
+        rest = substr(rest, j + 1)
+        if (len > 0) printf "%s:%d.%d-%d: %s\n", f, FNR, start, start + len - 1, o[FNR]
+        else         printf "%s:%d.%d: %s\n", f, FNR, start, o[FNR]
+      }
+    }' "$buf" -)
+fi
 if [ -z "$matches" ]; then
   # Clear the paint (both groups -- the current-entry mark would otherwise stay
   # on screen) and the stale counter; the notice itself is ephemeral, so :msge,
   # not a status segment. grep exit 2 is a bad BRE, not an empty result.
+  # (A bad pattern never reaches here -- it is caught before the buffer is read.)
   notice="$dir$pat$dir no match"                   # echo the pattern as you typed it
-  [ "$rc" -ge 2 ] && notice="bad pattern $dir$pat$dir"
   "$LVI" -w "$target" --detach -- "hl search" "hl search-cur" "status search" "msge $notice"
   exit 0
 fi
@@ -131,6 +213,8 @@ fi
 # Seed from the cursor, then take one step off it -- that pair is the whole of
 # "search starts where I am" (see WHERE A SEARCH STARTS). lvi-list owns the
 # index; we name a direction and it does the arithmetic.
-printf '%s\n' "$matches" | awk -v f="$file" '{print f":"$0}' \
-  | lvi-list $wflag put search --focus "$seed"
+# --paint=extent: the match is the thing you are looking at, so light it rather
+# than sign the line (see PAINT POLICY in contrib/lvi-list). Columns are bytes.
+printf '%s\n' "$matches" \
+  | lvi-list $wflag put search --focus --cols=byte --paint=extent "$seed"
 lvi-list $wflag "$step"

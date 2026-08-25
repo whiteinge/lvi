@@ -239,10 +239,19 @@ stepped with list-specific key mappings. E.g., `map ]c :bg lvi-list next
 gitchanges<CR>` steps git hunks without touching what `n`/`N` point at.
 
 **`lvi-search`** is the first producer for the generic `lvi-list` interface:
-it greps the *live* buffer (so it finds unsaved text), builds the `search`
+it searches the *live* buffer (so it finds unsaved text), builds the `search`
 list, focuses it, and jumps to the first match past the cursor. Search is
 simply a degenerate quickfix. Bind `/` and `?` to prompt, `*` and `#` to hunt
 the word under the cursor; `n`/`N` do the rest.
+
+Patterns are POSIX BREs, vi's own dialect, and every entry carries the match's
+extent, so `n` steps occurrence by occurrence and the match itself lights up
+instead of the line getting a margin mark. Neither comes free from the obvious
+tools. grep speaks BRE but will not say where a match sits; awk reports offsets
+but in ERE, where `a+b` and `x|y` quietly mean something else. sed does both: `&`
+in an `s///g` wraps each match in a marker byte and awk counts the offsets, which
+is a BRE engine reporting a position rather than a second dialect to learn. The
+`lvi-search` header has the mechanics and the two cases it cannot cover.
 
 A search starts where you are, as vi's does — the list is seeded from the
 cursor, then stepped once. Two deviations come with search being a list you
@@ -278,8 +287,7 @@ default at `pri=12`, above syntax (0) and search (10) — so the three
 identifiers you are tracing through a function read apart at a glance. `-g`
 puts several patterns in one group, and one color, when they are one family.
 Patterns are POSIX EREs rather than lvi-search's BREs, since the extents come
-from awk's `match()` and a mark needs a column range where a search needs only
-a line; `-F` takes the pattern literally, `--word` is grep's `-w` (what makes
+from awk's `match()`; `-F` takes the pattern literally, `--word` is grep's `-w` (what makes
 marking the cursor word behave), `-i` folds case. The first add installs the
 `change`/`bufenter` hooks itself, so the rc needs only keys and, if you don't
 want the built-in palette, your own `hi match1`… lines.

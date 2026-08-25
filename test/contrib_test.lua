@@ -281,6 +281,75 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- THE MATCHER: sed wraps each match in a marker byte and awk counts the
+    -- offsets, so entries carry a real extent, one per OCCURRENCE, in vi's own
+    -- BRE. grep could do neither; awk alone would have had to speak ERE.
+    it("lvi-search puts per-occurrence extents in vi's BRE", function()
+      local d = stub({ buffer = "aaa foo(bar) foo\nnothing\n", path = "x.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+                    LVI_FILE = "x.txt", LVI_LINE = "1", LVI_COL = "1",
+                    PATH = pwd .. "/contrib:" .. os.getenv("PATH") }
+      run(env, "contrib/lvi-search --worker -- foo")
+      expect(read(d .. "/sock.lists/search")).to.equal(
+        "x.txt:1.5-7: aaa foo(bar) foo\nx.txt:1.14-16: aaa foo(bar) foo\n")
+      -- the match is what you are looking at, so it lights rather than signs
+      expect(read(d .. "/sock.lists/search.paint")).to.equal("extent\n")
+      expect(read(d .. "/log"):find("\nhl search 1:5%-7 1:14%-16")).to.exist()
+      cleanup(d)
+    end)
+
+    -- The three that separate a BRE from an ERE. Under awk's dialect `foo(` is
+    -- an error, `a+b` and the back-reference silently match something else.
+    it("lvi-search reads a metacharacter the way vi does", function()
+      local cases = { { "foo(", "aaa foo(bar)\n", "x.txt:1.5-8: aaa foo(bar)\n" },
+                      { "a+b",  "xx a+b yy aab\n", "x.txt:1.4-6: xx a+b yy aab\n" },
+                      { "\\(o\\)\\1", "look\n", "x.txt:1.2-3: look\n" },
+                      { "^aa",  "aab\nxaa\n",      "x.txt:1.1-2: aab\n" } }
+      for _, c in ipairs(cases) do
+        local d = stub({ buffer = c[2], path = "x.txt\n" })
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+              LVI_FILE = "x.txt", LVI_LINE = "1", LVI_COL = "1",
+              PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+          ("contrib/lvi-search --worker -- '%s'"):format(c[1]))
+        expect(read(d .. "/sock.lists/search")).to.equal(c[3])
+        cleanup(d)
+      end
+    end)
+
+    -- A zero-width match has a position but no extent; dropping it would lose
+    -- the match, and inventing a width would light a cell it never covered.
+    it("lvi-search gives a zero-width match a column and no range", function()
+      local d = stub({ buffer = "ab\n", path = "x.txt\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "x.txt", LVI_LINE = "1", LVI_COL = "1",
+            PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        "contrib/lvi-search --worker -- 'x*'")
+      expect(read(d .. "/sock.lists/search")).to.equal(
+        "x.txt:1.1: ab\nx.txt:1.2: ab\nx.txt:1.3: ab\n")
+      cleanup(d)
+    end)
+
+    it("lvi-search names a bad BRE without reading the buffer", function()
+      local d = stub({ buffer = "haystack\n", path = "x.txt\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "x.txt" },
+        [[contrib/lvi-search --worker -- 'a\{2']])
+      local log = read(d .. "/log")
+      expect(log:find("msge bad pattern /a")).to.exist()
+      expect(log:find("%%p")).to_not.exist()      -- caught before the buffer is read
+      cleanup(d)
+    end)
+
+    it("lvi-search -i folds case and still lands on the unfolded line", function()
+      local d = stub({ buffer = "Foo and foo\n", path = "x.txt\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "x.txt", LVI_LINE = "1", LVI_COL = "1",
+            PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        "contrib/lvi-search --worker -i -- FOO")
+      expect(read(d .. "/sock.lists/search")).to.equal(
+        "x.txt:1.1-3: Foo and foo\nx.txt:1.9-11: Foo and foo\n")
+      cleanup(d)
+    end)
+
     it("lvi-lint --worker reports a missing backend, never a clean [0/0]", function()
       local d = stub({ buffer = "x\n", path = "x.zz\n" })
       local _, ok = run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
