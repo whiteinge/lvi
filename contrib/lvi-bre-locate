@@ -1,0 +1,143 @@
+#!/bin/sh
+# lvi-bre-locate [-i] [--word] [--] PATTERN FILE
+#
+# Locate every occurrence of a POSIX BRE in FILE and print where each one SITS,
+# one per line, as three tab-separated fields:
+#
+#     LINE<TAB>COL<TAB>LEN      1-based line, 1-based BYTE column, byte length
+#
+# LEN is 0 for a zero-width match (`o*`, `^`), which has a position and no
+# extent. What to do about that is the caller's call and differs between them --
+# lvi-search keeps it as a bare column, a mark and a motion have nowhere to land
+# and drop it -- so this reports it and decides nothing.
+#
+# WHY THIS EXISTS AS ITS OWN TOOL. Three tools here need the same unlikely
+# thing: vi's own regex dialect AND the column a match landed on. Neither obvious
+# tool has both -- grep speaks BRE but will not say where a match sits, awk
+# reports offsets but speaks ERE, where `foo(` is an error and `a+b`, `(x)` and
+# `x|y` all match the wrong thing in silence. A BRE-to-ERE translator bridges
+# them and is worse than either, since back-references have no ERE spelling.
+#
+# But locating a match is a different job from finding one, and it needs no
+# second DIALECT -- only a BRE engine that reports POSITION. sed is one:
+# substitute every match with itself wrapped in a marker byte (`&` is POSIX, and
+# `s///g` is leftmost-longest repeated, which is vi's own rule), then count the
+# offsets. Two control bytes do it -- 0x01 marks, 0x02 delimits the `s` command
+# so no pattern ever needs escaping -- and awk turns the offsets into columns,
+# taking the line number from its own NR.
+#
+# That is a dozen lines of offset arithmetic with an off-by-one in every one of
+# them, and it had been copied into three scripts before this file existed. They
+# had already drifted: two checked the BUFFER for a marker byte and one did not,
+# so a binary file silently produced columns that were wrong rather than absent.
+# One definition, three callers -- the same reason lvi-list keeps its position
+# parser in one shared awk fragment.
+#
+# sed runs in the caller's LOCALE, so `.` still matches a multibyte character;
+# awk runs under LC_ALL=C, so the offsets it counts are BYTES -- the unit `:pos`
+# and `:hl` want.
+#
+# `-i` folds case. That prefers sed's `I` flag (GNU, BSD); a strict POSIX sed has
+# none, so we probe once and fall back to folding both the file and the pattern
+# with `tr` -- ASCII-only, but byte-length preserving, so the columns it finds
+# still land on the unfolded line. Folding the pattern folds a bracket range with
+# it (`[A-Z]` becomes `[a-z]`), which is what you asked for.
+#
+# `--word` keeps only matches with a non-word byte on both sides (grep's -w, and
+# what makes `*` on the cursor word behave). The test is ours rather than
+# `\<`/`\>`, which are GNU-only, and it reads the ORIGINAL line, so a folded
+# search still tests the real bytes.
+#
+# EXIT STATUS says which kind of nothing you got, because the callers report
+# them differently -- one wants a message, another a status notice, another a
+# fall back to per-line `grep -n`:
+#     0   ran; matches on stdout, none if there were none
+#     2   PATTERN is not a BRE this sed accepts
+#     3   FILE holds a marker byte -- one pass would count it as text and the
+#         next as a mark, so every column past it would be wrong. Refuse rather
+#         than paint nonsense; in practice this means a binary file.
+#     4   PATTERN holds a marker byte (only a pattern typed out of a binary
+#         buffer does) -- distinct from 2, since it is not a malformed regex
+#     1   usage, or FILE is unreadable
+# The reason goes to stderr; a caller with a message line echoes it there.
+# `PATTERN /dev/null` is the validate-only call: it runs the checks and matches
+# nothing, so a tool that stores patterns can refuse a bad one at the point where
+# there is still a user to tell.
+#
+# Config: none. Needs sed and awk, and nothing else.
+
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+icase= word=
+while [ $# -gt 0 ]; do
+  case $1 in
+    -i)     icase=1; shift ;;
+    --word) word=1; shift ;;
+    --)     shift; break ;;
+    -?*)    echo "lvi-bre-locate: unknown flag '$1' (-i --word)" >&2; exit 1 ;;
+    *)      break ;;
+  esac
+done
+[ $# -eq 2 ] || { echo "usage: lvi-bre-locate [-i] [--word] PATTERN FILE" >&2; exit 1; }
+pat=$1 file=$2
+[ -r "$file" ] || { echo "lvi-bre-locate: cannot read $file" >&2; exit 1; }
+
+M=$(printf '\001'); D=$(printf '\002')
+case $pat in
+  *"$M"*|*"$D"*) echo "lvi-bre-locate: pattern holds a marker byte" >&2; exit 4 ;;
+esac
+# A marker byte in the FILE would be counted as text by one pass and as a mark by
+# the next, so every column past it would be wrong.
+if LC_ALL=C grep -q "[$M$D]" "$file"; then
+  echo "lvi-bre-locate: $file holds a marker byte" >&2; exit 3
+fi
+
+# Validate against EMPTY input: sed parses the whole script before it reads a
+# byte, so a bad BRE is caught here without touching the file.
+prog="s${D}${pat}${D}${M}&${M}${D}g"
+printf '' | sed "$prog" >/dev/null 2>&1 || {
+  echo "lvi-bre-locate: bad pattern: $pat" >&2; exit 2
+}
+
+# Case-insensitive wants sed's `I`; probe for it, else fold both sides.
+fold=
+if [ -n "$icase" ]; then
+  if printf '' | sed "${prog}I" >/dev/null 2>&1; then prog="${prog}I"
+  else
+    fold=1
+    prog="s${D}$(printf '%s' "$pat" | tr '[:upper:]' '[:lower:]')${D}${M}&${M}${D}g"
+  fi
+fi
+
+# The marked stream goes to a FILE, not a variable: `$(...)` strips trailing
+# blank lines, and a pattern that can match one (`^`, `x*`) would lose its last
+# matches. Beside FILE when that directory takes it -- the caller put the buffer
+# somewhere private and this is the same content -- else the usual temp dir.
+tdir=${file%/*}; [ "$tdir" = "$file" ] && tdir=.
+mk=$(mktemp "$tdir/lvi-bre.XXXXXX" 2>/dev/null) ||
+  mk=$(mktemp "${TMPDIR:-/tmp}/lvi-bre.XXXXXX") || exit 1
+trap 'rm -f "$mk"' EXIT HUP INT TERM
+
+# awk reads the file TWICE: once for the original lines (the --word test, and the
+# only copy the fold path has not flattened) and once for the marked stream.
+if [ -n "$fold" ]; then tr '[:upper:]' '[:lower:]' < "$file" | sed "$prog" > "$mk"
+else                    sed "$prog" "$file" > "$mk"; fi
+LC_ALL=C awk -v m="$M" -v word="$word" '
+  NR == FNR { o[FNR] = $0; next }                 # the original lines
+  index($0, m) {
+    rest = $0; seen = 0
+    while ((i = index(rest, m)) > 0) {
+      seen += i - 1                               # real text before the mark
+      c = seen + 1
+      rest = substr(rest, i + 1)
+      j = index(rest, m)
+      if (j == 0) break                           # unpaired: leave the line
+      len = j - 1; seen += len
+      rest = substr(rest, j + 1)
+      if (word) {                                 # grep -w, on the raw line
+        if (c > 1 && substr(o[FNR], c - 1, 1) ~ /[[:alnum:]_]/) continue
+        if (substr(o[FNR], c + len, 1) ~ /[[:alnum:]_]/) continue
+      }
+      printf "%d\t%d\t%d\n", FNR, c, len
+    }
+  }' "$file" "$mk"

@@ -46,10 +46,20 @@ end
 -- in as exports from a wrapper script -- a plain VAR=x prefix would bind only
 -- to the first command of a pipeline -- and the status comes from os.execute
 -- (LuaJIT's p:close() cannot report it).
+-- The scripts here reach for their siblings by NAME (lvi-search calls lvi-list,
+-- all three matchers call lvi-bre-locate), so contrib goes on PATH for every
+-- run -- otherwise the suite passes only on a machine that already has contrib
+-- installed, which is no test at all. A PATH in `env` is PREPENDED to that (a
+-- test shadowing sed puts its own directory first) rather than replacing it, so
+-- no test has to remember to put contrib back.
 local function run(env, cmd)
   local script, outf = os.tmpname(), os.tmpname()
-  local sh = {}
-  for k, v in pairs(env or {}) do sh[#sh + 1] = ("export %s='%s'"):format(k, v) end
+  local path = ((env and env.PATH) and (env.PATH .. ":") or "")
+               .. pwd .. "/contrib:" .. os.getenv("PATH")
+  local sh = { ("export PATH='%s'"):format(path) }
+  for k, v in pairs(env or {}) do
+    if k ~= "PATH" then sh[#sh + 1] = ("export %s='%s'"):format(k, v) end
+  end
   sh[#sh + 1] = cmd
   write(script, table.concat(sh, "\n") .. "\n")
   local rc = os.execute("sh '" .. script .. "' >'" .. outf .. "' 2>&1")
@@ -194,6 +204,75 @@ describe("contrib", function()
         "printf 'a:\\n  b\\n  c:\\n    d\\n  e\\nf:\\n  g\\n' | contrib/lvi-detect-indent -")
       expect(out).to.equal("et sw=2\n")
     end)
+
+    -- lvi-bre-locate is the shared matcher behind lvi-search, lvi-match and
+    -- lvi-motion-search. It is where the offset arithmetic lives now, so it is
+    -- where the offset arithmetic gets pinned; the callers test their own
+    -- policy on top (a zero-width match, the grep fallback) and not this.
+    local function locate(flags, pat, text)
+      local d = tmpdir()
+      write(d .. "/f", text)
+      local out = run({}, ("contrib/lvi-bre-locate %s -- %s '%s/f'"):format(flags, pat, d))
+      os.execute("rm -rf '" .. d .. "'")
+      return out
+    end
+
+    it("lvi-bre-locate reports every occurrence as line, byte column, length", function()
+      expect(locate("", "foo", "aaa foo bar foo\nnope\nfoo\n"))
+        .to.equal("1\t5\t3\n1\t13\t3\n3\t1\t3\n")
+    end)
+
+    -- The three that separate a BRE from an ERE: under awk's dialect `foo(` is
+    -- an error and the other two silently match something else.
+    it("lvi-bre-locate reads a metacharacter the way vi does", function()
+      expect(locate("", "'foo('", "x foo(bar)\n")).to.equal("1\t3\t4\n")
+      expect(locate("", "'a+b'", "xx a+b yy aab\n")).to.equal("1\t4\t3\n")
+      expect(locate("", [['\(o\)\1']], "look\n")).to.equal("1\t2\t2\n")
+    end)
+
+    -- A zero-width match has a position and no extent. Reporting LEN 0 rather
+    -- than dropping it is what lets each caller pick: lvi-search keeps it as a
+    -- bare column, a mark and a motion have nowhere to land and skip it.
+    it("lvi-bre-locate gives a zero-width match length 0", function()
+      expect(locate("", "'x*'", "ab\n")).to.equal("1\t1\t0\n1\t2\t0\n1\t3\t0\n")
+    end)
+
+    -- The marked stream goes to a file precisely so this works: `$(...)` strips
+    -- trailing blank lines, and `^` matches on every one of them.
+    it("lvi-bre-locate keeps matches on trailing blank lines", function()
+      expect(locate("", "'^'", "foo\n\n\n")).to.equal("1\t1\t0\n2\t1\t0\n3\t1\t0\n")
+    end)
+
+    it("lvi-bre-locate folds case with -i and keeps whole words with --word", function()
+      expect(locate("-i", "FOO", "Foo food\n")).to.equal("1\t1\t3\n1\t5\t3\n")
+      expect(locate("--word", "foo", "foo food\n")).to.equal("1\t1\t3\n")
+    end)
+
+    -- Each kind of nothing gets its own status, because the callers report them
+    -- differently -- a message line, a status notice, a fall back to grep.
+    it("lvi-bre-locate distinguishes a bad pattern from a marked buffer", function()
+      local d = tmpdir()
+      write(d .. "/ok", "hello\n")
+      write(d .. "/bin", "bi\1nary\n")
+      local function status(cmd)
+        local _, ok = run({}, "contrib/lvi-bre-locate " .. cmd .. " 2>/dev/null")
+        return ok
+      end
+      expect(status(("-- foo '%s/ok'"):format(d))).to.equal(true)
+      expect(status(([[-- 'a\{2' '%s/ok']]):format(d))).to.equal(false)   -- 2, bad BRE
+      expect(status(("-- foo '%s/bin'"):format(d))).to.equal(false)       -- 3, marked buffer
+      -- the exact codes, since the callers switch on them
+      local out = run({}, ("contrib/lvi-bre-locate -- 'a\\{2' '%s/ok' 2>&1; echo $?"):format(d))
+      expect(out:find("\n2\n")).to.exist()
+      out = run({}, ("contrib/lvi-bre-locate -- foo '%s/bin' 2>&1; echo $?"):format(d))
+      expect(out:find("\n3\n")).to.exist()
+      out = run({}, ("contrib/lvi-bre-locate -- \"$(printf 'a\\001b')\" '%s/ok' 2>&1; echo $?"):format(d))
+      expect(out:find("\n4\n")).to.exist()
+      -- PATTERN /dev/null is the validate-only call the storing tools use
+      expect(status("-- foo /dev/null")).to.equal(true)
+      expect(status([[-- 'a\{2' /dev/null]])).to.equal(false)
+      os.execute("rm -rf '" .. d .. "'")
+    end)
   end)
 
   describe("socket scripts against the stub", function()
@@ -326,6 +405,15 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- A marker byte in the BUFFER makes every column past it wrong, since one
+    -- pass counts it as text and the next as a mark. Only lvi-match used to
+    -- check; sharing the matcher gave the other two the check for free.
+    it("lvi-motion-search refuses a buffer holding a marker byte", function()
+      local d = stub({ buf = "bi\1nary foo\n" })
+      expect(msearch(d, "", 1, 1, 1, "foo")).to.equal("err buffer holds a marker byte\n")
+      cleanup(d)
+    end)
+
     it("lvi-motion-search skips a zero-width match and reports an empty store", function()
       local d = stub({ buf = "ab\n" })
       -- `z*` matches the empty string everywhere; a width-less match is nowhere
@@ -452,6 +540,18 @@ describe("contrib", function()
         "contrib/lvi-search --worker -- 'x*'")
       expect(read(d .. "/sock.lists/search")).to.equal(
         "x.txt:1.1: ab\nx.txt:1.2: ab\nx.txt:1.3: ab\n")
+      cleanup(d)
+    end)
+
+    -- Same buffer, the other policy: a search still has to answer, so it drops
+    -- to `grep -n` and the per-line entries this script emitted before extents.
+    it("lvi-search falls back to per-line entries on a marked buffer", function()
+      local d = stub({ buffer = "bi\1nary foo\nplain foo\n", path = "x.txt\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "x.txt", LVI_LINE = "1", LVI_COL = "1" },
+        "contrib/lvi-search --worker -- foo")
+      expect(read(d .. "/sock.lists/search")).to.equal(
+        "x.txt:1:bi\1nary foo\nx.txt:2:plain foo\n")
       cleanup(d)
     end)
 

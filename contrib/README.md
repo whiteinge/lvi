@@ -149,21 +149,52 @@ The same contract shape drives the linter: `lvi-lint-<name>` takes the buffer
 on stdin and the filename as `$1`, and emits list entries instead of `hl`
 lines. One adapter idiom, two harnesses.
 
-**The text-object filter contract** (for adding an object like `it`). This one is
-the odd member of the family: it is the only tool lvi launches **synchronously and
-itself**, not via a map or a hook. `:textobj KEY CMD` binds a custom object; when
-an operator meets `i`/`a KEY` with no builtin, lvi shells `CMD` out and *blocks*
-for its answer — the same discipline as a `:s` sent to the system `ex`, and for
-the same reason: because the operator applies through the ordinary coroutine path,
-`c` (change) enters insert mode exactly like a builtin `ci(`. An async, socket-
-callback design (the tool phones the edit back in over `lvi -w`) was the first
-sketch and was dropped — a non-blocking channel can't cleanly hand you insert mode
-mid-edit, and blocking on a fast local filter is imperceptible. The contract:
-**invoked `CMD TMPFILE i|a LINE COL`** (buffer text in a private temp file, cursor
-1-based in bytes), **print one line** — `char L1 C1 L2 C2` (charwise, inclusive,
-byte columns), `line L1 L2` (whole lines), or nothing for "no object here" (a clean
-no-op). That's the whole surface; `lvi-textobj-tag` is one implementation of it,
-and a tree-sitter object would be another.
+**The synchronous filter contracts** (for adding a text object or a motion).
+These are the odd members of the family: the only tools lvi launches
+**synchronously and itself**, not via a map or a hook. When an operator meets
+`i`/`a KEY` with no builtin, or a key registered by `:motion` is pressed, lvi
+shells the tool out and *blocks* for its answer — the same discipline as a `:s`
+sent to the system `ex`, and for the same reason. Because the answer arrives
+through the ordinary coroutine path, `c` (change) enters insert mode exactly like
+a builtin `ci(`, and `d/foo` gets its range before the command ends. An async,
+socket-callback design (the tool phones the edit back in over `lvi -w`) was the
+first sketch and was dropped — a non-blocking channel can't cleanly hand you
+insert mode mid-edit, a list that arrives *after* the operator is no use to it,
+and blocking on a fast local filter is imperceptible. Both take the buffer text
+in a private temp file and the cursor 1-based in bytes, and both print one line:
+
+- `:textobj KEY CMD` → **`CMD TMPFILE i|a LINE COL`** → `char L1 C1 L2 C2`
+  (charwise, inclusive, byte columns), `line L1 L2` (whole lines), or nothing for
+  "no object here" (a clean no-op). `lvi-textobj-tag` implements `it`/`at`; a
+  tree-sitter object would be another.
+- `:motion KEY [prompt] CMD` → **`CMD TMPFILE COUNT LINE COL ARG`** → `char L C`
+  (charwise, byte column, exclusive like vi's search; a trailing `incl` makes it
+  inclusive), `line L` (whole lines), `err TEXT` for the message line, or nothing
+  for a silent no-op. The key then behaves like any other motion — bare it moves
+  (jump-class), after an operator it supplies the range. `prompt` makes the
+  EDITOR read a line first under `KEY` as the prompt character, since a filter is
+  a child of an editor holding the terminal in raw mode and a `read` of its own
+  would take raw keystrokes with no echo. `lvi-motion-search` implements `/ ? n N
+  * #`.
+
+A builtin binding of the same key always wins, so a `:motion` fills unclaimed
+keys and never shadows `w` — but a `map` on that key *does* shadow it, so pick
+one or the other for `/`.
+
+**The BRE locator.** Three tools here need the same unlikely thing: vi's own
+regex dialect *and* the column a match landed on. Neither obvious tool has both —
+grep speaks BRE but won't say where a match sits, awk reports offsets but in ERE,
+where `foo(` errors and `a+b`, `(x)` and `x|y` all quietly mean something else,
+and a BRE-to-ERE translator is incomplete by construction since back-references
+have no ERE spelling. But *locating* a match is a different job from *finding*
+one, and it needs no second dialect — only a BRE engine that reports position.
+sed is one: `&` in an `s///g` wraps every leftmost-longest match in a marker byte,
+and awk counts the offsets. `lvi-bre-locate` is that, on its own, printing
+`LINE⇥COL⇥LEN` per occurrence; `lvi-search`, `lvi-match` and `lvi-motion-search`
+each shape those into entries, marks or a target. It owns the case-folding
+fallback (sed's `I` flag where there is one, `tr` where there isn't) and the
+whole-word test, and its exit status separates a bad pattern from a buffer that
+holds a marker byte — which each caller reports its own way.
 
 ## The tools
 
@@ -280,8 +311,8 @@ isn't automatically cleaned. See the `lvi-list` header for all arguments.
 A list is the wrong shape for `d/foo`. An operator needs its target before the
 command finishes, and a list arrives over the socket afterwards, so `lvi-search`
 can move you but can never be an operator's range. The `:motion` seam is the
-other half: a synchronous filter, run the way `:textobj` is run, that prints one
-target and exits.
+other half — a synchronous filter, run the way `:textobj` is run (see **the
+synchronous filter contracts** above), that prints one target and exits.
 
 ```
 motion / prompt lvi-motion-search       " /pattern
@@ -293,10 +324,9 @@ motion # lvi-motion-search --word -b
 ```
 
 Then `/` moves, `d/foo` deletes up to the match, `y?bar` yanks back to one, and
-every one of them is jump-class, so `Ctrl-O` and `` ` `` come back. The editor does
-the prompting — a filter is a child of an editor holding the terminal in raw
-mode, so a `read` of its own would take raw keystrokes with no echo — and the
-pattern is a POSIX BRE, matched by the same sed marker pass `lvi-search` uses.
+every one of them is jump-class, so `Ctrl-O` and `` ` `` come back. The editor
+does the prompting (that's what `prompt` in the rc line asks for), and the
+pattern is a POSIX BRE, located by the same `lvi-bre-locate` `lvi-search` uses.
 
 Two ways it differs from the list. It **wraps**, because a motion that stops dead
 at the end of the buffer is not the motion vi has. And the last pattern is the
@@ -321,8 +351,8 @@ Each pattern gets its own `:hl` group — `match1`, `match2`, …, colored by
 default at `pri=12`, above syntax (0) and search (10) — so the three
 identifiers you are tracing through a function read apart at a glance. `-g`
 puts several patterns in one group, and one color, when they are one family.
-Patterns are POSIX BREs, the same dialect as `/`. A mark needs a column range,
-which the sed marker pass above produces without a second dialect to learn.
+Patterns are POSIX BREs, the same dialect as `/` — a mark needs a column range,
+which `lvi-bre-locate` reports without a second dialect to learn.
 `-F` takes the pattern literally, `--word` is grep's `-w` (what makes
 marking the cursor word behave), `-i` folds case. The first add installs the
 `change`/`bufenter` hooks itself, so the rc needs only keys and, if you don't
