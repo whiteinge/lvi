@@ -134,7 +134,15 @@ names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|
 # three entries. Producers indent continuations; this is the half that makes the
 # indenting mean something. One definition, referenced by every scan, because the
 # bug above was one copy of five drifting from the contract.
-HDR='^[^:[:space:]][^:]*:[0-9]+(:|$)'
+#
+# The filename may be EMPTY (`:12:text`), which is how a producer says "the
+# buffer you are looking at, which has no file" -- lvi-search over an unsaved or
+# stdin buffer. That spelling is deliberate: `jump` skips the `:e` when the
+# field is blank and just moves the cursor, where a pseudo-name like `[No Name]`
+# would be a filename and send lvi off to open it. So the whole name is
+# optional -- but only as a whole, since a blank is fine INSIDE one (`we
+# $ird.txt`) and disqualifying only at the front.
+HDR='^([^:[:space:]][^:]*)?:[0-9]+(:|$)'
 
 # `hdrs` prints each header's raw line number; count/index step ENTRIES through
 # it, `span` rebuilds one for `preview`.
