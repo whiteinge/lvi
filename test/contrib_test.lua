@@ -1254,6 +1254,96 @@ describe("contrib", function()
       expect(read(d .. "/log")).to.equal("")
       cleanup(d)
     end)
+
+    -- lvi-cmd. The picker itself needs a terminal, so $LVI_PICKER points at a
+    -- stub that saves the rows it was offered and echoes back the one matching
+    -- $PICK -- which makes both halves assertable: what the tool put in front
+    -- of you, and what it sent when you chose.
+    describe("lvi-cmd", function()
+      local MAPS = "\\ll\t:silent !lvi-list switch<CR>\n"
+                .. "n\t:bg lvi-list next<CR>\n"
+                .. "<C-a>\t:bg lvi-incr<CR>\n"
+                .. "<Space>x\t\"ayy"
+
+      local function picker(d)
+        write(d .. "/pick", "#!/bin/sh\ncat > \"$STUB_DIR/rows\"\n"
+                         .. "grep -m1 -F -e \"$PICK\" \"$STUB_DIR/rows\"\n")
+        os.execute("chmod +x '" .. d .. "/pick'")
+        return d .. "/pick"
+      end
+
+      local function pick(d, what, extra)
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_MAPS = MAPS,
+                      LVI_PICKER = picker(d), PICK = what }
+        for k, v in pairs(extra or {}) do env[k] = v end
+        run(env, "contrib/lvi-cmd")
+        return read(d .. "/log"), read(d .. "/rows")
+      end
+
+      it("runs a picked binding by injecting its lhs, not its rhs", function()
+        local d = stub({})
+        expect(pick(d, "\\ll")).to.equal("normal \\ll\n")
+        cleanup(d)
+      end)
+
+      -- The lhs travels as key NOTATION and has to land as the raw byte the
+      -- keyboard would have produced, or :normal injects five characters.
+      it("decodes <C-x> notation back to a control byte", function()
+        local d = stub({})
+        expect(pick(d, "<C-a>")).to.equal("normal \1\n")
+        cleanup(d)
+      end)
+
+      -- ex.dispatch trims its argument, so a <Space> leader cannot ride
+      -- :normal -- and injecting the trimmed remainder would silently run a
+      -- DIFFERENT binding. Refuse it out loud instead.
+      it("refuses an lhs that begins with a space rather than mis-running it", function()
+        local d = stub({})
+        local log = pick(d, "<Space>x")
+        expect(log:find("^msge lvi%-cmd:")).to.exist()
+        expect(select(2, log:gsub("\n", ""))).to.equal(1)     -- the msge and nothing else
+        expect(log:find("\nnormal")).to_not.exist()
+        cleanup(d)
+      end)
+
+      -- A tool can want a range, arguments, or a different spawn form, so the
+      -- pick seeds the ':' prompt and stops -- no <CR>.
+      it("seeds the prompt for a tool instead of running it blind", function()
+        local d = stub({})
+        expect(pick(d, "cmd  lvi-list")).to.equal("normal :silent !lvi-list\n")
+        cleanup(d)
+      end)
+
+      it("offers the keymap and PATH's lvi-* tools in one list", function()
+        local d = stub({})
+        local _, rows = pick(d, "n ")
+        expect(rows:find("key  \\ll +:silent !lvi%-list switch<CR>")).to.exist()
+        expect(rows:find("cmd  lvi%-list +external quickfix/location lists for lvi.")).to.exist()
+        expect(rows:find("cmd  lvi%-cmd")).to_not.exist()      -- never offers itself
+        cleanup(d)
+      end)
+
+      -- The two header shapes in contrib: `name -- purpose` on the synopsis
+      -- line, and a synopsis then a blank comment line then a paragraph.
+      it("lifts a purpose from either header shape", function()
+        local d = stub({})
+        local _, rows = pick(d, "n ")
+        expect(rows:find("cmd  lvi%-hl%-col +mark text past a column limit.")).to.exist()
+        expect(rows:find("cmd  lvi%-search +Search a running lvi from outside it")).to.exist()
+        cleanup(d)
+      end)
+
+      -- Aimed at another view, lvi is live and $LVI_MAPS is somebody else's, so
+      -- the keymap has to come over the socket.
+      it("reads the keymap over the socket when given -w", function()
+        local d = stub({})
+        local env = { LVI = STUB, STUB_DIR = d, LVI_MAPS = MAPS,
+                      LVI_PICKER = picker(d), PICK = "cmd  lvi-list" }
+        run(env, "contrib/lvi-cmd -w w9")
+        expect(read(d .. "/log")).to.equal("map\nnormal :silent !lvi-list\n")
+        cleanup(d)
+      end)
+    end)
   end)
 end)
 

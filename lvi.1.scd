@@ -1231,6 +1231,18 @@ below, with the happy-path rc lines that turn it on:
 	map \\b :silent !lvi-buf<CR>
 	```
 
+*lvi-cmd* -- find the binding you forgot
+	The same picker over your own configuration: every key you have mapped
+	(read from *$LVI_MAPS*) and every *lvi-*\* tool on *$PATH*, in one list.
+	Picking a binding presses it; picking a tool seeds the *:* prompt, since
+	only you know whether it wants a range or arguments. A binding you press
+	daily needs no help, but the one set up months ago has faded, and the ex
+	prompt has no completion to jog it:
+
+	```
+	map \\c :silent !lvi-cmd<CR>
+	```
+
 *lvi-shell.sh* -- drive lvi from your shell
 	Shell functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the running view
 	from *sh* or any terminal, with your shell's own path completion. Source it
