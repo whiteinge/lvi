@@ -1448,8 +1448,11 @@ describe("contrib", function()
         local _, ok = bash(env, "lvi-sudow")
         expect(ok).to.be.truthy()
         expect(read(d .. "/sudo.log")).to.equal("sudo -v\n")
+        -- ONE command: the reload is chained behind the write inside the
+        -- editor's shell, so a failed write cannot reach :e! and discard the
+        -- unsaved edits it was meant to save.
         expect(read(d .. "/log")).to.equal(
-          'w !sudo tee -- "$LVI_FILE" > /dev/null\ne!\n')
+          'w !sudo tee -- "$LVI_FILE" > /dev/null && "${LVI:-lvi}" -w "$LVI_WID" -d -- e! < /dev/null\n')
         cleanup(d); cleanup(bin)
       end)
 
@@ -1529,7 +1532,7 @@ describe("contrib", function()
         local _, ok = bash(env, "lvi-sudow")
         expect(ok).to.be.truthy()
         expect(read(d .. "/log")).to.equal(
-          'path\nw !sudo tee -- "$LVI_FILE" > /dev/null\ne!\n')
+          'path\nw !sudo tee -- "$LVI_FILE" > /dev/null && "${LVI:-lvi}" -w "$LVI_WID" -d -- e! < /dev/null\n')
         cleanup(d); cleanup(bin)
       end)
 

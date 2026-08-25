@@ -33,8 +33,10 @@
 #
 #   - lvi-sudow runs `sudo -v` at YOUR prompt first, so the password is asked
 #     for here where you are typing, then queues `:w !sudo tee` (which pipes
-#     the buffer to a command that runs as root) and `:e!` to re-read. Without
-#     the priming the prompt appears on the editor's screen after you exit.
+#     the buffer to a command that runs as root) with `:e!` chained BEHIND it,
+#     so a failed write cannot reload the file and discard the edits you were
+#     saving. Without the priming the prompt appears on the editor's screen
+#     after you exit.
 #
 # Where they work, and how they behave there:
 #
@@ -236,8 +238,19 @@ lvi-sudow() {
   lvi__file lvi-sudow raw > /dev/null || return 1   # only: does it have a name
   sudo -v || return 1
   local wid=${LVI_WID:-auto}
-  "${LVI:-lvi}" -w "$wid" -d -- 'w !sudo tee -- "$LVI_FILE" > /dev/null' &&
-    "${LVI:-lvi}" -w "$wid" -d -- 'e!' &&
+  # ONE queued command, with the reload chained inside the editor's own shell
+  # rather than queued beside it. Two separate sends would both run whatever
+  # happened, and `:e!` after a FAILED write re-reads the file and throws your
+  # unsaved edits away -- exactly the work you were trying to save, gone with no
+  # undo (:e! builds a new buffer). Chained, the reload happens only if tee did.
+  # The callback reaches back over the socket while the editor is still inside
+  # the shell-out; that connect just waits in the listen backlog and is served
+  # the moment the shell-out returns.
+  #
+  # So the buffer's own modified flag is the receipt: [+] gone means it was
+  # written, [+] still there means it was not.
+  "${LVI:-lvi}" -w "$wid" -d -- \
+    'w !sudo tee -- "$LVI_FILE" > /dev/null && "${LVI:-lvi}" -w "$LVI_WID" -d -- e! < /dev/null' &&
     if [ -n "$LVI_WID" ]; then
       echo "lvi-sudow: queued -- writes when you exit to lvi" >&2
     else
@@ -256,7 +269,7 @@ this shell runs, so they execute the moment you exit.
   lvi-saveas [-f] P    write the buffer as P and keep editing it there
   lvi-mv DST           move or rename the file and the buffer together
   lvi-rm [-f]          delete the file and drop the buffer, saved or not
-  lvi-sudow            write the current file as root
+  lvi-sudow            write the current file as root ([+] gone = it worked)
   lvi-help             this
 
 Recipes
