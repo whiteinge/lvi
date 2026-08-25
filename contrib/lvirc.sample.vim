@@ -192,6 +192,23 @@ on bufenter lvi-list paint
 " press n to step to the first entry. Drop `--focus` to keep your current focus.
 on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
 
+" SEARCH AS A MOTION, the other half. The maps above make `/` build a list you
+" walk; that shape can move you but can never be an operator's TARGET, because a
+" list arrives over the socket after the command that wanted it has finished --
+" so `d/foo` is not one of the things it can do. `:motion` is the seam that can:
+" a synchronous filter, run the way `:textobj` is, that hands one target back in
+" time for the operator. Uncomment these AND DELETE the `map / ? * # n N` lines
+" above -- a map shadows a motion, so the six keys are one or the other, not
+" both. What you trade: no list of every hit to walk (\lg, the status counter,
+" the paint) in return for `d/foo`, `y?bar`, wrapscan, and `n` re-running the
+" match against the buffer as it is now.
+"motion / prompt lvi-motion-search       " /pattern -- and d/pat, c/pat, y/pat
+"motion ? prompt lvi-motion-search -b    " ?pattern
+"motion n lvi-motion-search --last       " next / previous, with the last pattern
+"motion N lvi-motion-search --last -b
+"motion * lvi-motion-search --word       " the word under the cursor
+"motion # lvi-motion-search --word -b
+
 " }}}
 " ---- insert-mode completion -------------------------------------------- {{{
 

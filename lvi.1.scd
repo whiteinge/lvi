@@ -556,15 +556,20 @@ spaces and tabs included.
 	(vi's line-wise order), each line positioned first and any open insert
 	auto-closed at its end. Keys that add or delete lines are the caller's
 	responsibility -- *:normal* is for per-line edits; use *:g*/*:d*/*:m* to
-	change the line count. Trailing WHITESPACE is stripped from _keys_, so prefix a
-	line via *:s* (*:%s/^/# /*) rather than *:normal I* -- and a trailing carriage
-	return goes with it, so keys that end by submitting a prompt (*:normal
-	/pat*<CR>, driving a *motion* key) need something after the return, or the
-	prompt is left open and every later *:normal* waits behind it. Over the socket, _keys_
-	run immediately only when the interpreter is parked between commands; if
-	they arrive mid-command (an operator awaiting its motion, insert mode, a
-	prompt) they are held and replayed at the next command boundary, so a
-	background tool can never turn a half-typed *d* into *dG*.
+	change the line count. _keys_ are RAW BYTES, not the *<CR>*/*<Esc>* notation
+	*map* takes: to submit a prompt, send an actual carriage return.
+
+	Trailing WHITESPACE is stripped from _keys_, so prefix a line via *:s*
+	(*:%s/^/# /*) rather than *:normal I* -- and a trailing carriage return goes
+	with it. So keys that END by submitting a prompt need something after the
+	return: send *:normal /pat*<CR>*0*, not *:normal /pat*<CR>. Without it the
+	prompt is left open, and since a prompt is mid-command, every later *:normal*
+	is held behind it forever -- only a keystroke at the terminal can close it.
+
+	Over the socket, _keys_ run immediately only when the interpreter is parked
+	between commands; if they arrive mid-command (an operator awaiting its motion,
+	insert mode, a prompt) they are held and replayed at the next command
+	boundary, so a background tool can never turn a half-typed *d* into *dG*.
 
 *u*, *redo*
 	Undo, redo.
