@@ -1435,6 +1435,37 @@ describe("contrib", function()
         cleanup(d); cleanup(dir)
       end)
 
+      -- sudo itself is stubbed on PATH: what is under test is the pair of
+      -- commands queued, and that the password is asked for HERE (sudo -v)
+      -- rather than on the editor's screen after the exit.
+      it("lvi-sudow primes sudo, then queues the pipe write and a re-read", function()
+        local d = stub({})
+        local bin = tmpdir()
+        write(bin .. "/sudo", "#!/bin/sh\necho \"sudo $*\" >> " .. d .. "/sudo.log\n")
+        os.execute("chmod +x '" .. bin .. "/sudo'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "/etc/hosts", PATH = bin }
+        local _, ok = bash(env, "lvi-sudow")
+        expect(ok).to.be.truthy()
+        expect(read(d .. "/sudo.log")).to.equal("sudo -v\n")
+        expect(read(d .. "/log")).to.equal(
+          'w !sudo tee -- "$LVI_FILE" > /dev/null\ne!\n')
+        cleanup(d); cleanup(bin)
+      end)
+
+      it("lvi-sudow sends nothing when sudo is refused", function()
+        local d = stub({})
+        local bin = tmpdir()
+        write(bin .. "/sudo", "#!/bin/sh\nexit 1\n")
+        os.execute("chmod +x '" .. bin .. "/sudo'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "/etc/hosts", PATH = bin }
+        local _, ok = bash(env, "lvi-sudow")
+        expect(ok).to_not.be.truthy()
+        expect(read(d .. "/log")).to.equal("")
+        cleanup(d); cleanup(bin)
+      end)
+
       it("lvi-help lists every command it ships", function()
         local out = bash({ LVI = STUB }, "lvi-help")
         for _, fn in ipairs({ "lvi-e", "lvi-r", "lvi-saveas", "lvi-mv",
