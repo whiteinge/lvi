@@ -830,11 +830,22 @@ spaces and tabs included.
 	segments render in _name_ order. Generic -- an external tool drives it (a
 	list's *[3/57]* counter, a git branch), the way *hl* drives highlights.
 
-*f*, *pos* [_line_ [_col_ [_unit_]]] [*jump*], *echo* _text_, *silent* _cmd_
-	Show the file name and line count; with no argument report the cursor as
-	_line_<TAB>_col_, or with arguments move it there (clamped into the buffer,
-	and by default leaving no jumplist entry, unlike a motion); echo _text_; run
-	_cmd_ suppressing its interactive prompt.
+*f* [_file_], *file*
+	Show the file name and line count; with a _file_ argument, set the buffer's
+	pathname to it first (POSIX *file*). Renaming this way writes nothing and does
+	not mark the buffer modified. Use it when the file has moved under you: *mv*
+	it from a shell, then point the buffer at the new name. Without that the
+	buffer still holds the old path, and the next bare *w* silently recreates the
+	file there.
+
+	POSIX also parks the old name in the alternate pathname. lvi has no such slot
+	(*#* names the alternate buffer, an index into the one buffer list), so the
+	old name is dropped.
+
+*pos* [_line_ [_col_ [_unit_]]] [*jump*], *echo* _text_, *silent* _cmd_
+	With no argument report the cursor as _line_<TAB>_col_, or with arguments move
+	it there (clamped into the buffer, and by default leaving no jumplist entry,
+	unlike a motion); echo _text_; run _cmd_ suppressing its interactive prompt.
 
 	A trailing *jump* makes the move jump-class: it records where you left, so
 	*Ctrl-O* and *``* come back. Silence is right for a restore -- putting the

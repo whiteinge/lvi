@@ -175,6 +175,46 @@ describe("ex.dispatch", function()
     end)
   end)
 
+  -- POSIX `file [file]`: repoint the buffer without writing it. The move that
+  -- follows an external rename, where `:w NAME` would be wrong (it saves).
+  describe("file (:f)", function()
+    it("reports the current path", function()
+      local ed = ed_with("a\nb")
+      ed.buf.path = "/tmp/foo.txt"
+      local p, s = ex.dispatch(ed, "f")
+      expect(s).to.equal("ok")
+      expect(p).to.equal('"/tmp/foo.txt" 2 lines')
+    end)
+
+    it("sets the path without writing or dirtying the buffer", function()
+      local ed = ed_with("a\n")
+      ed.buf.path = "/tmp/old.txt"
+      local stamped = 0
+      ed.stamp = function() stamped = stamped + 1 end
+      local p, s = ex.dispatch(ed, "f /tmp/new.txt")
+      expect(s).to.equal("ok")
+      expect(ed.buf.path).to.equal("/tmp/new.txt")
+      expect(ed.buf.modified).to.be(false)           -- POSIX: renaming is not an edit
+      expect(stamped).to.equal(1)                    -- re-stamped against the new file
+      expect(p).to.equal('"/tmp/new.txt" 1 lines')
+      expect((ex.dispatch(ed, "path"))).to.equal("/tmp/new.txt")
+    end)
+
+    it("names a pathless buffer", function()
+      local ed = ed_with("x")
+      ed.buf.name = "[stdin]"
+      ex.dispatch(ed, "f /tmp/named.txt")
+      expect(ed.buf.path).to.equal("/tmp/named.txt")
+    end)
+
+    it("takes -- NAME literally, like every other file command", function()
+      local ed = ed_with("x")
+      local _, s = ex.dispatch(ed, "f -- /tmp/a $b.txt")
+      expect(s).to.equal("ok")
+      expect(ed.buf.path).to.equal("/tmp/a $b.txt")
+    end)
+  end)
+
   describe("set_del_reg classifier", function()
     it("a linewise delete is large (-> \"1)", function()
       local ed = ed_with("x")

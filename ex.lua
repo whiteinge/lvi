@@ -877,7 +877,31 @@ def("p print", function(ed, c)
   return table.concat(ed.buf:get(from, to), "\n"), "ok"
 end)
 
-def("f file", function(ed)
+-- POSIX `file [file]`: with an argument, set the buffer's pathname; either way,
+-- report it. The argument form is the repoint-WITHOUT-writing primitive. `:w
+-- NAME` also repoints (lvi's save-as), but only by writing, which is the wrong
+-- move when the file has already moved under you -- an external `mv`, a shell
+-- rename from :sh -- and your edits are not ready to save. Without it the
+-- buffer keeps pointing at a path that no longer exists, and the next bare `:w`
+-- silently recreates the file at the OLD name.
+--
+-- Renaming does not mark the buffer modified (POSIX is explicit), and it
+-- re-stamps: the buffer now claims a different file, so what we knew about the
+-- mtime of the old one says nothing about this one. As with `:w NAME`, aiming
+-- at a file that already exists is taken as deliberate, not a conflict.
+--
+-- One documented shortfall: POSIX also parks the old name in the ALTERNATE
+-- pathname. lvi has no such slot -- `#` here names the alternate BUFFER, an
+-- index into the one buffer list -- so the old name is simply dropped.
+def("f file", function(ed, c)
+  if c.args ~= "" then
+    local p, xerr = expand_file(ed, c.args)
+    if xerr then return xerr, "err" end
+    if p then
+      ed.buf.path = p
+      if ed.stamp then ed.stamp(ed.buf) end
+    end
+  end
   -- Match the status line (render): a pathless buffer reports its display name
   -- ([stdin], [Command Line], ...) if it has one, else the generic label.
   return ('"%s" %d lines'):format(ed.buf.path or ed.buf.name or "[No File]", ed.buf:nlines()), "ok"
