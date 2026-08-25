@@ -1046,10 +1046,11 @@ below, with the happy-path rc lines that turn it on:
 	on bufenter lvi-list paint
 	```
 
-	A search starts at the cursor, as vi's does. Two deviations follow from
-	its being a list you walk: it does not wrap (*n* stops on the last match,
-	and *lvi-list first*/*last* are the manual wrap), and *n* is always
-	forward, so after a *?* it is *N* that keeps going back.
+	A search starts at the cursor, as vi's does. Two deviations come with
+	search being a list you walk rather than a motion the editor repeats: it
+	does not wrap (*n* stops on the last match and says so, and *lvi-list
+	first*/*last* are the wrap done by hand), and *n* is always forward, so
+	after a *?* it is *N* that keeps going back.
 
 *lvi-match* -- sticky pattern marks
 	Vim's *matchadd()*: keep a pattern painted while you read, rather than

@@ -55,6 +55,36 @@
 # The consequence is honest -- two genuinely different spellings of one file
 # THROUGH a symlink still read as different files.
 #
+# THE COLUMN FIELD is optional per ENTRY, not per list: `file:line:text` and
+# `file:line:col:text` mix freely in one file, which is what lets grep -Hn and a
+# compiler feed the same list. Of the tools here, lvi-spell and most lvi-lint
+# backends name a column; lvi-search and lvi-gitchanges cannot (grep reports
+# lines, and a diff hunk has no column). It is a 1-based BYTE column, the same
+# one lvi's cursor counts in, so tabs and multibyte characters need no
+# translation on either side. Who honors one:
+#   jump              lands on it exactly -- `:pos L C` is byte-exact. No column
+#                     means column 1, so a line-only entry still lands sensibly.
+#   put --at-cursor   weighs it when seeding, so a search can resume from
+#                     between two entries on ONE line; a col-less entry is
+#                     weighed by its line alone (see the seed below).
+#   paint             deliberately IGNORES it and marks the entry's first cell
+#                     (`L:1-1`). That mark is a poor-man's sign, meant to be
+#                     read down the edge of the screen; lighting the offending
+#                     token instead would bury the text you are scanning, and
+#                     lvi-match / lvi-hl-col are the tools for painting extents.
+#   here              compares LINES only, on purpose. It answers "which entry
+#                     is nearest me", where the diagnostic on the line you are
+#                     standing on is the one you want -- unlike --at-cursor,
+#                     which answers "what have I already passed" and so must
+#                     exclude your own position.
+#
+# One ambiguity is inherent to the format rather than to any parser here: a
+# col-less entry whose TEXT opens with digits and a colon (`f.c:7:42: foo`) is
+# indistinguishable from a col-bearing one and reads as column 42. It can shift
+# a seed by one entry; it cannot derail a walk, which is arithmetic on the
+# stored index and never re-reads the cursor. A producer that knows its columns
+# should emit them -- then field 3 really is one.
+#
 # SPAWN DISCIPLINE: every socket call here is fire-and-forget (`lvi -w
 # --detach`). Stepping runs under `:silent !` with lvi's loop FROZEN waiting on
 # us, so a call that awaited a reply would deadlock; a detached jump/paint

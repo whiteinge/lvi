@@ -201,6 +201,15 @@ lines (a compiler note, a full diagnostic), and `n`/`N` step through the
 headers while the bodies are available via `lvi-list preview` to show on
 demand.
 
+The column is optional **per entry**, so the two shapes mix in one list: a
+producer that can't name a column (grep reports lines; a diff hunk has none)
+just leaves it out. Columns are 1-based *bytes*, the unit lvi's cursor counts
+in, so a jump lands on the exact byte and a cursor-seeded search can resume
+between two matches on one line. The overlay mark stays in the first column
+either way: a sign in the left margin, scanned down the edge of the screen.
+`lvi-match` is what paints the token itself, and the `lvi-list` header lists
+who reads a column and who ignores it.
+
 lvi knows nothing about lists: `lvi-list` owns them and drives the view over
 the socket, jumping the cursor, painting the `:hl` overlay, and setting a
 `:status` counter.
@@ -215,9 +224,17 @@ gitchanges<CR>` steps git hunks without touching what `n`/`N` point at.
 
 **`lvi-search`** is the first producer for the generic `lvi-list` interface:
 it greps the *live* buffer (so it finds unsaved text), builds the `search`
-list, focuses it, and jumps to the first match. Search is simply a degenerate
-quickfix. Bind `/` to prompt and `*` to hunt the word under the cursor;
-`n`/`N` do the rest.
+list, focuses it, and jumps to the first match past the cursor. Search is
+simply a degenerate quickfix. Bind `/` and `?` to prompt, `*` and `#` to hunt
+the word under the cursor; `n`/`N` do the rest.
+
+A search starts where you are, as vi's does — the list is seeded from the
+cursor, then stepped once. Two deviations come with search being a list you
+walk rather than a motion the editor repeats. It doesn't wrap: `n` stops on
+the last match and says `(end)` in the status line, and `lvi-list first` /
+`last` are the wrap done by hand. And `n` is always forward, since a list
+remembers its index but not which way it was seeded, so after a `?` it's `N`
+that keeps going back.
 
 You read an entry two ways. Stepping echoes its text to lvi's **message
 line** via `:msg` — ephemeral, cleared by your next motion, so a lint

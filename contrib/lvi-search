@@ -29,7 +29,7 @@
 # so a second match further along one line is not a separate stop. The seed
 # weighs such an entry by its line alone, which is what keeps `/` and `?` from
 # landing you back on the line you set off from. (The list format carries an
-# optional column and every consumer honours it, so a matcher that reported
+# optional column and every consumer honors it, so a matcher that reported
 # columns would need nothing else; POSIX grep is not one -- see contrib/lvi-list
 # for the format.)
 #
