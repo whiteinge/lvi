@@ -43,6 +43,9 @@
 #   $LVI_SOCK.lists/<name>.cols   what its columns count (absent = byte)
 #   $LVI_SOCK.lists/<name>.paint  how its entries paint (absent = sign)
 #   $LVI_SOCK.focus               the focused list name
+# A name may not end in `-cur`: a list paints the `:hl` groups <name> and
+# <name>-cur, so `x-cur` would be a second writer on `x`'s current-entry group
+# and the two would take turns erasing each other (`:hl` replaces a whole group).
 # $wid.lists is a directory, so socket discovery (which filters `[ -S ]`) skips it.
 # Persistent lists escape this disposable tree via `save`/`load` to any path.
 #
@@ -378,6 +381,13 @@ paint() {
 # ---- subcommands ------------------------------------------------------------
 need_name() { n=$(if [ -n "${1:-}" ]; then printf '%s\n' "$1"; else focus_get; fi); [ -n "$n" ] || die "no list (name one, or focus one first)"; printf '%s\n' "$n"; }
 
+# A list named `x` paints the `:hl` groups `x` and `x-cur`, so a list named
+# `x-cur` would be a SECOND writer on the first one's current-entry group --
+# and `:hl` replaces a whole group, so the two would take turns erasing each
+# other. Refuse the name at the two doors a list can come in by; there is
+# nothing to gain by allowing it and no way to notice it going wrong.
+check_name() { case "$1" in *-cur) die "'$1': a list may not end in -cur (it is the current-entry :hl group of '${1%-cur}')" ;; esac; }
+
 case "$sub" in
   put)
     name=; dofocus=; atcur=; back=; cols=; pmode=
@@ -390,6 +400,7 @@ case "$sub" in
       *)                name=$a ;;
     esac; done
     [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor[-back]] [--cols=UNIT] [--paint=POLICY]"
+    check_name "$name"
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     case "$pmode" in ''|sign|extent|cur) ;; *) die "unknown paint policy: $pmode (sign|extent|cur)" ;; esac
     mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
@@ -537,6 +548,7 @@ case "$sub" in
   load)
     src=${1:?usage: load PATH [NAME] [--focus] [--cols=UNIT] [--paint=POLICY]}
     name=${2:-$(basename "$src")}; case "$name" in --focus|--cols=*|--paint=*) name=$(basename "$src");; esac
+    check_name "$name"
     cols=; pmode=; for a in "$@"; do case "$a" in --cols=*) cols=${a#--cols=} ;; --paint=*) pmode=${a#--paint=} ;; esac; done
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     case "$pmode" in ''|sign|extent|cur) ;; *) die "unknown paint policy: $pmode (sign|extent|cur)" ;; esac

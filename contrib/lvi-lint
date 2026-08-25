@@ -121,6 +121,16 @@ fi
 # every settle, and for a buffer that can't be linted at all (no name, no
 # backend, no adapter) pulling the whole text over the socket each time is pure
 # churn -- every round-trip is an event the editor repaints after.
+# Cheapest of all, and first: what this backend's columns count. Checked HERE
+# rather than left to lvi-list, which would `die` to a stderr nobody sees --
+# under `:bg` it is discarded and under `:silent !` it is painted over, so a typo
+# would just stop the list updating with no sign why. fail() puts it in the
+# status segment, where there is someone to read it.
+case "${LVI_LINT_COLS:-byte}" in
+  byte|char|display) ;;
+  *) fail "LVI_LINT_COLS='$LVI_LINT_COLS' (byte|char|display)" ;;
+esac
+
 fname=$("$LVI" -w "$target" -- path) || die "cannot read view $target"
 [ -n "$fname" ] || skip "current buffer has no file (backends key off the name)"
 
@@ -152,7 +162,7 @@ fi
 # missing-linter guard) is an error, not an ingest of empty input.
 entries=$(printf '%s\n' "$text" | "$adapter" "$fname") ||
   fail "backend '$backend' failed (is the linter installed?)"
-cols=${LVI_LINT_COLS:+--cols=$LVI_LINT_COLS}       # what this backend's columns count
+cols=${LVI_LINT_COLS:+--cols=$LVI_LINT_COLS}
 if [ -n "$entries" ]; then
   printf '%s\n' "$entries" | lvi-list $wflag put lint --at-cursor ${focus:+--focus} $cols
 else

@@ -484,6 +484,19 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- A list paints the groups <name> and <name>-cur, so a list NAMED `x-cur`
+    -- would be a second writer on `x`'s current-entry group and the two would
+    -- take turns erasing each other.
+    it("lvi-list refuses a name that collides with a -cur paint group", function()
+      local d = stub({})
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" }
+      expect(select(2, run(env, "echo 'x:1:y' | lvi-list put foo-cur"))).to.equal(false)
+      expect(exists(d .. "/sock.lists/foo-cur")).to.equal(false)
+      write(d .. "/saved", "x:1:y\n")
+      expect(select(2, run(env, ("lvi-list load '%s/saved' bar-cur"):format(d)))).to.equal(false)
+      cleanup(d)
+    end)
+
     it("lvi-search --worker reports no-match via msge and clears the paint", function()
       local d = stub({ buffer = "haystack\n", path = "x.txt\n" })
       run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "x.txt" },
@@ -691,6 +704,19 @@ describe("contrib", function()
       expect(ok).to.equal(false)
       expect(read(d .. "/log"):find("status lint %[lvi%-lint:")).to.exist()
       expect(read(d .. "/log"):find("msge")).to_not.exist()
+      cleanup(d)
+    end)
+
+    -- A bad LVI_LINT_COLS would reach lvi-list and `die` to a stderr that a :bg
+    -- binding discards, so the list would just stop updating with no sign why.
+    it("lvi-lint --worker names a bad LVI_LINT_COLS on the status segment", function()
+      local d = stub({ buffer = "x\n", path = "x.zz\n" })
+      local _, ok = run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                          LVI_EVENT = "change", LVI_LINT_BACKEND = "no-such-linter",
+                          LVI_LINT_COLS = "furlongs" },
+        "contrib/lvi-lint --worker")
+      expect(ok).to.equal(false)
+      expect(read(d .. "/log"):find("status lint %[lvi%-lint: LVI_LINT_COLS=")).to.exist()
       cleanup(d)
     end)
 
