@@ -732,7 +732,7 @@ spaces and tabs included.
 	*/*. The editor prompts, not the tool: a filter is a child of an editor
 	holding the terminal in raw mode, so a read of its own would take raw
 	keystrokes with no echo. A key without *prompt* works from the cursor
-	(*contrib/lvi-motion-search --word* for *\**) and gets an empty argument.
+	(*contrib/lvi-search --motion --word* for *\**) and gets an empty argument.
 
 	It is invoked *cmd TMPFILE COUNT LINE COL ARG* (buffer text in a private temp
 	file, cursor 1-based in bytes, _ARG_ the prompted line or empty) and prints
@@ -746,9 +746,12 @@ spaces and tabs included.
 	  found").
 	- Nothing at all -- no target and nothing to say, a silent no-op.
 
-	*contrib/lvi-motion-search* is search as a motion, in POSIX BREs; see
-	*contrib/README.md*. Note that a *map* on the same key shadows it, so an rc
-	that maps */* to a list producer has to drop that map first.
+	*contrib/lvi-search --motion* is search as a motion, in POSIX BREs; see
+	*contrib/README.md*. A *map* on the same key does not conflict with it. Maps
+	expand only for the FIRST key of a command, so a bare press takes the map and
+	an operator-pending press takes the motion, and one key can be both: */*
+	builds a list to walk, *d/* takes a target. The sample rc binds */ ? \* #*
+	that way.
 
 *register* _name_ [*read* _cmd_] [*write* _cmd_]
 	Back the single-character register _name_ with shell commands: a yank or
@@ -938,7 +941,7 @@ describing a range without dragging a highlight across it. Most directly,
 a motion or text object already *is* one: *dip* takes the paragraph, *dt)* runs
 to the next *)*, *ci(* the brackets. A search is a range too: at the *:* prompt an
 address may be a pattern, so *:.,/END/d* deletes from here to the next line
-matching _END_, and wiring */* to a *motion* (*contrib/lvi-motion-search*) makes
+matching _END_, and wiring */* to a *motion* (*contrib/lvi-search --motion*) makes
 *d/foo* delete up to the next _foo_ the way vi's does.
 
 *Marks* are the tool for a range you assemble by moving around, and they best
@@ -1101,27 +1104,36 @@ below, with the happy-path rc lines that turn it on:
 	on bufenter lvi-list paint
 	```
 
-	A search starts at the cursor, as vi's does. Two deviations come with
+	A search starts at the cursor, as vi's does. Three deviations come with
 	search being a list you walk rather than a motion the editor repeats: it
 	does not wrap (*n* stops on the last match and says so, and *lvi-list
-	first*/*last* are the wrap done by hand), and *n* is always forward, so
-	after a *?* it is *N* that keeps going back.
+	first*/*last* are the wrap done by hand), *n* is always forward, so
+	after a *?* it is *N* that keeps going back, and *n* walks the buffer as it
+	was when you searched.
 
-*lvi-motion-search* -- search as a motion
-	The other half of search: a *motion* filter, so */* moves and *d/foo* deletes
-	up to the match, jump-class and repeatable, where a list can only move you.
-	It wraps, and it keeps the last pattern itself, so *n* re-runs the match
-	against the buffer as it is now.
+	*lvi-search --motion* is the same search as a *motion* filter, which a list
+	cannot be: an operator needs its range before the command ends, and a list
+	arrives over the socket afterwards. Add these to the maps above -- the keys
+	do not collide, since a bare press takes the map and an operator-pending
+	press takes the motion:
 
 	```
-	motion / prompt lvi-motion-search
-	motion ? prompt lvi-motion-search -b
-	motion n lvi-motion-search --last
-	motion N lvi-motion-search --last -b
-	motion * lvi-motion-search --word
+	motion / prompt lvi-search --motion
+	motion ? prompt lvi-search --motion -b
+	motion * lvi-search --motion --word
+	motion # lvi-search --motion --word -b
 	```
 
-	A *map* on the same key shadows a *motion*, so pick one or the other for */*.
+	Then */* still builds the list and *d/foo*, *c/foo* and *y?bar* take a
+	target, jump-class like any motion. On this side the three deviations above
+	do not apply: it wraps, and it re-runs the match against the buffer as it is
+	now. Both shapes share one stored pattern, so a */foo* and a later *d/* can
+	never disagree.
+
+	*n*/*N* are left to the list on purpose. Bare *n* steps whichever list is
+	focused, so a *dn* meaning "the next search match" would not mirror it; to
+	delete back to a spot you reached by stepping a list, use *d``* -- every
+	list step is jump-class, so the previous-context mark is already there.
 
 *lvi-match* -- sticky pattern marks
 	Vim's *matchadd()*: keep a pattern painted while you read, rather than

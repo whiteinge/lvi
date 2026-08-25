@@ -156,14 +156,15 @@ hi Error   fg=red bold
 " handover, which avoids the alt-screen flash that :! causes when you hold down n/N.
 map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus it
 map ? :silent !lvi-search -b<CR>              " ...searching backward from the cursor
-map * :bg lvi-search "$LVI_CWORD"<CR>         " search the word under the cursor
-map # :bg lvi-search -b "$LVI_CWORD"<CR>      " ...backward
+map * :bg lvi-search --word<CR>               " search the word under the cursor
+map # :bg lvi-search --word -b<CR>            " ...backward
 map n :bg lvi-list next<CR>                   " step the focused list...
 map N :bg lvi-list prev<CR>                   " ...forward / back
 " A search starts at the cursor, as vi's does, but the list it builds is a walk
 " with two ends rather than a ring: `n` stops on the last match (the status says
-" `(end)`) instead of wrapping, \l[ / \l] are the wrap by hand, and `n` is always
-" forward -- after `?` it is `N` that keeps going back. See `lvi-search -h`.
+" `(end)`) instead of wrapping, \l[ / \l] are the wrap by hand, `n` is always
+" forward -- after `?` it is `N` that keeps going back -- and `n` walks the buffer
+" as it was when you searched. See `lvi-search -h`.
 " list MENU (\l): switch focus / goto within / skip file / jump to an end /
 " re-center / hide / preview.
 map \ll :silent !lvi-list switch<CR>          " re-aim n/N: pick the focused list
@@ -192,22 +193,26 @@ on bufenter lvi-list paint
 " press n to step to the first entry. Drop `--focus` to keep your current focus.
 on ready [ -n "$LVI_QUICKFIX" ] && lvi-list load "$LVI_QUICKFIX" quickfix --focus
 
-" SEARCH AS A MOTION, the other half. The maps above make `/` build a list you
-" walk; that shape can move you but can never be an operator's TARGET, because a
-" list arrives over the socket after the command that wanted it has finished --
-" so `d/foo` is not one of the things it can do. `:motion` is the seam that can:
-" a synchronous filter, run the way `:textobj` is, that hands one target back in
-" time for the operator. Uncomment these AND DELETE the `map / ? * # n N` lines
-" above -- a map shadows a motion, so the six keys are one or the other, not
-" both. What you trade: no list of every hit to walk (\lg, the status counter,
-" the paint) in return for `d/foo`, `y?bar`, wrapscan, and `n` re-running the
-" match against the buffer as it is now.
-"motion / prompt lvi-motion-search       " /pattern -- and d/pat, c/pat, y/pat
-"motion ? prompt lvi-motion-search -b    " ?pattern
-"motion n lvi-motion-search --last       " next / previous, with the last pattern
-"motion N lvi-motion-search --last -b
-"motion * lvi-motion-search --word       " the word under the cursor
-"motion # lvi-motion-search --word -b
+" SEARCH AS A MOTION, the other half -- and it goes on the SAME keys as the maps
+" above, not instead of them. A list can move you but can never be an operator's
+" TARGET, because it arrives over the socket after the command that wanted it has
+" finished; `:motion` is a synchronous filter that hands one target back in time.
+" The keys do not fight: lvi expands maps only for the FIRST key of a command, so
+" a bare `/` takes the map (build the list) and `d/` takes the motion (one
+" target). Same script, same stored pattern, so the two can never disagree.
+motion / prompt lvi-search --motion     " d/pat, c/pat, y/pat -- bare / is still the list
+motion ? prompt lvi-search --motion -b  " d?pat
+motion * lvi-search --motion --word     " d* -- the word under the cursor
+motion # lvi-search --motion --word -b
+" On this side the search wraps and re-matches the live buffer, so the three list
+" deviations noted above do not apply to `d/`.
+" `n`/`N` are left to the list on purpose: bare `n` steps whichever list is
+" FOCUSED (lint, spell, git hunks), so a `dn` meaning "the next search match"
+" would not mirror it. To delete back to somewhere you reached by stepping a
+" list, use the previous-context mark -- `d` then two backticks -- since every
+" list step is jump-class. Add this if you want `dn` anyway:
+"motion n lvi-search --motion --last
+"motion N lvi-search --motion --last -b
 
 " }}}
 " ---- insert-mode completion -------------------------------------------- {{{

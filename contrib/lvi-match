@@ -24,8 +24,8 @@
 # keeps only matches with a non-word byte on both sides (grep's -w, and what makes
 # `*` on the cursor word behave), and `-i` folds case.
 #
-# THE MATCHER is `lvi-bre-locate`, the backend lvi-search and lvi-motion-search
-# also use: a mark needs a column RANGE, and it is the thing that reports one
+# THE MATCHER is `lvi-bre-locate`, the backend lvi-search uses in both of its
+# shapes: a mark needs a column RANGE, and it is the thing that reports one
 # without leaving vi's dialect (it marks each match with sed and counts the
 # offsets). These patterns used to be POSIX EREs, because awk's
 # `match()`/RSTART/RLENGTH was the only column-reporting tool in reach -- which

@@ -206,7 +206,7 @@ describe("contrib", function()
     end)
 
     -- lvi-bre-locate is the shared matcher behind lvi-search, lvi-match and
-    -- lvi-motion-search. It is where the offset arithmetic lives now, so it is
+    -- lvi-search --motion. It is where the offset arithmetic lives now, so it is
     -- where the offset arithmetic gets pinned; the callers test their own
     -- policy on top (a zero-width match, the grep fallback) and not this.
     local function locate(flags, pat, text)
@@ -351,15 +351,15 @@ describe("contrib", function()
       cleanup(d)
     end)
 
-    -- lvi-motion-search is a `:motion` filter, so it is a pure one: argv in, one
+    -- lvi-search --motion is a `:motion` filter, so it is a pure one: argv in, one
     -- line out. Same tier as lvi-reflow, no editor and no socket involved.
     local function msearch(dir, args, count, line, col, arg)
       return (run({ LVI_SOCK = dir .. "/sock" },
-        ("contrib/lvi-motion-search %s '%s/buf' %d %d %d '%s'")
+        ("contrib/lvi-search --motion %s '%s/buf' %d %d %d '%s'")
           :format(args, dir, count, line, col, arg)))
     end
 
-    it("lvi-motion-search finds the next match past the cursor, exclusive", function()
+    it("lvi-search --motion finds the next match past the cursor, exclusive", function()
       local d = stub({ buf = "aaa foo bar\nbaz foo\nlast foo here\n" })
       expect(msearch(d, "", 1, 1, 1, "foo")).to.equal("char 1 5\n")
       expect(msearch(d, "", 1, 1, 5, "foo")).to.equal("char 2 5\n")   -- never where you are
@@ -370,7 +370,7 @@ describe("contrib", function()
 
     -- A motion that stops dead at the end of the buffer is not the motion vi
     -- has, so this one wraps -- vi's wrapscan, unlike lvi-search's list.
-    it("lvi-motion-search wraps, in both directions and over the count", function()
+    it("lvi-search --motion wraps, in both directions and over the count", function()
       local d = stub({ buf = "one foo\ntwo foo\n" })
       expect(msearch(d, "", 1, 2, 5, "foo")).to.equal("char 1 5\n")   -- past the last
       expect(msearch(d, "-b", 1, 1, 5, "foo")).to.equal("char 2 5\n") -- before the first
@@ -378,7 +378,7 @@ describe("contrib", function()
       cleanup(d)
     end)
 
-    it("lvi-motion-search reads the pattern as a BRE, and says why when it cannot", function()
+    it("lvi-search --motion reads the pattern as a BRE, and says why when it cannot", function()
       local d = stub({ buf = "aaa foo(bar)\nxx a+b yy\nlook\n" })
       expect(msearch(d, "", 1, 1, 1, "foo(")).to.equal("char 1 5\n")      -- literal paren
       expect(msearch(d, "", 1, 1, 1, "a+b")).to.equal("char 2 4\n")       -- literal plus
@@ -391,30 +391,55 @@ describe("contrib", function()
 
     -- The last pattern is the tool's to keep: that is what makes `n` re-run the
     -- matcher against the buffer as it is now rather than walk a snapshot.
-    it("lvi-motion-search remembers the pattern for --last, and --word takes it off the buffer", function()
+    it("lvi-search --motion remembers the pattern for --last, and --word takes it off the buffer", function()
       local d = stub({ buf = "foo food\nfoo bar\n" })
       expect(msearch(d, "", 1, 1, 1, "foo")).to.equal("char 1 5\n")   -- inside "food"
       expect(msearch(d, "--last", 1, 1, 5, "")).to.equal("char 2 1\n")
-      expect(read(d .. "/sock.motion-search")).to.equal("\nfoo\n")
+      expect(read(d .. "/sock.search-pat")).to.equal("\n\nfoo\n")
       -- an empty argument reuses it too, the way a bare `/<CR>` does in vi
       expect(msearch(d, "", 1, 1, 5, "")).to.equal("char 2 1\n")
       -- --word: whole words only, and it stays a word search for the next --last
       expect(msearch(d, "--word", 1, 1, 1, "")).to.equal("char 2 1\n") -- skips "food"
-      expect(read(d .. "/sock.motion-search")).to.equal("1\nfoo\n")
+      expect(read(d .. "/sock.search-pat")).to.equal("1\n\nfoo\n")
       expect(msearch(d, "--last", 1, 2, 1, "")).to.equal("char 1 1\n") -- wraps, still whole-word
+      cleanup(d)
+    end)
+
+    -- The store keeps how a search MATCHED, not just what it matched, so a
+    -- repeat is exact even after the case policy changes underneath it. The two
+    -- shapes share this one file, which is the whole reason they are one script.
+    local function msearch_env(dir, env, args, count, line, col, arg)
+      env.LVI_SOCK = dir .. "/sock"
+      return (run(env, ("contrib/lvi-search --motion %s '%s/buf' %d %d %d '%s'")
+        :format(args, dir, count, line, col, arg)))
+    end
+
+    it("lvi-search --motion repeats a search as it was made, folding and all", function()
+      local d = stub({ buf = "Foo and foo\n" })
+      -- smart case: an all-lowercase pattern folds, so both spellings match
+      expect(msearch_env(d, { LVI_SEARCH_CASE = "smart" }, "", 1, 1, 1, "foo"))
+        .to.equal("char 1 9\n")
+      expect(read(d .. "/sock.search-pat")).to.equal("\n1\nfoo\n")
+      -- the policy changes; --last still folds, because the store said it did
+      expect(msearch_env(d, { LVI_SEARCH_CASE = "sensitive" }, "--last", 1, 1, 9, ""))
+        .to.equal("char 1 1\n")
+      -- a FRESH sensitive search of the same pattern goes somewhere else, which
+      -- is what makes the line above worth asserting
+      expect(msearch_env(d, { LVI_SEARCH_CASE = "sensitive" }, "", 1, 1, 9, "foo"))
+        .to.equal("char 1 9\n")
       cleanup(d)
     end)
 
     -- A marker byte in the BUFFER makes every column past it wrong, since one
     -- pass counts it as text and the next as a mark. Only lvi-match used to
     -- check; sharing the matcher gave the other two the check for free.
-    it("lvi-motion-search refuses a buffer holding a marker byte", function()
+    it("lvi-search --motion refuses a buffer holding a marker byte", function()
       local d = stub({ buf = "bi\1nary foo\n" })
       expect(msearch(d, "", 1, 1, 1, "foo")).to.equal("err buffer holds a marker byte\n")
       cleanup(d)
     end)
 
-    it("lvi-motion-search skips a zero-width match and reports an empty store", function()
+    it("lvi-search --motion skips a zero-width match and reports an empty store", function()
       local d = stub({ buf = "ab\n" })
       -- `z*` matches the empty string everywhere; a width-less match is nowhere
       -- to land, so it is not a match here.
@@ -586,6 +611,29 @@ describe("contrib", function()
         "contrib/lvi-search --worker -i -- FOO")
       expect(read(d .. "/sock.lists/search")).to.equal(
         "x.txt:1.1-3: Foo and foo\nx.txt:1.9-11: Foo and foo\n")
+      cleanup(d)
+    end)
+
+    -- `--word` is what makes `*` behave, and it has to mean the same thing in
+    -- both shapes. The list half gets the word from $LVI_CWORD (the motion half
+    -- reads it off the buffer, since a :motion filter gets no refreshed env).
+    it("lvi-search --word keeps whole words only", function()
+      local d = stub({ buffer = "foo food\n", path = "x.txt\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "x.txt", LVI_LINE = "1", LVI_COL = "1",
+            PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+        "contrib/lvi-search --worker --word -- foo")
+      expect(read(d .. "/sock.lists/search")).to.equal("x.txt:1.1-3: foo food\n")
+      cleanup(d)
+    end)
+
+    -- The store is written before the worker forks, so a `d/` pressed the
+    -- instant `*` returns cannot race it. LVI=true keeps the forked worker inert.
+    it("lvi-search --word stores $LVI_CWORD before backgrounding", function()
+      local d = stub({ buffer = "foo\n", path = "x.txt\n" })
+      run({ LVI = "true", STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_CWORD = "foo", LVI_FILE = "x.txt" }, "contrib/lvi-search --word")
+      expect(read(d .. "/sock.search-pat")).to.equal("1\n\nfoo\n")
       cleanup(d)
     end)
 
