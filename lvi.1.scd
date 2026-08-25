@@ -557,8 +557,9 @@ spaces and tabs included.
 	shell-out, *sh* freezes the event loop while it runs, so a synchronous
 	*lvi -w* would sit waiting on an editor that answers only after you exit.
 	_contrib/lvi-shell.sh_ wraps that pattern in ready-made functions
-	(*lvi-saveas*, *lvi-mv*, *lvi-rm*, and friends) and tags the shell prompt --
-	*(lvi foo.txt)* -- so the parked editor is never forgotten.
+	(*lvi-saveas*, *lvi-mv*, *lvi-rm*, and friends; *lvi-help* lists them), tags
+	the shell prompt -- *(lvi foo.txt)* -- and says on the way in that the editor
+	is parked, so it is never forgotten.
 
 \[_range_]*bg* _cmd_
 	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the
@@ -1277,8 +1278,8 @@ below, with the happy-path rc lines that turn it on:
 *lvi-shell.sh* -- drive lvi from your shell
 	Shell functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the running view
 	from *sh* or any terminal, with your shell's own path completion, plus
-	*lvi-mv*, *lvi-rm* and *lvi-sudow* for acting on the file itself. Source it
-	from your shell's rc, not lvi's:
+	*lvi-mv*, *lvi-rm* and *lvi-sudow* for acting on the file itself. *lvi-help*
+	prints the set. Source it from your shell's rc, not lvi's:
 
 	```
 	. lvi-shell.sh

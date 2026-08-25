@@ -609,6 +609,11 @@ silently recreates it at the old path. `lvi-mv` repoints with `:f`, which
 renames the buffer without writing it, so unsaved edits stay unsaved. That is
 the difference from `lvi-saveas`, which saves as part of renaming.
 
+`lvi-help` prints the whole set with recipes, and entering a shell-out prints a
+two-line banner pointing at it. The prompt tag has room to say you are in one
+but not what that costs: lvi is stopped behind you, and anything you send waits
+for your exit. Set `LVI_SHELL_BANNER` empty to silence the banner.
+
 This will change the shell prompt to denote you're in an lvi shell and
 the file you were editing `(lvi foo.txt) $`.
 

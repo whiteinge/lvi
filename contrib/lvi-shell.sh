@@ -16,6 +16,7 @@
 #   lvi-mv DST             move/rename the file AND the buffer in one command
 #   lvi-rm [-f]            delete the file and drop the buffer
 #   lvi-sudow              write the current file through sudo
+#   lvi-help               the cheat sheet, with recipes
 #
 # lvi-mv, lvi-rm and lvi-sudow exist because each is a sequence with an
 # ordering you have to know, and getting it wrong is quiet rather than loud:
@@ -66,8 +67,13 @@
 #     [env_var.LVI_WID]
 #     format = '[lvi ](bold yellow)'
 #
+# Sourcing it also prints a two-line banner on entering a shell-out, saying
+# what the prompt tag cannot: that lvi is frozen, that commands queue, and that
+# `lvi-help` exists. Set LVI_SHELL_BANNER empty to silence it.
+#
 # Config: LVI (the client binary; default `lvi`); LVI_PS1_TAG (prompt marker;
-# default `(lvi FILE) `, empty disables).
+# default `(lvi FILE) `, empty disables); LVI_SHELL_BANNER (empty disables the
+# shell-out banner).
 
 # Tag the prompt when this shell lives under an lvi view (see header). The
 # ${VAR-default} form (no colon) is deliberate: set-but-empty LVI_PS1_TAG
@@ -77,6 +83,18 @@ case $- in *i*)
   if [ -n "$LVI_WID" ] && [ -z "$LVI_PS1_TAGGED" ]; then
     LVI_PS1_TAGGED=1
     PS1="${LVI_PS1_TAG-(lvi${LVI_FILE:+ ${LVI_FILE##*/}}) }$PS1"
+    # The banner carries what the tag cannot. A marker in the prompt says you
+    # are in a shell-out; it has no room to say that the editor is stopped
+    # dead behind you, that anything you send waits for your exit, or that
+    # there is a help command. That is a once-per-shell fact, so it is said
+    # once, on the way in, and never again. ${VAR-x} (no colon) so a
+    # set-but-empty LVI_SHELL_BANNER disables it, as LVI_PS1_TAG does.
+    if [ -n "${LVI_SHELL_BANNER-x}" ]; then
+      cat >&2 <<'LVI_BANNER'
+lvi: you are in a shell-out -- lvi is stopped, and its socket backlog filling,
+     until you exit.  lvi-* commands queue until then;  lvi-help  lists them.
+LVI_BANNER
+    fi
   fi ;;
 esac
 
@@ -191,3 +209,37 @@ lvi-sudow() {
     fi
 }
 
+lvi-help() {
+  cat <<'LVI_HELP'
+lvi shell commands. These drive the lvi view you are inside -- or, outside a
+shell-out, the one running view. Inside one they QUEUE: lvi is stopped while
+this shell runs, so they execute the moment you exit.
+
+  lvi-e FILE           open FILE in the view
+  lvi-r FILE           read FILE into the buffer after the cursor line
+  lvi-saveas [-f] P    write the buffer as P and keep editing it there
+  lvi-mv DST           move or rename the file and the buffer together
+  lvi-rm [-f]          delete the file and drop the buffer, saved or not
+  lvi-sudow            write the current file as root
+  lvi-help             this
+
+Recipes
+
+  rename what you are editing       lvi-mv notes-2026.md
+  move it somewhere else            lvi-mv ~/archive/
+  throw it away and start clean     lvi-rm
+  save it as root                   lvi-sudow
+  anything else, by hand            lvi -w "$LVI_WID" -d -- 'set wrap'
+
+Two things that bite
+
+  Quote an ex command in SINGLE quotes. A `!` inside double quotes is history
+  expansion, so `"bd!"` strands your prompt at `dquote>` instead of reaching
+  lvi.
+
+  A queued command's reply is thrown away, so a refusal is silent. lvi-saveas
+  onto a file that changed on disk just leaves the buffer modified, with
+  nothing printed; pass -f when you mean :w!. Outside a shell-out the same
+  commands run live and you see the real answer.
+LVI_HELP
+}

@@ -1435,6 +1435,26 @@ describe("contrib", function()
         cleanup(d); cleanup(dir)
       end)
 
+      it("lvi-help lists every command it ships", function()
+        local out = bash({ LVI = STUB }, "lvi-help")
+        for _, fn in ipairs({ "lvi-e", "lvi-r", "lvi-saveas", "lvi-mv",
+                              "lvi-rm", "lvi-sudow", "lvi-help" }) do
+          expect(out:find(fn, 1, true)).to.exist()
+        end
+      end)
+
+      -- The banner is the one thing that says what the prompt tag cannot, so
+      -- it fires exactly under a shell-out, and only when not silenced.
+      it("the banner fires under a shell-out and LVI_SHELL_BANNER silences it", function()
+        local marker = "lvi is stopped"
+        local out = bash({ LVI = STUB, LVI_WID = "w1" }, ":", true)
+        expect(out:find(marker, 1, true)).to.exist()
+        local off = bash({ LVI = STUB, LVI_WID = "w1", LVI_SHELL_BANNER = "" },
+                         ":", true)
+        expect(off:find(marker, 1, true)).to_not.exist()
+        local outside = bash({ LVI = STUB }, ":", true)
+        expect(outside:find(marker, 1, true)).to_not.exist()
+      end)
     end)
   end)
 end)
