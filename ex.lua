@@ -554,7 +554,10 @@ function M.textobj_range(ed, cmd, around, key)
   local wf = io.open(tmp, "wb"); if not wf then return nil end
   wf:write(ed.buf:text()); wf:close()
   -- All args are shell-safe (a path in the private dir, a literal i/a, digits).
-  local full = ("%s '%s' %s %d %d"):format(cmd, tmp, around and "a" or "i", ed.cy, ed.cx)
+  -- stderr to /dev/null for the same reason motion_target does it: the editor
+  -- holds the terminal in raw mode on the alternate screen, so a filter's
+  -- diagnostics would land in the middle of the text.
+  local full = ("%s '%s' %s %d %d 2>/dev/null"):format(cmd, tmp, around and "a" or "i", ed.cy, ed.cx)
   local p = io.popen(full, "r")
   local out = p and p:read("*a") or ""
   if p then p:close() end

@@ -359,6 +359,8 @@ describe("contrib", function()
       -- the match is what you are looking at, so it lights rather than signs
       expect(read(d .. "/sock.lists/search.paint")).to.equal("extent\n")
       expect(read(d .. "/log"):find("\nhl search 1:5%-7 1:14%-16")).to.exist()
+      -- with every match lit, the one you are on needs its own look
+      expect(read(d .. "/log"):find("hi search%-cur reverse bold pri=11")).to.exist()
       cleanup(d)
     end)
 

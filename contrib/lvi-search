@@ -208,8 +208,10 @@ fi
 # this on every search, so an rc `hi search` gets overwritten -- restyle HERE
 # (or in a wrapper), not in the rc.
 # pri=10 lifts the mark above syntax highlighting (pri 0) so it shows through a
-# styled first column (e.g. a Markdown `1.` ordered-list marker).
-"$LVI" -w "$target" --detach -- "hi search reverse pri=10"
+# styled first column (e.g. a Markdown `1.` ordered-list marker). `search-cur`
+# sits one above that and adds bold: with every match lit, the one you are ON has
+# to read differently from the rest, and bold says so without assuming a palette.
+"$LVI" -w "$target" --detach -- "hi search reverse pri=10" "hi search-cur reverse bold pri=11"
 # Seed from the cursor, then take one step off it -- that pair is the whole of
 # "search starts where I am" (see WHERE A SEARCH STARTS). lvi-list owns the
 # index; we name a direction and it does the arithmetic.
