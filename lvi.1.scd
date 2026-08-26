@@ -1135,6 +1135,31 @@ another file of ex commands with *source* -- and an alternate rc set via
 config rather than replace it (how _contrib/lvirc-man_ keeps your maps in the
 manpage viewer).
 
+## Per-project settings
+
+Settings do not key off the working directory, and an rc file auto-sourced from
+one would run commands out of any repository you cloned. *direnv*(1) gates
+exactly that: an _.envrc_ does not run until *direnv allow* approves it, and the
+approval is pinned to the file's contents, so a later edit re-prompts. Let it
+set *$LVIRC* from the project's _.envrc_:
+
+```
+export LVIRC=~/.config/lvi/rc.d/proj
+```
+
+and start that rc with a bare *source*, so it layers over your normal config
+instead of replacing it:
+
+```
+source
+set sw=2 et
+```
+
+direnv keys on the shell's working directory, not on the file being opened, so
+this covers *cd proj && lvi foo.c* and not *lvi proj/foo.c* from elsewhere.
+What it configures is yours, not the project's: the rc lives in your config
+directory, and nothing here is meant to be checked in and shared.
+
 # TURNING ON THE IDE
 
 Much of what feels built into other editors is, in *lvi*, a small external
