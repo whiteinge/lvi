@@ -83,19 +83,32 @@
 #
 # Config: LVI (the client binary; default `lvi`); LVI_PS1_TAG (prompt marker;
 # default `(lvi FILE) `, empty disables); LVI_SHELL_BANNER (empty disables the
-# shell-out banner). LVI_CWD is SET by this file rather than read as config --
-# lvi's own directory, captured at source time -- but an inherited value wins,
-# so an outer shell-out's stays right through a nested one.
+# shell-out banner). LVI_CWD and LVI_CWD_WID are SET by this file rather than
+# read as config -- lvi's own directory and the view it belongs to, captured at
+# source time -- so an inherited pair survives a nested shell but not a nested
+# editor.
 
 # lvi's working directory, captured while we still know it. A shell-out
 # inherits it, so at SOURCE time -- your rc, before you have had the chance to
 # cd -- $PWD is lvi's. That is the only chance: cd here is process-local, and
 # there is no asking a frozen editor. Exported, so a nested shell keeps lvi's
-# directory rather than re-capturing its parent's cd. The :- defers to a value
-# already in the environment, should core ever export LVI_CWD itself.
+# directory rather than re-capturing its parent's cd.
+#
+# Stamped with the wid it was captured for, because inherited and right are not
+# the same thing. A nested SHELL is still the same view, and must keep the
+# value. A nested EDITOR is not: `lvi other.txt` from a shell-out you had cd'd
+# in has its own cwd and its own wid, and the inherited LVI_CWD would resolve
+# ITS $LVI_FILE against the outer editor's directory -- the wrong-file
+# resolution this variable exists to prevent, one level down. Different wid,
+# re-capture. An LVI_CWD with no stamp came from somewhere other than this file
+# (core, should it ever export one) and is left alone.
 if [ -n "$LVI_WID" ]; then
-  LVI_CWD=${LVI_CWD:-$PWD}
-  export LVI_CWD
+  if [ -z "$LVI_CWD" ] ||
+     { [ -n "$LVI_CWD_WID" ] && [ "$LVI_CWD_WID" != "$LVI_WID" ]; }; then
+    LVI_CWD=$PWD
+    LVI_CWD_WID=$LVI_WID
+  fi
+  export LVI_CWD LVI_CWD_WID
 fi
 
 # Tag the prompt when this shell lives under an lvi view (see header). The

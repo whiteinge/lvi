@@ -1509,6 +1509,25 @@ describe("contrib", function()
         cleanup(dir)
       end)
 
+      -- Inherited is not the same as right, so the capture is stamped with the
+      -- wid it was taken for. A nested SHELL is the same view and must keep the
+      -- value; a nested EDITOR -- `lvi other.txt` from a shell-out you had cd'd
+      -- in -- has its own cwd and its own wid, and the inherited value would
+      -- resolve ITS $LVI_FILE against the outer editor's directory.
+      it("keeps an inherited cwd for the same view, re-captures for another", function()
+        local dir = tmpdir()
+        local read_cwd = function(wid)
+          return (bash({ LVI = STUB, LVI_WID = wid, LVI_CWD = "/outer",
+                         LVI_CWD_WID = "w1" },
+                       "cd " .. dir .. " && printf %s \"$LVI_CWD\""))
+        end
+        expect(read_cwd("w1")).to.equal("/outer")     -- nested shell: same view
+        local other = read_cwd("w2")                  -- nested editor: different view
+        expect(other).to_not.equal("/outer")
+        expect(other).to_not.equal(dir)               -- source time, before the cd
+        cleanup(dir)
+      end)
+
       -- Outside a shell-out there is no LVI_CWD, so a relative path from :path
       -- cannot be resolved. Guessing is what deleted the wrong file, so refuse.
       it("refuses a relative path when lvi's cwd is unknowable", function()
