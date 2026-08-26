@@ -92,6 +92,7 @@ current file is `$LVI_FILE` and `:w ${LVI_FILE%.md}.html` works.
 | --- | --- | --- |
 | `:help x` | `man lvi`, `MANPAGER=lvi-man` | core, `lvi-man` |
 | `q:` (command-line window) | `Ctrl-F` at the `:` prompt, `:cmdwin` | core |
+| `Q` (ex mode), `:open` | neither exists: `:cmdwin` for a run of commands, `:sysex` for one, or `ex` from `:sh` | core |
 | `:e` with tab completion | `\f` picker, or `:sh` and your own shell | `lvi-open` |
 | `%` / `#` in a `:w` argument | `$LVI_FILE`, `:b #`, `Ctrl-^` | core |
 | `:!`, `:r !`, `:%!cmd` | identical | core |

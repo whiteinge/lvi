@@ -322,6 +322,23 @@ them all (*zR*) or stop honoring them (*zi*); both survive any push.
 	deliberately minimal (type and Backspace); reach for the command window when a
 	command grows long enough to want real editing.
 
+*Q*
+	Unbound. POSIX vi's *Q* leaves visual mode for ex's line-oriented command
+	mode, and lvi has no ex mode to leave for: the ex layer here is one
+	dispatcher shared by the *:* prompt, the socket, and the rc file (see *EX
+	COMMANDS*), not a second interactive editor carrying its own screen and line
+	editing. What *Q* is reached for, a run of ex commands, is *:cmdwin*, where
+	the commands are buffer text you edit and run with the whole editor; one
+	command with the system ex's exact semantics is *:sysex*; and ex itself is
+	one *:sh* away (*ex* _file_, then *exit*).
+
+	Open mode -- ex's *open*, POSIX's one-line visual editor for terminals that
+	cannot address the screen -- is absent for that reason and one more: lvi
+	draws a full screen and needs a terminal that can. *:visual* and *:open* are
+	not lvi commands, so both fall through to the system ex, which edits a temp
+	copy in its own process and cannot reach lvi's terminal. Typing either
+	changes nothing.
+
 *Ctrl-^*
 	Switch to the alternate buffer -- the one edited before the current (same as
 	*:b #*).
