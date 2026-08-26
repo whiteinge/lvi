@@ -1,0 +1,115 @@
+#!/bin/sh
+# lvi-send-tmux -- the tmux backend for lvi-send: list panes, paste text into one.
+#
+# One adapter behind lvi-send's backend contract, the same shape lvi-hl-<name>
+# and lvi-lint-<name> use. Three calls, and a backend for kitty, wezterm, screen
+# or Zellij is the same three:
+#
+#   lvi-send-tmux --check          is this multiplexer usable here? (exit 127 if not)
+#   lvi-send-tmux --list           one target per line, `TARGET<TAB>DESCRIPTION`
+#   lvi-send-tmux [-n] TARGET      text on stdin -> TARGET; -n omits the trailing Enter
+#
+# TARGET is a tmux pane id (`%3`), or anything else tmux's -t accepts. --list
+# emits pane ids because they are stable: session:window.pane renumbers when you
+# close a window, and a target that silently starts meaning a different pane is
+# worse than one that stops resolving. The DESCRIPTION column carries the
+# human-readable coordinates and the running command, so the picker still
+# matches on `zsh`, `pytest` or the window name.
+#
+# --list DROPS OUR OWN PANE ($TMUX_PANE, which tmux exports and lvi passes down
+# to every child): sending the buffer to the editor you are typing in would type
+# it into the editor. Outside tmux there is no own-pane to drop, and listing
+# still works as long as a server is running -- so an lvi in a plain terminal can
+# drive a tmux session next to it.
+#
+# IT LISTS THE CURRENT SESSION, not the whole server. The server is every window
+# of every project you have open, and two things lvi-send does depend on the list
+# being short: a SOLE candidate becomes the target with no setup at all, and the
+# picker is only worth opening if what you want is in it. Neither survives forty
+# panes from six sessions, and a send that lands in yesterday's session is the
+# accident this scope prevents. Set LVI_SEND_SCOPE=server for a dedicated runner
+# session in another window (and outside tmux, where there is no current session,
+# server is all there is).
+#
+# HOW THE TEXT GETS THERE. `load-buffer` + `paste-buffer`, not `send-keys`: the
+# text goes over stdin, so there is no argv quoting to get wrong, and no length
+# limit to run into. One trailing newline is stripped and re-sent as a separate
+# Enter, so a send is exactly one submission -- pasted text ending in a newline
+# would submit the last line and leave a stray empty one behind.
+#
+# LVI_SEND_PASTE picks how a MULTI-LINE payload is delivered, and the right
+# answer depends on what is reading it:
+#
+#   plain (default)  the lines arrive as typed. What you want for a shell: each
+#                    line runs as its own command.
+#   bracket          the block is wrapped in bracketed-paste control codes
+#                    (paste-buffer -p, tmux 3.0+), so the receiver takes it as
+#                    one paste rather than as typing. This is the REPL setting:
+#                    a Python prompt auto-indents each line you *type*, so an
+#                    indented block pasted plain arrives with its indentation
+#                    doubled and then some. It needs a receiver that understands
+#                    bracketed paste (bash/zsh do; python 3.13+ does).
+#
+# Single-line payloads ignore the setting -- there is nothing to mangle.
+#
+# Config: LVI_SEND_PASTE (plain|bracket, default plain), LVI_SEND_SCOPE
+# (session|server, default session). Needs tmux on PATH.
+# You do not have to be inside tmux, only to have a server running.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+# A missing backend is an error, never an empty success: an empty --list would
+# read as "no panes open" and a silent send as "sent". 127 is the shell's own
+# command-not-found, which is what this is.
+command -v tmux >/dev/null 2>&1 ||
+  { echo "lvi-send-tmux: tmux is not on PATH" >&2; exit 127; }
+
+case ${1:-} in
+  --check)
+    # A server has to be up for a pane to exist to send to. `tmux list-panes`
+    # is the cheapest thing that fails when there isn't one.
+    tmux list-panes -a >/dev/null 2>&1 ||
+      { echo "lvi-send-tmux: no tmux server running" >&2; exit 127; }
+    exit 0 ;;
+  --list)
+    # -s -t PANE is "every pane in the session that pane belongs to"; -a is the
+    # whole server, the fallback when we are not sitting in a pane ourselves.
+    if [ "${LVI_SEND_SCOPE:-session}" = session ] && [ -n "${TMUX_PANE:-}" ]
+      then set -- -s -t "$TMUX_PANE"
+      else set -- -a
+    fi
+    tmux list-panes "$@" -F '#{pane_id}	#{session_name}:#{window_index}.#{pane_index} #{window_name} #{pane_current_command}' 2>/dev/null |
+      awk -F'\t' -v me="${TMUX_PANE:-}" '$1 != me'
+    exit 0 ;;
+esac
+
+enter=1; [ "${1:-}" = "-n" ] && { enter=; shift; }
+target=${1:?"usage: lvi-send-tmux [-n] TARGET  (text on stdin)"}
+
+# Strip exactly one trailing newline (see the header): the payload is pasted,
+# the submission is the Enter below.
+text=$(cat; printf x); text=${text%x}; text=${text%
+}
+
+if [ -n "$text" ]; then
+  # -b names our own buffer so a send never disturbs the user's paste stack,
+  # and -d drops it again once pasted.
+  printf '%s' "$text" | tmux load-buffer -b lvi-send - 2>/dev/null ||
+    { echo "lvi-send-tmux: load-buffer failed" >&2; exit 1; }
+  p=
+  case "${LVI_SEND_PASTE:-plain}" in
+    bracket) case "$text" in *"
+"*) p=-p ;; esac ;;                      # multi-line only; see the header
+  esac
+  # shellcheck disable=SC2086  # $p is our own -p or empty, never user text
+  tmux paste-buffer -b lvi-send -d $p -t "$target" 2>/dev/null ||
+    { tmux delete-buffer -b lvi-send 2>/dev/null
+      echo "lvi-send-tmux: no such pane: $target" >&2; exit 1; }
+fi
+
+# An EMPTY payload still sends the Enter: a bare newline is how you close an
+# open block at a Python prompt, so it is a real thing to want to send.
+[ -n "$enter" ] && { tmux send-keys -t "$target" Enter 2>/dev/null ||
+  { echo "lvi-send-tmux: no such pane: $target" >&2; exit 1; }; }
+exit 0

@@ -1,0 +1,304 @@
+#!/bin/sh
+# lvi-send [-w auto|WID] SUBCOMMAND -- send buffer text to another terminal pane,
+# and re-run a command there whenever the file is written.
+#
+# The "run this line" reflex (vim-slime's job) and the "run the tests on save"
+# one, which are the same act: put a string into the pane next door. lvi has no
+# splits and no terminal emulator, so the pane is a real pane owned by your
+# multiplexer, and this drives it from outside.
+#
+# SYNOPSIS
+#   lvi-send send [-n]        send the g@ span / :bg range, else the current line
+#   lvi-send run [CMD...]     send a literal command; no CMD re-runs the armed one
+#   lvi-send target [TARGET]  pick the pane to send to (no TARGET: fuzzy-pick)
+#   lvi-send watch [EVENT] [CMD...]   run CMD in the pane on every EVENT
+#   lvi-send unwatch          stop that
+#   lvi-send hook             the hook body -- `watch` registers it; not for you
+#
+# BINDINGS. `send`/`run`/`unwatch` touch no tty (-> :bg, and send is also a g@
+# operatorfunc); `target`/`watch` fuzzy-pick and prompt (-> :silent !):
+#     map gs  :set operatorfunc=lvi-send<CR>g@     " gsip sends a paragraph
+#     map gS  :bg lvi-send<CR>                     " ...the current line
+#     map \xp :silent !lvi-send target<CR>         " pick the pane
+#     map \xw :silent !lvi-send watch<CR>          " arm the on-write runner
+#     map \xq :bg lvi-send unwatch<CR>             " disarm it
+#     map \xx :bg lvi-send run<CR>                 " re-run it now, without saving
+# A typed range works without any map: `:15,40bg lvi-send` sends those lines.
+# The operator sits on gs, beside gc for comment, because it IS an operator; the
+# \ leader is for the session actions and \x is this tool's menu there. `gss`
+# cannot be a map -- lvi's mapper has no timeout, so `gs` fires the instant it is
+# typed, the same reason vim's `gcc` is unreachable -- hence the distinct gS.
+#
+# WHICH PANE. `target` fuzzy-picks one and remembers it beside the socket, so it
+# is per-view and dies with the view -- a pane id outliving the pane would send
+# your buffer somewhere arbitrary. With no target set, a SOLE candidate is used
+# automatically (the two-pane layout everyone starts from needs no setup at all);
+# more than one and the send stops and says to pick, rather than guessing.
+# $LVI_SEND_TARGET pins one from the rc and skips all of that.
+#
+# WATCH, and why it is not just an rc line. `on write bg tmux send-keys -t %3
+# 'make test' Enter` is the whole feature -- except the pane id is different every
+# session, so the one thing the rc cannot hold is the only thing that changes.
+# What you actually want is per-session and ad hoc: this pane, this command,
+# starting now. So `watch` picks the pane, asks for the command (offering the
+# last one -- Enter takes it), and arms it; `unwatch` stops it. The command and
+# pane live in a file beside the socket and the registered hook is the constant
+# string `lvi-send hook`, so disarming is `:on! write lvi-send hook` -- an exact
+# string this script already knows, never a read-back of `:hooks`. It reads no
+# editor state to decide anything.
+#
+# EVENT is `write` (the default) or `change`. `change` fires when a keyboard edit
+# settles, which turns a fast checker into a live one -- but it fires on the way
+# through a broken edit too, so keep it for something quick and idempotent and
+# leave the test suite on `write`. If EVENT's first word could be your command's
+# (a command literally named `write`), separate them with `--`.
+#
+# WHAT GETS SENT. After a g@ motion or a `:L1,L2bg`, the span in
+# $LVI_LINE1/$LVI_LINE2; a charwise motion is trimmed to $LVI_COL1/$LVI_COL2, so
+# `gsi(` sends what is inside the parens. Otherwise the cursor line. The text is
+# the LIVE buffer, read over the socket -- unsaved edits included, which is the
+# point of sending a line rather than sourcing the file. -n omits the trailing
+# Enter, for composing a command across several sends.
+#
+# BACKENDS. The pane is reached through an adapter, `lvi-send-<name>`, picked by
+# $LVI_SEND_BACKEND (default `tmux`, the only one that ships). The contract is
+# three calls -- `--check`, `--list`, `[-n] TARGET` with the text on stdin -- so
+# kitty, wezterm, screen or Zellij is a short script, not a change here. See
+# lvi-send-tmux's header for the shape, and for $LVI_SEND_PASTE, which is where
+# the REPL-vs-shell paste question is settled.
+#
+# Config: LVI (client, default `lvi`), LVI_SEND_BACKEND (default tmux),
+# LVI_SEND_TARGET (pin a pane, skipping the picker and the stored target),
+# LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags), LVI_SEND_MAXBYTES
+# (refuse to send more than this, default 65536), LVI_SEND_DEBUG (1 traces to
+# stderr; :bg discards it, so trace by running the script directly).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+BACKEND=lvi-send-${LVI_SEND_BACKEND:-tmux}
+MAXBYTES=${LVI_SEND_MAXBYTES:-65536}
+HOOKCMD='lvi-send hook'          # the constant we register, and :on! back off
+
+dbg=${LVI_SEND_DEBUG:-}
+trace() { [ -n "$dbg" ] && echo "lvi-send: $*" >&2; return 0; }
+# Every failure goes BOTH ways, because no discipline this runs under shows
+# stderr: :bg and hooks discard it, `:silent !` repaints over it. stderr is for
+# when you run the script by hand; :msge is for when the editor did.
+die()   { echo "lvi-send: $*" >&2; send "msge lvi-send: $*"; exit 1; }
+
+want_wid=; [ "${1:-}" = "-w" ] && { want_wid=${2:-}; shift 2; }
+target_wid=${want_wid:-${LVI_WID:-auto}}
+case "${1:-}" in
+  ''|-*) sub=send ;;                       # a bare run, or one opening with -n
+  *)     sub=$1; shift ;;
+esac
+
+# Everything this script pushes is fire-and-forget, and --detach is the spelling
+# that works from BOTH disciplines: under :bg the loop is live and it lands at
+# once, under `:silent !` the loop is frozen and it queues until we exit. Only
+# the buffer READ below is synchronous, and only :bg can afford it.
+send() { "$LVI" -w "$target_wid" --detach -- "$@" >/dev/null 2>&1; }
+
+# A missing backend is an error, not an empty success (an unreachable pane must
+# not look like a delivered send). --check is the adapter's own liveness test.
+have_backend() {
+  command -v "$BACKEND" >/dev/null 2>&1 || return 127
+  "$BACKEND" --check >/dev/null 2>&1
+}
+
+# --- state, parked beside the socket -------------------------------------------
+# Per-view and self-cleaning: lvi sweeps the whole $LVI_SOCK.* namespace at exit
+# (path.reap_sidecars), so a stale pane id can't outlive the view that chose it.
+sockpath() {
+  if [ -n "$LVI_SOCK" ] && [ -z "$want_wid" ]; then printf '%s' "$LVI_SOCK"; return; fi
+  if [ "$target_wid" = auto ]; then
+    n=$("$LVI" -l 2>/dev/null | grep -c .)
+    [ "$n" = 1 ] || die "-w auto needs exactly one running view ($n found)"
+    "$LVI" -l | cut -f2
+  else
+    s=$("$LVI" -l 2>/dev/null | awk -F'\t' -v w="$target_wid" '$1==w{print $2; exit}')
+    [ -n "$s" ] || die "no running view '$target_wid'"
+    printf '%s' "$s"
+  fi
+}
+sock=$(sockpath) || exit 1
+tfile=$sock.send-target
+wfile=$sock.send-watch
+
+# --- the target pane -----------------------------------------------------------
+# Precedence: pinned in the rc, then the one you picked, then -- only if there is
+# exactly ONE candidate -- that one. The sole-candidate case is the whole reason
+# a fresh editor+shell layout needs no setup; anything more and we stop, because
+# a wrong guess types your buffer into a pane you were using for something else.
+resolve_target() {
+  [ -n "$LVI_SEND_TARGET" ] && { printf '%s' "$LVI_SEND_TARGET"; return 0; }
+  if [ -s "$tfile" ]; then head -n1 "$tfile"; return 0; fi
+  cands=$("$BACKEND" --list 2>/dev/null)
+  n=$(printf '%s\n' "$cands" | grep -c .)
+  [ "$n" = 0 ] && return 2
+  [ "$n" = 1 ] || return 1
+  printf '%s\n' "$cands" | cut -f1
+}
+
+# The status segment is rebuilt from the two files after every change, so it
+# always describes what is actually armed rather than what the last command
+# meant to arm. Empty text clears the segment (:status NAME with no TEXT).
+refresh_status() {
+  # Through resolve_target, not straight off the file: with a sole candidate
+  # nothing is ever recorded, and a `[?]` there would report "no idea" about a
+  # send that is in fact perfectly well aimed.
+  t=$(resolve_target 2>/dev/null) || t=
+  if [ -s "$wfile" ]; then
+    ev=$(sed -n 1p "$wfile"); c=$(sed -n 2p "$wfile")
+    # Truncate the command: the status line is one row shared with everyone else.
+    case "$c" in ???????????????????*) c=$(printf '%.16s...' "$c") ;; esac
+    send "status send [${t:-?} on $ev] $c"
+  elif [ -n "$t" ]; then
+    send "status send [$t] send"
+  else
+    send "status send"
+  fi
+}
+
+# --- the text to send ----------------------------------------------------------
+# The LIVE buffer over the socket, not the file: sending a line you have not
+# saved is the normal case. A g@/`:bg` range arrives in $LVI_LINE*, and a
+# CHARWISE motion additionally in $LVI_COL* -- trimmed here so `gsi(` sends what
+# is inside the parens rather than the whole lines it spans.
+buffer_span() {
+  l1=${LVI_LINE1:-${LVI_LINE:-}}
+  [ -n "$l1" ] || l1=$("$LVI" -w "$target_wid" -- pos | cut -f1)
+  [ -n "$l1" ] || die "no cursor line (run me from inside lvi, or pass -w)"
+  l2=${LVI_LINE2:-$l1}
+  trace "span $l1-$l2 kind=${LVI_KIND:-line}"
+  txt=$("$LVI" -w "$target_wid" -- "${l1},${l2}p") || die "could not read the buffer"
+  [ "${LVI_KIND:-line}" = char ] || { printf '%s' "$txt"; return 0; }
+  printf '%s' "$txt" | LC_ALL=C awk -v n=$((l2 - l1 + 1)) \
+    -v c1="${LVI_COL1:-1}" -v c2="${LVI_COL2:-0}" '
+    { s = $0
+      if (NR == 1) s = substr(s, c1)
+      if (NR == n && c2 > 0) s = substr(s, 1, (n == 1) ? c2 - c1 + 1 : c2)
+      print s }'
+}
+
+# One place every send funnels through, so the size cap, the missing-backend
+# error and the unresolved-target error are reported once and identically. The
+# errors go to :msge, not stderr: :bg and hooks discard stderr, so a bare echo
+# would fail silently -- exactly where a send needs to be loud.
+deliver() {
+  have_backend ||
+    { echo "lvi-send: ${LVI_SEND_BACKEND:-tmux} backend unavailable" >&2
+      send "msge lvi-send: ${LVI_SEND_BACKEND:-tmux} backend unavailable"
+      exit 127; }                            # 127: the shell's command-not-found
+  t=$(resolve_target); rc=$?
+  [ "$rc" = 2 ] && die "no other pane to send to"
+  [ "$rc" = 0 ] || die "several panes -- pick one with :silent !lvi-send target"
+  # wc pads its count on the BSDs; the number goes in a message, so trim it.
+  n=$(printf '%s' "$1" | wc -c | tr -d ' ')
+  [ "$n" -le "$MAXBYTES" ] || die "${n}B is over the ${MAXBYTES}B cap"
+  trace "-> $t ($n bytes)"
+  printf '%s\n' "$1" | "$BACKEND" ${noenter:+-n} "$t" 2>/dev/null ||
+    die "could not reach $t"
+}
+
+noenter=; case "${1:-}" in -n|--no-enter) noenter=1; shift ;; esac
+
+case "$sub" in
+send)
+  deliver "$(buffer_span)"
+  ;;
+
+run)
+  # No command given: re-run the armed one. That is the "run it again, now,
+  # without saving" key -- the same string `watch` would have sent on :w.
+  if [ $# -gt 0 ]; then cmd=$*
+  elif [ -s "$wfile" ]; then cmd=$(sed -n 2p "$wfile")
+  else cmd=
+  fi
+  [ -n "$cmd" ] || die "nothing to run: give a command, or arm one with 'lvi-send watch'"
+  deliver "$cmd"
+  ;;
+
+target)
+  have_backend || die "${LVI_SEND_BACKEND:-tmux} backend unavailable"
+  if [ $# -gt 0 ]; then
+    t=$1
+  else
+    # We hold the tty here (`:silent !`), which is what the picker needs and
+    # also what makes every socket call below a queued --detach.
+    [ -t 0 ] || die "the picker needs a terminal -- bind me with :silent !, not :bg"
+    rows=$("$BACKEND" --list 2>/dev/null)
+    [ -n "$rows" ] || die "no panes to send to"
+    t=$(printf '%s\n' "$rows" | $PICKER | cut -f1) || exit 0
+  fi
+  [ -n "$t" ] || exit 0
+  printf '%s\n' "$t" > "$tfile" || die "could not record the target"
+  refresh_status
+  send "msg lvi-send: sending to $t"
+  ;;
+
+watch)
+  have_backend || die "${LVI_SEND_BACKEND:-tmux} backend unavailable"
+  case "${1:-}" in
+    write|change) ev=$1; shift ;;
+    *) ev=write ;;
+  esac
+  # A bare `--` after the (optional) event shields a command whose own first
+  # word is an event name, so `watch -- write out.txt` runs `write out.txt`.
+  [ "${1:-}" = "--" ] && shift
+  if [ $# -gt 0 ]; then
+    cmd=$*
+  else
+    old=; [ -s "$wfile" ] && old=$(sed -n 2p "$wfile")
+    printf 'run on %s%s: ' "$ev" "${old:+ [$old]}" >&2
+    read -r cmd || exit 0
+    [ -n "$cmd" ] || cmd=$old              # bare Enter keeps what was armed
+  fi
+  [ -n "$cmd" ] || exit 0
+  # A target now, while we still have a tty to pick with -- rather than at the
+  # first :w, where a hook has no way to ask.
+  if [ -z "$LVI_SEND_TARGET" ] && [ ! -s "$tfile" ]; then
+    rows=$("$BACKEND" --list 2>/dev/null)
+    n=$(printf '%s\n' "$rows" | grep -c .)
+    if [ "$n" -gt 1 ]; then
+      [ -t 0 ] || die "several panes and no terminal to pick with -- run 'lvi-send target' under :silent ! first"
+      t=$(printf '%s\n' "$rows" | $PICKER | cut -f1)
+      [ -n "$t" ] || exit 0                # cancelled the pick: arm nothing
+      printf '%s\n' "$t" > "$tfile"
+    fi
+  fi
+  # Retract any hook armed on the OTHER event first: re-arming on `change` when
+  # `write` was already armed would otherwise leave both firing.
+  for e in write change; do
+    [ "$e" = "$ev" ] || send "on! $e $HOOKCMD"
+  done
+  printf '%s\n%s\n' "$ev" "$cmd" > "$wfile" || die "could not record the watch"
+  send "on $ev $HOOKCMD"                     # idempotent; re-arming never stacks
+  refresh_status
+  send "msg lvi-send: on $ev -> $cmd"
+  ;;
+
+unwatch)
+  for e in write change; do send "on! $e $HOOKCMD"; done
+  rm -f "$wfile"
+  refresh_status
+  send "msg lvi-send: watch off"
+  ;;
+
+hook)
+  # The hook body. No watch file -> nothing armed, exit quietly: `unwatch` drops
+  # the file AND retracts the hook, but a hook already spawned for the write in
+  # flight still has to land somewhere harmless.
+  [ -s "$wfile" ] || exit 0
+  cmd=$(sed -n 2p "$wfile")
+  [ -n "$cmd" ] || exit 0
+  deliver "$cmd"
+  ;;
+
+*)
+  echo "usage: lvi-send [-w auto|WID] send|run|target|watch|unwatch [ARGS]" >&2
+  exit 2 ;;
+esac

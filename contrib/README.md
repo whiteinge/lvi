@@ -82,7 +82,11 @@ socket-driven edits and scrolls never re-fire them, and cross-view features can'
 ring. The flip side of that gate: if your tool *edits* the buffer over the
 socket, `change` consumers (live highlighting) won't hear about it until the
 user's next keystroke — send `:fire` after your edits to arm them explicitly
-(it rides the same idle debounce a keystroke does). `lvi-diff` is how far the
+(it rides the same idle debounce a keystroke does). Adding a hook composes, so
+removing one is per-item too: `:on! EVENT CMD` retracts the hook whose command is
+exactly CMD and leaves the event's others in place. That is what lets a tool arm
+a hook for a session and take it back down without clearing the event out from
+under everyone else on it (`lvi-send`'s on-write runner). `lvi-diff` is how far the
 hook model reaches: diff highlighting, hunk-aware scrollbind, and staging are
 *all* just these hooks plus one-shots — no polling, no daemon; the session
 lives as hooks and maps inside the two views and ends when a pane closes.
@@ -1000,6 +1004,53 @@ be a map: lvi's mapper has no timeout, so `gc` fires the moment it's typed and a
 `gcc` map is unreachable — for the current line use `gc@` (the `@` is `g@`'s
 doubled key) or the distinct `gC`. Commenting is line-wise, so a charwise motion
 still toggles the whole lines it touches.
+
+### `lvi-send` — run this line in the pane next door
+
+Buffer text into another terminal pane, and a command re-run there on every
+write. Both are the same act: putting a string into the pane you are not typing
+in. lvi has no splits and no terminal emulator, so the pane is a real one owned
+by your multiplexer and this drives it from outside.
+
+`gs` is the operator, next to `gc` for comment. `gsip` sends a paragraph, `gsG`
+to the end of the file, and a charwise motion is trimmed to its columns, so
+`gsi(` sends what is inside the parens rather than the lines around it. `gS` is
+the current line, and a typed range needs no map at all (`:15,40bg lvi-send`).
+The text is the live buffer, so a line you have not saved still runs.
+
+```
+map gs :set opfunc=lvi-send<CR>g@
+map gS :bg lvi-send<CR>
+```
+
+The pane is picked once and remembered beside the socket, which keeps it
+per-view. A pane id outliving its pane would send your buffer somewhere
+arbitrary. Usually there is nothing to pick. With one other pane in the session
+that pane *is* the target; with several, a send stops and says to pick one
+instead of guessing.
+
+`lvi-send watch` is the other half. It asks for a command and runs it in that
+pane on every `:w`: a test suite on save, with no file watcher and no daemon,
+since the editor already knows when you saved. `on write bg tmux send-keys -t
+%3 'make test' Enter` is the whole feature, so why isn't it an rc line? The pane
+id is different every session, which is the one thing an rc cannot hold. What
+you want is per-session and ad hoc: this pane, this command, starting now.
+`\xx` re-runs it without saving, `\xq` stops.
+
+Disarming is the part that needed a core change. `:on EVENT` with no command
+clears *every* hook on that event, so retracting one would take your linter's
+`on write` down with it; `:on!` (above) removes just the one. lvi-send registers
+the constant string `lvi-send hook` and keeps the pane and command in a file
+beside the socket, so it retracts a string it already knows rather than reading
+`:hooks` back to find it.
+
+The pane itself is reached through an adapter, `lvi-send-<name>`, the same shape
+as `lvi-hl-<name>` and `lvi-lint-<name>`. tmux is the one that ships. The
+contract is three calls — `--check`, `--list`, and `TARGET` with the text on
+stdin — so kitty, wezterm or screen is a short script rather than a change here.
+`lvi-send-tmux`'s header covers the fiddly part: a multi-line block pasted into a
+REPL needs bracketed paste, or a Python prompt auto-indents each line as it
+arrives and your indentation comes out doubled.
 
 ### `lvi-ftype` — per-filetype options
 

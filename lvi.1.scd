@@ -1446,6 +1446,23 @@ below, with the happy-path rc lines that turn it on:
 	on bufenter lvi-ftype
 	```
 
+*lvi-send* -- run this line in the pane next door
+	Put buffer text into another terminal pane, and re-run a command there on
+	every write. *gs* is the operator (*gsip* sends a paragraph, *gsG* to the end
+	of the file; a charwise motion is trimmed to its columns, so *gsi(* sends what
+	is inside the parens), *gS* the current line, and a typed range needs no map:
+	*:15,40bg lvi-send*. The text is the live buffer, so an unsaved line still
+	runs. *lvi-send watch* asks for a command and runs it in that pane on every
+	*w*, which is a test suite on save with no file watcher; it arms *on write
+	lvi-send hook* and takes it back down with *on!* (see *on*), leaving the other
+	hooks on the event alone. With one other pane in the session, that pane is the
+	target and there is nothing to configure. tmux is the backend that ships.
+
+	```
+	map gs :set opfunc=lvi-send<CR>g@
+	map \\xw :silent !lvi-send watch<CR>
+	```
+
 The lines above are the happy path. *contrib/lvirc.sample.vim* has the full annotated
 set -- every binding, theme, and variant -- and each tool's *-h* (or
 *contrib/README.md*) explains what it does and how it works.

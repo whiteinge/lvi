@@ -401,6 +401,212 @@ describe("contrib", function()
       cleanup(d)
     end)
 
+    -- lvi-send talks to TWO stubs: test/stub-lvi for the socket half, and a
+    -- throwaway backend for the pane half (the contract is three calls, so a
+    -- fake one is six lines). The backend logs `TARGET<TAB>text` per send, which
+    -- is the whole assertion target -- no tmux, no panes.
+    local function sendstub(dir, panes)
+      os.execute("mkdir -p '" .. dir .. "/bin'")
+      write(dir .. "/panes", panes or "%1\tone zsh\n")
+      write(dir .. "/bin/lvi-send-fake", ([[
+#!/bin/sh
+case $1 in
+  --check) exit 0 ;;
+  --list)  cat '%s/panes'; exit 0 ;;
+esac
+[ "$1" = -n ] && { shift; printf 'NOENTER\n' >> '%s/sent'; }
+printf '%%s\t' "$1" >> '%s/sent'
+cat >> '%s/sent'
+]]):format(dir, dir, dir, dir))
+      os.execute("chmod +x '" .. dir .. "/bin/lvi-send-fake'")
+    end
+    -- The env every lvi-send case shares: both stubs wired, backend named.
+    local function sendenv(d, extra)
+      local e = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+                  LVI_SEND_BACKEND = "fake", PATH = d .. "/bin" }
+      for k, v in pairs(extra or {}) do e[k] = v end
+      return e
+    end
+
+    it("lvi-send sends the :bg range, resolving a sole pane with no setup", function()
+      local d = stub({ buffer = "one\ntwo\nthree\nfour\n" })
+      sendstub(d)
+      run(sendenv(d, { LVI_LINE1 = "2", LVI_LINE2 = "3" }), "contrib/lvi-send")
+      expect(read(d .. "/sent")).to.equal("%1\ttwo\nthree\n")
+      expect(read(d .. "/log"):find("2,3p", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send falls back to the cursor line with no range", function()
+      local d = stub({ buffer = "one\ntwo\nthree\n" })
+      sendstub(d)
+      run(sendenv(d, { LVI_LINE = "3" }), "contrib/lvi-send send")
+      expect(read(d .. "/sent")).to.equal("%1\tthree\n")
+      cleanup(d)
+    end)
+
+    -- A charwise g@ motion must reach INTO the lines, or `\si(` would send the
+    -- whole line the parens sit on.
+    it("lvi-send trims a charwise span to its byte columns", function()
+      local d = stub({ buffer = "call(alpha,\n  beta) tail\n" })
+      sendstub(d)
+      run(sendenv(d, { LVI_LINE1 = "1", LVI_LINE2 = "2", LVI_KIND = "char",
+                       LVI_COL1 = "6", LVI_COL2 = "6" }), "contrib/lvi-send")
+      expect(read(d .. "/sent")).to.equal("%1\talpha,\n  beta\n")
+      cleanup(d)
+    end)
+
+    it("lvi-send trims a charwise span inside one line", function()
+      local d = stub({ buffer = "call(alpha) tail\n" })
+      sendstub(d)
+      run(sendenv(d, { LVI_LINE1 = "1", LVI_LINE2 = "1", LVI_KIND = "char",
+                       LVI_COL1 = "6", LVI_COL2 = "10" }), "contrib/lvi-send")
+      expect(read(d .. "/sent")).to.equal("%1\talpha\n")
+      cleanup(d)
+    end)
+
+    it("lvi-send -n passes the no-Enter flag through to the backend", function()
+      local d = stub({ buffer = "x\n" })
+      sendstub(d)
+      run(sendenv(d, { LVI_LINE = "1" }), "contrib/lvi-send -n")
+      expect(read(d .. "/sent"):find("NOENTER", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send stops rather than guess when several panes could be meant", function()
+      local d = stub({ buffer = "x\n" })
+      sendstub(d, "%1\tone zsh\n%2\ttwo zsh\n")
+      run(sendenv(d, { LVI_LINE = "1" }), "contrib/lvi-send")
+      expect(exists(d .. "/sent")).to_not.be.truthy()
+      expect(read(d .. "/log"):find("msge lvi%-send: several panes")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send target records the pane and shows it in the status line", function()
+      local d = stub({})
+      sendstub(d, "%1\tone zsh\n%2\ttwo zsh\n")
+      run(sendenv(d), "contrib/lvi-send target %2")
+      expect(read(d .. "/sock.send-target")).to.equal("%2\n")
+      expect(read(d .. "/log"):find("status send [%2] send", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send send prefers the recorded pane over the pane list", function()
+      local d = stub({ buffer = "x\n" })
+      sendstub(d, "%1\tone zsh\n%2\ttwo zsh\n")
+      write(d .. "/sock.send-target", "%2\n")
+      run(sendenv(d, { LVI_LINE = "1" }), "contrib/lvi-send")
+      expect(read(d .. "/sent")).to.equal("%2\tx\n")
+      cleanup(d)
+    end)
+
+    it("lvi-send watch arms the constant hook and records event and command", function()
+      local d = stub({})
+      sendstub(d)
+      run(sendenv(d), "contrib/lvi-send watch write make test")
+      expect(read(d .. "/sock.send-watch")).to.equal("write\nmake test\n")
+      local log = read(d .. "/log")
+      expect(log:find("on write lvi%-send hook")).to.exist()
+      expect(log:find("on! change lvi%-send hook")).to.exist()  -- the other event, retracted
+      expect(log:find("status send [%1 on write] make test", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    -- Re-arming on the other event must not leave both firing.
+    it("lvi-send watch change retracts a write hook it replaces", function()
+      local d = stub({})
+      sendstub(d)
+      write(d .. "/sock.send-watch", "write\nmake test\n")
+      run(sendenv(d), "contrib/lvi-send watch change make -s check")
+      expect(read(d .. "/sock.send-watch")).to.equal("change\nmake -s check\n")
+      local log = read(d .. "/log")
+      expect(log:find("on! write lvi%-send hook")).to.exist()
+      expect(log:find("on change lvi%-send hook")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send watch -- takes a command whose first word is an event name", function()
+      local d = stub({})
+      sendstub(d)
+      run(sendenv(d), "contrib/lvi-send watch -- write the-file")
+      expect(read(d .. "/sock.send-watch")).to.equal("write\nwrite the-file\n")
+      cleanup(d)
+    end)
+
+    it("lvi-send hook sends the armed command", function()
+      local d = stub({})
+      sendstub(d)
+      write(d .. "/sock.send-watch", "write\nmake test\n")
+      run(sendenv(d), "contrib/lvi-send hook")
+      expect(read(d .. "/sent")).to.equal("%1\tmake test\n")
+      cleanup(d)
+    end)
+
+    -- The hook stays registered for the write already in flight when you
+    -- disarm, so it has to land somewhere harmless.
+    it("lvi-send hook is silent with nothing armed", function()
+      local d = stub({})
+      sendstub(d)
+      run(sendenv(d), "contrib/lvi-send hook")
+      expect(exists(d .. "/sent")).to_not.be.truthy()
+      expect(read(d .. "/log")).to.equal("")
+      cleanup(d)
+    end)
+
+    it("lvi-send unwatch retracts both hooks and drops the state", function()
+      local d = stub({})
+      sendstub(d)
+      write(d .. "/sock.send-watch", "write\nmake test\n")
+      run(sendenv(d), "contrib/lvi-send unwatch")
+      expect(exists(d .. "/sock.send-watch")).to_not.be.truthy()
+      local log = read(d .. "/log")
+      expect(log:find("on! write lvi%-send hook")).to.exist()
+      expect(log:find("on! change lvi%-send hook")).to.exist()
+      -- The pane survives the disarm, so the segment reports it without an event.
+      expect(log:find("status send [%1] send", 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send run with no command re-runs the armed one", function()
+      local d = stub({})
+      sendstub(d)
+      write(d .. "/sock.send-watch", "write\nmake test\n")
+      run(sendenv(d), "contrib/lvi-send run")
+      expect(read(d .. "/sent")).to.equal("%1\tmake test\n")
+      cleanup(d)
+    end)
+
+    it("lvi-send run sends a literal command", function()
+      local d = stub({})
+      sendstub(d)
+      run(sendenv(d), "contrib/lvi-send run pytest -x")
+      expect(read(d .. "/sent")).to.equal("%1\tpytest -x\n")
+      cleanup(d)
+    end)
+
+    -- Over the cap the error has to reach the STATUS LINE: :bg and hooks discard
+    -- stderr, so an echo would be a silent non-send.
+    it("lvi-send refuses an over-cap span, loudly", function()
+      local d = stub({ buffer = ("y\n"):rep(200) })
+      sendstub(d)
+      run(sendenv(d, { LVI_LINE1 = "1", LVI_LINE2 = "200", LVI_SEND_MAXBYTES = "64" }),
+        "contrib/lvi-send")
+      expect(exists(d .. "/sent")).to_not.be.truthy()
+      expect(read(d .. "/log"):find("msge lvi%-send: %d+B is over the 64B cap")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-send reports a missing backend instead of a quiet non-send", function()
+      local d = stub({ buffer = "x\n" })
+      sendstub(d)
+      local _, ok = run(sendenv(d, { LVI_LINE = "1", LVI_SEND_BACKEND = "nope" }),
+        "contrib/lvi-send")
+      expect(ok).to_not.be.truthy()
+      expect(exists(d .. "/sent")).to_not.be.truthy()
+      expect(read(d .. "/log"):find("msge lvi%-send: nope backend unavailable")).to.exist()
+      cleanup(d)
+    end)
+
     -- lvi-search --motion is a `:motion` filter, so it is a pure one: argv in, one
     -- line out. Same tier as lvi-reflow, no editor and no socket involved.
     local function msearch(dir, args, count, line, col, arg)

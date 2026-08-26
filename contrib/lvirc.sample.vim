@@ -31,6 +31,7 @@
 "                     \ho column-limit marks (lvi-hl-col)
 "       \y  yankring  \yy pick      \yp older  \yn newer
 "       \i  invis     \ii toggle    \ip page (exact bytes in less)
+"       \x  execute   \xx run again  \xp pick pane  \xw watch  \xq unwatch
 "       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
 "
 " Motions/operators that mirror a vim key stay OFF the leader and on that key: /
@@ -547,6 +548,42 @@ map gc :set opfunc=lvi-comment<CR>g@           " gcip toggles a paragraph, gcj 2
 map gC :set opfunc=lvi-comment<CR>g@@          " gC toggles the current line
 " (No map timeout in lvi: `gc` fires the instant it's typed, so a vim-style `gcc`
 " map is unreachable -- gC above, or `gc@`, comments the current line instead.)
+
+" }}}
+" ---- send to a pane / run on write (lvi-send) --------------------------- {{{
+
+" lvi-send puts buffer text into another terminal pane, and re-runs a command
+" there whenever you save. tmux is the backend that ships (lvi-send-tmux); the
+" contract is three calls, so kitty or wezterm is a short script.
+"
+" The operator sits on gs, beside gc for comment, because it IS an operator and
+" the leader is for the session actions. gsip sends a paragraph, gsG to the end
+" of the file; a charwise motion is trimmed to its columns, so gsi( sends what
+" is inside the parens rather than the lines around it. gS is the current line
+" (gss can't be a map -- no timeout, same reason gcc can't; see the g@ note
+" above). The text is the LIVE buffer, so an unsaved line still runs.
+map gs :set operatorfunc=lvi-send<CR>g@
+map gS :bg lvi-send<CR>
+" A typed range needs no map at all:  :15,40bg lvi-send
+
+" With one other pane in the session, that pane IS the target and none of this
+" is needed. \xp is for when there are several.
+map \xp :silent !lvi-send target<CR>   " pick the pane (fuzzy)
+
+" \xw asks for a command and runs it in that pane on every :w -- the test suite
+" on save, with no file watcher and no daemon. \xx re-runs it right now without
+" saving; \xq stops. It arms `on write lvi-send hook` and disarms with `on!`,
+" which retracts that one hook and leaves your linter's alone.
+map \xw :silent !lvi-send watch<CR>    " arm it on :w (the usual one)
+map \xx :bg lvi-send run<CR>           " run it again, now
+map \xq :bg lvi-send unwatch<CR>       " stop
+" map \xc :silent !lvi-send watch change<CR>   " ...on every settled edit instead
+
+" Sending a multi-line block to a REPL rather than a shell? A Python prompt
+" auto-indents what you TYPE, so an indented block arrives mangled. Bracketed
+" paste tells the receiver it is a paste, not typing -- export it in the shell
+" that launches lvi (the rc runs ex commands, and lvi has no `setenv`):
+"     export LVI_SEND_PASTE=bracket
 
 " }}}
 " ---- diff (lvi-diff / lvi-stagediff) ----------------------------------- {{{

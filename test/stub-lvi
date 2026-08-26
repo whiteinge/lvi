@@ -5,7 +5,8 @@
 # no socket. Every script funnels its socket traffic through "$LVI", so
 # pointing LVI here is the only seam needed.
 #
-#   $STUB_DIR/buffer   payload served for `%p` (provide it if the script reads)
+#   $STUB_DIR/buffer   payload served for `%p`, and sliced for a ranged `N,Mp`
+#                      (provide it if the script reads)
 #   $STUB_DIR/buffer.WID  per-view `%p` payload, when a test needs two views
 #                      that DIVERGE (lvi-mirror); falls back to `buffer`
 #   $STUB_DIR/path     payload served for `path` (missing = pathless -> empty,
@@ -26,6 +27,12 @@ for c in "$@"; do
   case $c in
     %p)   if [ -n "$wid" ] && [ -f "$dir/buffer.$wid" ]; then cat "$dir/buffer.$wid"
           else cat "$dir/buffer"; fi ;;
+    # A ranged print (`5p`, `2,7p`) -- what a tool reading one span rather than
+    # the whole buffer sends (lvi-comment, lvi-send).
+    [0-9]*p)
+          r=${c%p}
+          case $r in *,*) l1=${r%%,*}; l2=${r##*,} ;; *) l1=$r; l2=$r ;; esac
+          sed -n "${l1},${l2}p" "$dir/buffer" 2>/dev/null ;;
     path) cat "$dir/path" 2>/dev/null ;;
     pos)  if [ -f "$dir/pos" ]; then cat "$dir/pos"; else printf '1\t1\n'; fi ;;
     'set modified?') cat "$dir/modified" 2>/dev/null ;;
