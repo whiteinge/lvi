@@ -979,7 +979,7 @@ text (see *contrib/lvi-tags*) -- the terminal verbs block lvi, so the tool
 cannot ask for the buffer back. Snapshot it to a file first, then let the
 blocked tool read the file:
 
-	map \t :wbuf<CR>:silent !lvi-tags<CR>
+	map \\t :wbuf<CR>:silent !lvi-tags<CR>
 
 *wbuf* writes the live buffer (unsaved edits and all) to *$LVI_BUFFER*, a
 scratch path in the tool's environment.
