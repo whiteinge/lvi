@@ -427,7 +427,7 @@ argument is taken verbatim, no expansion (*:e -- foo $bar.txt* opens exactly
 that file). Without it the script must backslash-escape every metacharacter,
 spaces and tabs included.
 
-*w*[*!*] [_file_], *wq*, *x*
+\[_range_]*w*[*!*] [[*>>*]_file_ | *!*_cmd_], *wq*, *x*
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
 	untouched). *ZZ* is *x*. If the file on disk changed since lvi last read or
@@ -435,6 +435,26 @@ spaces and tabs included.
 	write the full new text sits in a sibling _file.lvi~_ safety copy, removed
 	when the write completes -- a surviving _.lvi~_ means the write was cut
 	short and holds the intended contents.
+
+	*>>* appends to _file_ rather than replacing it, and *!*_cmd_ pipes the lines
+	to _cmd_'s standard input rather than to a file. _range_ defaults to the whole
+	buffer. A blank separates the two bangs: *w!*_file_ is a forced write,
+	*w !*_cmd_ is a pipe. On a terminal _cmd_ owns the screen while it runs, so it
+	can prompt. That is how you write a file you forgot to open as root:
+
+		:w !sudo tee -- "$LVI_FILE" > /dev/null
+
+	Then *e!* to re-read it, since a pipe does not tell lvi what it wrote.
+
+	Only writing the whole buffer to a file saves the buffer *as* that file: it
+	takes the name and clears the modified flag, and it alone gets the _.lvi~_
+	copy. A partial range, an append, and a pipe write bytes elsewhere, so they
+	leave the buffer's name and modified flag untouched.
+
+	Two deviations. *w* _file_ renames the buffer to _file_ (vim's *saveas*),
+	where POSIX leaves the current pathname alone; use *f* _file_ to rename
+	without writing. And *wq*/*x* take neither *>>* nor *!*_cmd_: an append leaves
+	the buffer modified, so *wq >>* would quit and discard your changes.
 
 *wa*[*!*], *xa*[*!*]
 	Write every modified buffer to its own path (*wa*, alias *wall*), or write
@@ -537,8 +557,9 @@ spaces and tabs included.
 	shell-out, *sh* freezes the event loop while it runs, so a synchronous
 	*lvi -w* would sit waiting on an editor that answers only after you exit.
 	_contrib/lvi-shell.sh_ wraps that pattern in ready-made functions
-	(*lvi-saveas*, and friends) and tags the shell prompt -- *(lvi foo.txt)* --
-	so the parked editor is never forgotten.
+	(*lvi-saveas*, *lvi-mv*, *lvi-rm*, and friends; *lvi-help* lists them), tags
+	the shell prompt -- *(lvi foo.txt)* -- and says on the way in that the editor
+	is parked, so it is never forgotten.
 
 \[_range_]*bg* _cmd_
 	Run a shell _cmd_ detached, output discarded, WITHOUT handing over the
@@ -830,11 +851,22 @@ spaces and tabs included.
 	segments render in _name_ order. Generic -- an external tool drives it (a
 	list's *[3/57]* counter, a git branch), the way *hl* drives highlights.
 
-*f*, *pos* [_line_ [_col_ [_unit_]]] [*jump*], *echo* _text_, *silent* _cmd_
-	Show the file name and line count; with no argument report the cursor as
-	_line_<TAB>_col_, or with arguments move it there (clamped into the buffer,
-	and by default leaving no jumplist entry, unlike a motion); echo _text_; run
-	_cmd_ suppressing its interactive prompt.
+*f* [_file_], *file*
+	Show the file name and line count; with a _file_ argument, set the buffer's
+	pathname to it first (POSIX *file*). Renaming this way writes nothing and does
+	not mark the buffer modified. Use it when the file has moved under you: *mv*
+	it from a shell, then point the buffer at the new name. Without that the
+	buffer still holds the old path, and the next bare *w* silently recreates the
+	file there.
+
+	POSIX also parks the old name in the alternate pathname. lvi has no such slot
+	(*#* names the alternate buffer, an index into the one buffer list), so the
+	old name is dropped.
+
+*pos* [_line_ [_col_ [_unit_]]] [*jump*], *echo* _text_, *silent* _cmd_
+	With no argument report the cursor as _line_<TAB>_col_, or with arguments move
+	it there (clamped into the buffer, and by default leaving no jumplist entry,
+	unlike a motion); echo _text_; run _cmd_ suppressing its interactive prompt.
 
 	A trailing *jump* makes the move jump-class: it records where you left, so
 	*Ctrl-O* and *``* come back. Silence is right for a restore -- putting the
@@ -1245,8 +1277,9 @@ below, with the happy-path rc lines that turn it on:
 
 *lvi-shell.sh* -- drive lvi from your shell
 	Shell functions (*lvi-saveas*, *lvi-e*, *lvi-r*) that drive the running view
-	from *sh* or any terminal, with your shell's own path completion. Source it
-	from your shell's rc, not lvi's:
+	from *sh* or any terminal, with your shell's own path completion, plus
+	*lvi-mv*, *lvi-rm* and *lvi-sudow* for acting on the file itself. *lvi-help*
+	prints the set. Source it from your shell's rc, not lvi's:
 
 	```
 	. lvi-shell.sh

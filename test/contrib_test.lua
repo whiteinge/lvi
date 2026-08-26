@@ -1344,6 +1344,219 @@ describe("contrib", function()
         cleanup(d)
       end)
     end)
+
+    -- lvi-shell.sh is sourced, not run, so these drive its functions from a
+    -- shell whose $LVI is the stub. LVI_WID set is the shell-out case (queued,
+    -- and $LVI_FILE is the only source for the current file); unset is the
+    -- live case, where the file comes back over the socket.
+    describe("lvi-shell.sh", function()
+      -- The file declares itself zsh/bash/mksh, not POSIX sh: `lvi-mv` is not a
+      -- name dash will even parse. So these run under bash, unlike every other
+      -- test here. -i for the two that need $- to say interactive, since that
+      -- is what gates the prompt tag and the banner.
+      local function bash(env, cmd, interactive)
+        return run(env, ("bash --norc %s-c '. contrib/lvi-shell.sh; %s'")
+                        :format(interactive and "-i " or "", cmd))
+      end
+
+      it("lvi-mv moves the file and repoints the buffer with :f", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/old.txt", "x\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/old.txt" }
+        local _, ok = bash(env, "lvi-mv " .. dir .. "/new.txt")
+        expect(ok).to.be.truthy()
+        expect(exists(dir .. "/new.txt")).to.be(true)
+        expect(exists(dir .. "/old.txt")).to.be(false)
+        -- :f, not :w -- renaming must not decide to save the buffer.
+        expect(read(d .. "/log")).to.equal("f -- " .. dir .. "/new.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("lvi-mv into a directory keeps the basename", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/doc.txt", "x\n")
+        os.execute("mkdir -p '" .. dir .. "/arch'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/doc.txt" }
+        bash(env, "lvi-mv " .. dir .. "/arch")
+        expect(exists(dir .. "/arch/doc.txt")).to.be(true)
+        expect(read(d .. "/log")).to.equal("f -- " .. dir .. "/arch/doc.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("lvi-rm deletes the file and always forces the buffer away", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/gone.txt", "x\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/gone.txt" }
+        bash(env, "lvi-rm")
+        expect(exists(dir .. "/gone.txt")).to.be(false)
+        expect(read(d .. "/log")).to.equal("bd!\n")   -- never bare bd
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("a failed rm sends nothing", function()
+        local d = stub({})
+        local dir = tmpdir()
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = dir .. "/never-existed" }
+        local _, ok = bash(env, "lvi-rm")
+        expect(ok).to_not.be.truthy()
+        expect(read(d .. "/log")).to.equal("")
+        cleanup(d); cleanup(dir)
+      end)
+
+      -- Under a shell-out lvi is frozen, so asking it for the path would block
+      -- on an editor that is blocked on us. $LVI_FILE is the only source there.
+      it("a pathless buffer under a shell-out errors without asking lvi", function()
+        local d = stub({ path = "" })
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "" }
+        local out, ok = bash(env, "lvi-mv /tmp/x.txt")
+        expect(ok).to_not.be.truthy()
+        expect(out:find("no file name", 1, true)).to.exist()
+        expect(read(d .. "/log")).to.equal("")
+        cleanup(d)
+      end)
+
+      it("outside a shell-out the current file comes from :path", function()
+        local d = stub({})
+        local dir = tmpdir()
+        write(dir .. "/live.txt", "x\n")
+        write(d .. "/path", dir .. "/live.txt\n")
+        write(d .. "/list", "w1\t/sock\t" .. dir .. "/live.txt\n")
+        local env = { LVI = STUB, STUB_DIR = d }        -- no LVI_WID: live
+        bash(env, "lvi-mv " .. dir .. "/moved.txt")
+        expect(exists(dir .. "/moved.txt")).to.be(true)
+        expect(read(d .. "/log")).to.equal("path\nf -- " .. dir .. "/moved.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      -- sudo itself is stubbed on PATH: what is under test is the pair of
+      -- commands queued, and that the password is asked for HERE (sudo -v)
+      -- rather than on the editor's screen after the exit.
+      it("lvi-sudow primes sudo, then queues the pipe write and a re-read", function()
+        local d = stub({})
+        local bin = tmpdir()
+        write(bin .. "/sudo", "#!/bin/sh\necho \"sudo $*\" >> " .. d .. "/sudo.log\n")
+        os.execute("chmod +x '" .. bin .. "/sudo'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "/etc/hosts", PATH = bin }
+        local _, ok = bash(env, "lvi-sudow")
+        expect(ok).to.be.truthy()
+        expect(read(d .. "/sudo.log")).to.equal("sudo -v\n")
+        -- ONE command: the reload is chained behind the write inside the
+        -- editor's shell, so a failed write cannot reach :e! and discard the
+        -- unsaved edits it was meant to save.
+        expect(read(d .. "/log")).to.equal(
+          'w !sudo tee -- "$LVI_FILE" > /dev/null && "${LVI:-lvi}" -w "$LVI_WID" -d -- e! < /dev/null\n')
+        cleanup(d); cleanup(bin)
+      end)
+
+      it("lvi-sudow sends nothing when sudo is refused", function()
+        local d = stub({})
+        local bin = tmpdir()
+        write(bin .. "/sudo", "#!/bin/sh\nexit 1\n")
+        os.execute("chmod +x '" .. bin .. "/sudo'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "/etc/hosts", PATH = bin }
+        local _, ok = bash(env, "lvi-sudow")
+        expect(ok).to_not.be.truthy()
+        expect(read(d .. "/log")).to.equal("")
+        cleanup(d); cleanup(bin)
+      end)
+
+      -- The bug this closes: $LVI_FILE is the path AS OPENED, so `lvi doc.txt`
+      -- puts a RELATIVE name in the environment. Resolved against a shell that
+      -- has cd'd, that names a different file -- and lvi-rm deleted it.
+      it("resolves a relative $LVI_FILE against lvi's cwd, not the shell's", function()
+        local d = stub({})
+        local dir = tmpdir()
+        os.execute("mkdir -p '" .. dir .. "/sub'")
+        write(dir .. "/doc.txt", "the editor's file\n")
+        write(dir .. "/sub/doc.txt", "an innocent bystander\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "doc.txt", LVI_CWD = dir }
+        bash(env, "cd " .. dir .. "/sub && lvi-rm")
+        expect(exists(dir .. "/doc.txt")).to.be(false)        -- the right one
+        expect(exists(dir .. "/sub/doc.txt")).to.be(true)     -- the bystander
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("lvi-mv takes its destination from the shell's cwd", function()
+        local d = stub({})
+        local dir = tmpdir()
+        os.execute("mkdir -p '" .. dir .. "/sub'")
+        write(dir .. "/doc.txt", "x\n")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "doc.txt", LVI_CWD = dir }
+        -- source resolved against lvi's cwd, destination against this shell's
+        bash(env, "cd " .. dir .. "/sub && lvi-mv moved.txt")
+        expect(exists(dir .. "/sub/moved.txt")).to.be(true)
+        expect(read(d .. "/log")).to.equal("f -- " .. dir .. "/sub/moved.txt\n")
+        cleanup(d); cleanup(dir)
+      end)
+
+      it("captures lvi's cwd at source time, before any cd", function()
+        local dir = tmpdir()
+        local out = bash({ LVI = STUB, LVI_WID = "w1" },
+                         "cd " .. dir .. " && printf %s \"$LVI_CWD\"")
+        expect(out).to_not.equal(dir)                        -- not where we cd'd
+        expect(out:find("lvi", 1, true)).to.exist()          -- the repo we sourced from
+        cleanup(dir)
+      end)
+
+      -- Outside a shell-out there is no LVI_CWD, so a relative path from :path
+      -- cannot be resolved. Guessing is what deleted the wrong file, so refuse.
+      it("refuses a relative path when lvi's cwd is unknowable", function()
+        local d = stub({ path = "doc.txt\n" })
+        local env = { LVI = STUB, STUB_DIR = d }             -- no LVI_WID, no LVI_CWD
+        local out, ok = bash(env, "lvi-rm")
+        expect(ok).to_not.be.truthy()
+        expect(out:find("relative path", 1, true)).to.exist()
+        expect(read(d .. "/log")).to.equal("path\n")         -- asked, then stopped
+        cleanup(d)
+      end)
+
+      -- lvi-sudow is exempt: its command leaves "$LVI_FILE" for the editor's
+      -- own shell to expand, in the editor's cwd, so relative is already right.
+      it("lvi-sudow works with a relative path outside a shell-out", function()
+        local d = stub({ path = "doc.txt\n" })
+        local bin = tmpdir()
+        write(bin .. "/sudo", "#!/bin/sh\nexit 0\n")
+        os.execute("chmod +x '" .. bin .. "/sudo'")
+        local env = { LVI = STUB, STUB_DIR = d, PATH = bin }   -- no LVI_WID
+        local _, ok = bash(env, "lvi-sudow")
+        expect(ok).to.be.truthy()
+        expect(read(d .. "/log")).to.equal(
+          'path\nw !sudo tee -- "$LVI_FILE" > /dev/null && "${LVI:-lvi}" -w "$LVI_WID" -d -- e! < /dev/null\n')
+        cleanup(d); cleanup(bin)
+      end)
+
+      it("lvi-help lists every command it ships", function()
+        local out = bash({ LVI = STUB }, "lvi-help")
+        for _, fn in ipairs({ "lvi-e", "lvi-r", "lvi-saveas", "lvi-mv",
+                              "lvi-rm", "lvi-sudow", "lvi-help" }) do
+          expect(out:find(fn, 1, true)).to.exist()
+        end
+      end)
+
+      -- The banner is the one thing that says what the prompt tag cannot, so
+      -- it fires exactly under a shell-out, and only when not silenced.
+      it("the banner fires under a shell-out and LVI_SHELL_BANNER silences it", function()
+        local marker = "lvi is stopped"
+        local out = bash({ LVI = STUB, LVI_WID = "w1" }, ":", true)
+        expect(out:find(marker, 1, true)).to.exist()
+        local off = bash({ LVI = STUB, LVI_WID = "w1", LVI_SHELL_BANNER = "" },
+                         ":", true)
+        expect(off:find(marker, 1, true)).to_not.exist()
+        local outside = bash({ LVI = STUB }, ":", true)
+        expect(outside:find(marker, 1, true)).to_not.exist()
+      end)
+    end)
   end)
 end)
 

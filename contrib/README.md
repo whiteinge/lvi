@@ -600,6 +600,20 @@ and allows you to use already-familiar shell tools, shortcuts, and path
 traversal. Note: the editor is frozen while you're in the shell, so the
 command lands after you exit.
 
+Three more commands act on the file itself rather than on a path argument.
+`lvi-mv DST` moves or renames the file and the buffer together, `lvi-rm`
+deletes it and drops the buffer, and `lvi-sudow` writes it as root when you
+opened it without sudo. Each is a short sequence whose order matters and whose
+failure is quiet: move the file without repointing the buffer and the next `:w`
+silently recreates it at the old path. `lvi-mv` repoints with `:f`, which
+renames the buffer without writing it, so unsaved edits stay unsaved. That is
+the difference from `lvi-saveas`, which saves as part of renaming.
+
+`lvi-help` prints the whole set with recipes, and entering a shell-out prints a
+two-line banner pointing at it. The prompt tag has room to say you are in one
+but not what that costs: lvi is stopped behind you, and anything you send waits
+for your exit. Set `LVI_SHELL_BANNER` empty to silence the banner.
+
 This will change the shell prompt to denote you're in an lvi shell and
 the file you were editing `(lvi foo.txt) $`.
 

@@ -103,10 +103,16 @@ function Buffer:get(a, b)
   return out
 end
 
--- The whole buffer as raw text, honoring noeol (inverse of new()).
-function Buffer:text()
-  local body = table.concat(self.lines, "\n")
-  if not self.noeol then body = body .. "\n" end
+-- The buffer as raw text, honoring noeol (inverse of new()). An optional line
+-- range narrows it to that slice, for the POSIX ranged/append/pipe writes in
+-- ex.lua; noeol is a property of the FILE's end, so it applies only to a slice
+-- that actually reaches the last line -- an interior slice always ends newline-
+-- terminated, or appending it to a file would splice two lines together.
+function Buffer:text(from, to)
+  local n = #self.lines
+  from, to = from or 1, to or n
+  local body = table.concat(self.lines, "\n", from, to)
+  if not (self.noeol and to == n) then body = body .. "\n" end
   return body
 end
 

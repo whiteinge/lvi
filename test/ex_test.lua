@@ -175,6 +175,46 @@ describe("ex.dispatch", function()
     end)
   end)
 
+  -- POSIX `file [file]`: repoint the buffer without writing it. The move that
+  -- follows an external rename, where `:w NAME` would be wrong (it saves).
+  describe("file (:f)", function()
+    it("reports the current path", function()
+      local ed = ed_with("a\nb")
+      ed.buf.path = "/tmp/foo.txt"
+      local p, s = ex.dispatch(ed, "f")
+      expect(s).to.equal("ok")
+      expect(p).to.equal('"/tmp/foo.txt" 2 lines')
+    end)
+
+    it("sets the path without writing or dirtying the buffer", function()
+      local ed = ed_with("a\n")
+      ed.buf.path = "/tmp/old.txt"
+      local stamped = 0
+      ed.stamp = function() stamped = stamped + 1 end
+      local p, s = ex.dispatch(ed, "f /tmp/new.txt")
+      expect(s).to.equal("ok")
+      expect(ed.buf.path).to.equal("/tmp/new.txt")
+      expect(ed.buf.modified).to.be(false)           -- POSIX: renaming is not an edit
+      expect(stamped).to.equal(1)                    -- re-stamped against the new file
+      expect(p).to.equal('"/tmp/new.txt" 1 lines')
+      expect((ex.dispatch(ed, "path"))).to.equal("/tmp/new.txt")
+    end)
+
+    it("names a pathless buffer", function()
+      local ed = ed_with("x")
+      ed.buf.name = "[stdin]"
+      ex.dispatch(ed, "f /tmp/named.txt")
+      expect(ed.buf.path).to.equal("/tmp/named.txt")
+    end)
+
+    it("takes -- NAME literally, like every other file command", function()
+      local ed = ed_with("x")
+      local _, s = ex.dispatch(ed, "f -- /tmp/a $b.txt")
+      expect(s).to.equal("ok")
+      expect(ed.buf.path).to.equal("/tmp/a $b.txt")
+    end)
+  end)
+
   describe("set_del_reg classifier", function()
     it("a linewise delete is large (-> \"1)", function()
       local ed = ed_with("x")
@@ -303,6 +343,111 @@ describe("ex.dispatch", function()
       local _, s = ex.dispatch(ed, "w " .. other)    -- different target: allowed
       expect(s).to.equal("ok")
       os.remove(tmp); os.remove(other)
+    end)
+  end)
+
+  -- POSIX's other two write forms, plus the range every form takes. Only a
+  -- whole-buffer write to a file is the buffer saving itself; the rest write
+  -- FROM the buffer and must leave its name and dirty state alone.
+  describe("ranged / append / pipe writes", function()
+    local function slurp(p)
+      local f = io.open(p, "rb"); local body = f:read("*a"); f:close(); return body
+    end
+
+    it("writes only the addressed range, leaving the buffer modified", function()
+      local ed = ed_with("a\nb\nc\nd\n")
+      local tmp = os.tmpname()
+      ed.buf.path = "/nonexistent/original"
+      ed.buf.modified = true
+      local p, s = ex.dispatch(ed, "2,3w " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("b\nc\n")
+      expect(p:find("2L", 1, true)).to.exist()
+      expect(ed.buf.path).to.equal("/nonexistent/original")   -- no repoint
+      expect(ed.buf.modified).to.be(true)                     -- partial: still dirty
+      os.remove(tmp)
+    end)
+
+    it("a whole-buffer write is still a save-as: repoints and cleans", function()
+      local ed = ed_with("a\nb\n")
+      local tmp = os.tmpname()
+      local _, s = ex.dispatch(ed, "1,2w " .. tmp)   -- addressed, but the whole buffer
+      expect(s).to.equal("ok")
+      expect(ed.buf.path).to.equal(tmp)
+      expect(ed.buf.modified).to.be(false)
+      os.remove(tmp)
+    end)
+
+    it("appends with >> instead of replacing", function()
+      local ed = ed_with("c\nd\n")
+      local tmp = os.tmpname()
+      local f = io.open(tmp, "wb"); f:write("a\nb\n"); f:close()
+      ed.buf.modified = true
+      local p, s = ex.dispatch(ed, "w >>" .. tmp)
+      expect(s).to.equal("ok")
+      expect(p:find("appended", 1, true)).to.exist()
+      expect(slurp(tmp)).to.equal("a\nb\nc\nd\n")
+      expect(ed.buf.path).to.be(nil)                 -- an append names no identity
+      expect(ed.buf.modified).to.be(true)
+      os.remove(tmp)
+    end)
+
+    it("appends only the addressed range", function()
+      local ed = ed_with("a\nb\nc\n")
+      local tmp = os.tmpname()
+      local f = io.open(tmp, "wb"); f:write("x\n"); f:close()
+      local _, s = ex.dispatch(ed, "3w >> " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("x\nc\n")
+      os.remove(tmp)
+    end)
+
+    it("an interior slice of a noeol buffer still ends newline-terminated", function()
+      local ed = ed_with("a\nb")                     -- no final newline
+      expect(ed.buf.noeol).to.be(true)
+      local tmp = os.tmpname()
+      ex.dispatch(ed, "1w " .. tmp)
+      expect(slurp(tmp)).to.equal("a\n")            -- interior: terminated
+      ex.dispatch(ed, "2w " .. tmp)
+      expect(slurp(tmp)).to.equal("b")               -- reaches the end: noeol honored
+      os.remove(tmp)
+    end)
+
+    it("pipes the range to a command with :w !cmd", function()
+      local ed = ed_with("a\nb\nc\n")
+      local tmp = os.tmpname()
+      ed.buf.modified = true
+      local _, s = ex.dispatch(ed, "2,3w !cat > " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("b\nc\n")
+      expect(ed.buf.modified).to.be(true)            -- a pipe is not a save
+      os.remove(tmp)
+    end)
+
+    it("feeds the whole pipeline, not just its last stage", function()
+      local ed = ed_with("b\na\n")
+      local tmp = os.tmpname()
+      local _, s = ex.dispatch(ed, "w !sort | cat > " .. tmp)
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("a\nb\n")
+      os.remove(tmp)
+    end)
+
+    it("reports a failing :w !cmd", function()
+      local ed = ed_with("a\n")
+      local _, s = ex.dispatch(ed, "w !exit 3")
+      expect(s).to.equal("err")
+    end)
+
+    it("w! before a name is still a forced file write, not a pipe", function()
+      local ed = ed_with("a\n")
+      local tmp = os.tmpname()
+      ed.buf.path = tmp
+      ed.file_changed = function() return true end
+      local _, s = ex.dispatch(ed, "w!")             -- bang, no args: forced write
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("a\n")
+      os.remove(tmp)
     end)
   end)
 
