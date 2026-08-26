@@ -1,76 +1,95 @@
 #!/bin/sh
-# lvi-complete -- insert-mode word completion from the open buffers, for lvi.
+# lvi-complete -- insert-mode completion for lvi: run a source, run the picker.
 #
-# The completer behind lvi's `on complete` funnel. lvi binds Ctrl-P/Ctrl-N in
-# insert mode to the `on complete` command; on the keypress it runs that command
-# with the token being typed and the text of ALL open buffers, and splices the
-# command's stdout in over the token. This script is that command: it turns the
-# buffer text into a de-duplicated word list, runs it through a fuzzy picker
-# seeded with the token, and prints the chosen word.
+# The completer behind lvi's `on complete` funnel. lvi binds Ctrl-P/Ctrl-N and
+# Ctrl-X<c> in insert mode to the `on complete` command; on the keypress it runs
+# that command with the token being typed and the text of ALL open buffers, and
+# splices the command's stdout in over the token. This script is that command.
+# It does two things: choose which SOURCE to complete from, and run the picker.
 #
 # Turn it on in your rc:
 #   on complete lvi-complete
 #
+# SOURCES. A source is a `lvi-complete-<name>` script beside this one. One
+# ships: `word`, every word in the open buffers. $LVI_COMPL_KIND holds the char
+# after a Ctrl-X and names which source to run (`w` -> word); it is empty for
+# Ctrl-P/Ctrl-N, which take the default. A char naming no source is a silent
+# no-op, since our stdout is text lvi inserts and there is nowhere to put an
+# error.
+#
 # It reads the environment + stdin that lvi's complete_run sets up:
 #   stdin              every open buffer's text, CURRENT BUFFER FIRST
 #   $LVI_COMPL_TOKEN   the non-blank run before the cursor, which lvi replaces
-#                      with our output. We fuzzy-query on only its trailing word
-#                      run (so `(foo` completes `foo`) and restore the rest
-#                      around the result (`(foo` -> `(foobar`, not `foobar`).
-#   $LVI_COMPL_LINE    the line up to the cursor; unused here, exported so a
-#                      smarter `on complete` script can pick a completion SOURCE
-#                      by context (`/` in the token -> paths, `word.word` ->
-#                      members, bare identifier -> this). Each source is another
-#                      command with this same stdin/stdout contract.
+#                      with our output
+#   $LVI_COMPL_KIND    the char after Ctrl-X; empty for Ctrl-P/Ctrl-N
+#   $LVI_COMPL_LINE    the line up to the cursor. Unused here, and the room to
+#                      grow: a source picked by context rather than by keypress
+#                      (a `.` -> members, say) would classify on it.
 #   $LVI_COMPL_DIR     prev (Ctrl-P) or next (Ctrl-N); advisory, unused here
-# Current-buffer-first + a stable de-dupe (awk keeps the first sighting) sorts
-# this buffer's own words ahead of the others.
+#
+# THE SOURCE CONTRACT: a source inherits our stdin (the buffer text) and the
+# environment above, and prints CANDIDATES on stdout, one per line, best first.
+# Each candidate is a whole replacement for $LVI_COMPL_TOKEN, not a fragment --
+# lvi replaces the entire token, so a source that completes `(foo` to `foobar`
+# emits `(foobar` and a path source carries its directory prefix through. A
+# source runs no picker and knows nothing about tmux: this script picks, so the
+# picker and the popup are configured once and every source gets both. (That is
+# the one place this contract departs from the lvi-hl-<name> and lvi-lint-<name>
+# adapters, which each finish the job alone. Here the picker is the shared part.)
+# A source with a picker of its own doesn't need us -- register it as `on
+# complete` directly.
+#
+# Exactly one candidate skips the picker and goes straight in.
 #
 # POPUP: by default the picker takes the whole terminal. Set LVI_COMPL_POPUP=1
 # and, inside tmux, it runs in a `display-popup` drawn over the editor instead
 # (lvi stays on its alt screen under it). Any overlay that reads a list on stdin
 # and prints one line is a drop-in.
 #
-# Config: LVI_PICKER (fzf/fzy/sk, default fzf), LVI_COMPL_MIN (drop words shorter
-# than this; default 2), LVI_COMPL_POPUP (tmux popup when set and $TMUX).
+# Config: LVI_PICKER (fzf/fzy/sk, default fzf), LVI_COMPL_POPUP (tmux popup when
+# set and $TMUX), plus each source's own knobs -- see its header.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PICKER=${LVI_PICKER:-fzf}
-MIN=${LVI_COMPL_MIN:-2}
 token=${LVI_COMPL_TOKEN:-}
+kind=${LVI_COMPL_KIND:-}
 
-# lvi hands us the whole non-blank run before the cursor -- deliberately, so a
-# future `on complete` dispatcher can classify on punctuation (a `/` -> paths, a
-# `.` -> members; see the header). This bare-identifier completer wants only the
-# trailing WORD run as its fuzzy query: typing `(foo` should complete `foo`, not
-# fail to match because of the stray `(`. Split the token into that word run
-# (query) and everything before it (prefix). We carry the prefix through to our
-# output because lvi replaces the WHOLE token with what we print -- so completing
-# `(foo` to `foobar` means emitting `(foobar`, else the `(` gets eaten.
-query=$(printf '%s' "$token" | sed 's/.*[^A-Za-z0-9_]//')
-prefix=${token%"$query"}
+case $kind in
+  ''|w) name=word ;;                            # empty: Ctrl-P/Ctrl-N
+  *)    exit 0 ;;                               # a char naming no source
+esac
+src="$DIR/lvi-complete-$name"
+[ -x "$src" ] || exit 0
 
-# Buffer text -> words (split on non-word chars) -> drop the too-short ones and
-# the query itself (completing to what you already typed is pointless) -> de-dupe
-# preserving first-seen order (current buffer first).
-words=$(tr -cs 'A-Za-z0-9_' '\n' \
-  | awk -v min="$MIN" -v t="$query" 'length($0) >= min && $0 != t && !seen[$0]++')
-[ -n "$words" ] || exit 0
+# The source inherits our stdin, so the buffer text reaches it untouched.
+cands=$("$src") || exit 0
+[ -n "$cands" ] || exit 0
 
-# Pick. -q seeds the query with the trailing word run (fzf/fzy/sk all accept -q),
-# so the list opens already narrowed and you get fuzzy matching from there. The
-# chosen word is emitted with the token's leading prefix restored (see above).
+# Seed the picker's query so the list opens already narrowed: the token after
+# its last `/`, minus any leading punctuation (`(foo` queries `foo`; a stray `(`
+# would match nothing, and a leading `!` or `^` is a search operator to fzf
+# rather than a character).
+query=${token##*/}
+query=$(printf '%s' "$query" | sed 's/^[^A-Za-z0-9_]*//')
+
+# One candidate needs no picker -- that is the unambiguous completion.
+if [ "$(printf '%s\n' "$cands" | wc -l)" -eq 1 ]; then
+  printf '%s\n' "$cands"
+  exit 0
+fi
+
 if [ -n "${LVI_COMPL_POPUP:-}" ] && [ -n "${TMUX:-}" ]; then
   # display-popup runs a separate command with its own tty, so hand the list in
-  # and take the selection out through temp files. The word list is derived
-  # from buffer text, so the files live beside the socket in lvi's private
-  # per-uid dir (the completion funnel always runs us inside lvi).
+  # and take the selection out through temp files. The list is derived from
+  # buffer text, so the files live beside the socket in lvi's private per-uid
+  # dir (the completion funnel always runs us inside lvi).
   td=${LVI_SOCK%/*}; [ -d "$td" ] || td=${TMPDIR:-/tmp}
   cf=$(mktemp "$td/lvi-compl.XXXXXX") || exit 0
   sf=$(mktemp "$td/lvi-compl.XXXXXX") || { rm -f "$cf"; exit 0; }
   tf=$(mktemp "$td/lvi-compl.XXXXXX") || { rm -f "$cf" "$sf"; exit 0; }
-  printf '%s\n' "$words" > "$cf"; printf '%s' "$query" > "$tf"
+  printf '%s\n' "$cands" > "$cf"; printf '%s' "$query" > "$tf"
   # display-popup runs its command in a fresh shell under the tmux SERVER, which
   # does NOT inherit the LVI_COMPL_* env lvi exported to us -- so the query
   # would be empty there. Pass it through a file and read it back quoted
@@ -81,7 +100,7 @@ if [ -n "${LVI_COMPL_POPUP:-}" ] && [ -n "${TMUX:-}" ]; then
 else
   # $PICKER unquoted on purpose: LVI_PICKER may carry flags ('fzf --height 10'),
   # the same contract as lvi-spell and the popup branch above.
-  sel=$(printf '%s\n' "$words" | $PICKER -q "$query")
+  sel=$(printf '%s\n' "$cands" | $PICKER -q "$query")
 fi
 [ -n "$sel" ] || exit 0
-printf '%s%s\n' "$prefix" "$sel"
+printf '%s\n' "$sel"

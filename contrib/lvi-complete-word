@@ -1,0 +1,45 @@
+#!/bin/sh
+# lvi-complete-word -- the buffer-words source for lvi-complete.
+#
+# One of the completion sources behind `on complete lvi-complete`: it turns the
+# open buffers' text into a de-duplicated word list and prints it. lvi-complete
+# picks from that list and splices the choice into the buffer; see its header
+# for the source contract and for how this source gets selected (Ctrl-P and
+# Ctrl-N when the token doesn't look like a path, or Ctrl-X w to force it).
+#
+# It is not registered directly -- `on complete lvi-complete` is.
+#
+# Reads the environment + stdin that lvi's complete_run sets up:
+#   stdin              every open buffer's text, CURRENT BUFFER FIRST
+#   $LVI_COMPL_TOKEN   the non-blank run before the cursor, which lvi replaces
+#                      with our output. We match on only its trailing word run
+#                      (so `(foo` completes `foo`) and carry the rest through on
+#                      every candidate (`(foo` -> `(foobar`, not `foobar`).
+#
+# Current-buffer-first + a stable de-dupe (awk keeps the first sighting) sorts
+# this buffer's own words ahead of the others.
+#
+# Config: LVI_COMPL_MIN (drop words shorter than this; default 2).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+MIN=${LVI_COMPL_MIN:-2}
+token=${LVI_COMPL_TOKEN:-}
+
+# lvi hands us the whole non-blank run before the cursor -- deliberately, so
+# lvi-complete can classify on punctuation (a `/` -> paths; see its header).
+# This source wants only the trailing WORD run: typing `(foo` should complete
+# `foo`, not fail to match because of the stray `(`. Split the token into that
+# word run (what we match on) and everything before it (prefix). The prefix goes
+# back onto every candidate, because lvi replaces the WHOLE token with the line
+# lvi-complete prints -- so completing `(foo` to `foobar` must emit `(foobar`,
+# else the `(` gets eaten.
+word=$(printf '%s' "$token" | sed 's/.*[^A-Za-z0-9_]//')
+prefix=${token%"$word"}
+
+# Buffer text -> words (split on non-word chars) -> drop the too-short ones and
+# the word itself (completing to what you already typed is pointless) -> de-dupe
+# preserving first-seen order (current buffer first) -> restore the prefix.
+tr -cs 'A-Za-z0-9_' '\n' \
+  | awk -v min="$MIN" -v t="$word" -v p="$prefix" \
+      'length($0) >= min && $0 != t && !seen[$0]++ { print p $0 }'

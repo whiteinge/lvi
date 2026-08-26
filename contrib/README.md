@@ -683,11 +683,20 @@ completer, and the keypress runs it synchronously — handing it the token
 you're typing (plus the line's left context) and every open buffer's text,
 then splicing its stdout in over the token.
 
-`lvi-complete` is the shipped completer (other contributions welcome): it
-de-dupes the buffers' words (current buffer first), fuzzy-picks with your
-`$LVI_PICKER` seeded by the token, and prints the choice. Turn it on with `on
-complete lvi-complete`; set `LVI_COMPL_POPUP=1` under tmux to draw the picker
-in a `display-popup` over the editor instead of taking the whole screen.
+`lvi-complete` is the shipped completer (other contributions welcome). Turn it
+on with `on complete lvi-complete`; set `LVI_COMPL_POPUP=1` under tmux to draw
+the picker in a `display-popup` over the editor instead of taking the whole
+screen. It splits in two: a **source** produces candidates, and `lvi-complete`
+runs the picker over them. `lvi-complete-word` is the source that ships — it
+de-dupes the buffers' words, current buffer first.
+
+A source is a `lvi-complete-<name>` script that reads the same stdin and
+environment and prints candidates, one per line, best first. Each candidate is
+a whole replacement for the token, since that is what lvi splices. Sources run
+no picker of their own: that lives in `lvi-complete`, so `$LVI_PICKER` and the
+popup are configured once and every source gets both. (The `lvi-hl-<name>` and
+`lvi-lint-<name>` adapters each finish their job alone; here the picker is the
+part worth sharing.)
 
 Because the funnel is generic — token + left-context + buffers in, one word out —
 the *kind* of completion is just which command you register: a file-path, whole-
