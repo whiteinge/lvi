@@ -621,6 +621,30 @@ describe("ex.dispatch", function()
       if f then f:close() end
       os.remove(target)
     end)
+    -- :w's other two forms are write-only, and `>` and `!` are not
+    -- metacharacters expand_file expands -- so left to fall through they became
+    -- literal file names: `:wq !cat` created `!cat`, repointed the buffer at it
+    -- and quit. Refuse them instead.
+    it(":wq and :x refuse >> and !cmd instead of taking them as a name", function()
+      for _, cmd in ipairs({ "wq >>log", "wq !cat", "x >>log", "x !cat" }) do
+        local ed = ed_with("a\nb\n")
+        ed.buf.path = "/nonexistent/original"
+        local msg, s = ex.dispatch(ed, cmd)
+        expect(s).to.equal("err")
+        expect(msg:find("file name only", 1, true)).to.exist()
+        expect(ed.running).to.be(true)                       -- and did NOT quit
+        expect(ed.buf.path).to.equal("/nonexistent/original")  -- nor repoint
+      end
+    end)
+    it("wq! before a name is still a forced write, not a rejected form", function()
+      local ed = ed_with("a\n")
+      local target = os.tmpname()
+      ed.file_changed = function() return true end
+      local _, s = ex.dispatch(ed, "wq! " .. target)
+      expect(s).to.equal("ok")
+      expect(ed.running).to.be(false)
+      os.remove(target)
+    end)
     it(":wa in a headless single-buffer ed writes the lone buffer", function()
       local ed = ed_with("a\nb\n")               -- no ed.buffers -> fallback path
       local target = os.tmpname()

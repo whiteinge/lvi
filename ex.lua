@@ -904,10 +904,20 @@ end)
 -- buffer it leaves the file's mtime untouched (its whole reason to exist
 -- over :wq, which always writes). An explicit target (:x file) is a save-as,
 -- so it still writes. ZZ routes here, inheriting the skip.
+--
+-- Neither takes :w's `>>` or `!cmd`: an append leaves the buffer modified, so
+-- `wq >>` would quit discarding the changes it just appended, and a pipe never
+-- says whether -- or where -- anything was written. They have to be REFUSED
+-- rather than left to fall through, because neither `>` nor `!` is a
+-- metacharacter expand_file expands: `:wq !cat` took the whole thing as a file
+-- name, created `!cat`, repointed the buffer at it and quit.
 def("wq x", function(ed, c)
   if c.name == "x" and c.args == "" and not ed.buf.modified then
     ed.running = false
     return "", "ok"
+  end
+  if c.args:sub(1, 1) == "!" or c.args:sub(1, 2) == ">>" then
+    return (":%s takes a file name only -- write with :w, then :q"):format(c.name), "err"
   end
   local p, xerr = expand_file(ed, c.args)
   if xerr then return xerr, "err" end

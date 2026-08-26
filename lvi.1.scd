@@ -453,8 +453,8 @@ spaces and tabs included.
 
 	Two deviations. *w* _file_ renames the buffer to _file_ (vim's *saveas*),
 	where POSIX leaves the current pathname alone; use *f* _file_ to rename
-	without writing. And *wq*/*x* take neither *>>* nor *!*_cmd_: an append leaves
-	the buffer modified, so *wq >>* would quit and discard your changes.
+	without writing. And *wq*/*x* reject *>>* and *!*_cmd_: an append leaves the
+	buffer modified, so *wq >>* would quit and discard your changes.
 
 *wa*[*!*], *xa*[*!*]
 	Write every modified buffer to its own path (*wa*, alias *wall*), or write
