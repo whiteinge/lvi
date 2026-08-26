@@ -200,6 +200,21 @@ describe("ex.dispatch", function()
       expect((ex.dispatch(ed, "path"))).to.equal("/tmp/new.txt")
     end)
 
+    it("fires bufenter, but only when the name actually moves", function()
+      local ed = ed_with("a\n")
+      ed.buf.path = "/tmp/old.txt"
+      local fired = {}
+      ed.fire_event = function(e) fired[#fired + 1] = e end
+      ex.dispatch(ed, "f /tmp/new.txt")
+      expect(fired).to.equal({ "bufenter" })
+      fired = {}
+      ex.dispatch(ed, "f /tmp/new.txt")                -- same name again
+      expect(fired).to.equal({})
+      fired = {}
+      ex.dispatch(ed, "f")                             -- the report form
+      expect(fired).to.equal({})
+    end)
+
     it("names a pathless buffer", function()
       local ed = ed_with("x")
       ed.buf.name = "[stdin]"
@@ -463,6 +478,22 @@ describe("ex.dispatch", function()
       expect(s).to.equal("err")
       expect(io.open(dir .. ".lvi~", "rb")).to_not.exist()   -- no stray copy
       os.execute("rmdir '" .. dir .. "'")
+    end)
+
+    -- A save-as changes which file the buffer IS, so everything keyed to the
+    -- name is stale: the socket sidecar lvi -l reads, an `on bufenter` hook
+    -- that picks settings off the extension.
+    it("a save-as fires bufenter, a write to the same path does not", function()
+      local ed = ed_with("a\n")
+      local tmp = os.tmpname()
+      local fired = {}
+      ed.fire_event = function(e) fired[#fired + 1] = e end
+      ex.dispatch(ed, "w " .. tmp)
+      expect(fired).to.equal({ "bufenter", "write" })  -- identity, then the write
+      fired = {}
+      ex.dispatch(ed, "w")                             -- same path: no repoint
+      expect(fired).to.equal({ "write" })
+      os.remove(tmp)
     end)
 
     it("w! before a name is still a forced file write, not a pipe", function()

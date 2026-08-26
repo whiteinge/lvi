@@ -745,6 +745,17 @@ local function write_conflict(ed, buf, p)
   return p == buf.path and ed.file_changed ~= nil and ed.file_changed(buf)
 end
 
+-- A repoint -- lvi's `:w NAME` save-as, or POSIX's `:f NAME` -- changes what
+-- file this buffer IS, and everything keyed to the path is now stale: the
+-- socket's .file sidecar `lvi -l` lists, and any `on bufenter` hook that
+-- derives policy from the name (contrib/lvi-ftype picks settings off the
+-- extension). bufenter is exactly that seam -- "recompute what depends on which
+-- buffer this is" -- and its consumers are total projections, so re-firing it
+-- is idempotent by their own contract. Fired only when the path actually moved.
+local function note_repoint(ed, was)
+  if ed.buf.path ~= was and ed.fire_event then ed.fire_event("bufenter") end
+end
+
 -- POSIX `readonly`: a write to the buffer's OWN file fails unless forced (`w!`),
 -- guarding an accidental overwrite. Writing elsewhere (`:w other`) is allowed,
 -- matching vi/vim; `!` overrides, as does `:set noreadonly`.
@@ -880,6 +891,7 @@ local function do_write_file(ed, c, from, to, whole, target, append)
   end
 
   local n
+  local was = ed.buf.path
   if whole and not append then
     local ok, err = pcall(ed.buf.write, ed.buf, p)
     if not ok then return "write failed: " .. tostring(err), "err" end
@@ -893,6 +905,7 @@ local function do_write_file(ed, c, from, to, whole, target, append)
   -- Re-stamp only when we moved the mtime of the file this buffer claims;
   -- writing elsewhere tells us nothing new about our own.
   if ed.stamp and p == ed.buf.path then ed.stamp(ed.buf) end
+  note_repoint(ed, was)                      -- identity settles before the hooks
   if ed.fire_event then ed.fire_event("write") end
   return ('"%s" %dL, %dB %s'):format(p, to - from + 1, n,
                                      append and "appended" or "written"), "ok"
@@ -1006,8 +1019,10 @@ def("f file", function(ed, c)
     local p, xerr = expand_file(ed, c.args)
     if xerr then return xerr, "err" end
     if p then
+      local was = ed.buf.path
       ed.buf.path = p
       if ed.stamp then ed.stamp(ed.buf) end
+      note_repoint(ed, was)
     end
   end
   -- Match the status line (render): a pathless buffer reports its display name

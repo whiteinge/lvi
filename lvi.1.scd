@@ -460,7 +460,8 @@ spaces and tabs included.
 
 	One deviation: *w* _file_ renames the buffer to _file_ (vim's *saveas*), where
 	POSIX leaves the current pathname alone; use *f* _file_ to rename without
-	writing.
+	writing. Either way the rename fires *bufenter*, so anything keyed to the
+	file name recomputes.
 
 *wa*[*!*], *xa*[*!*]
 	Write every modified buffer to its own path (*wa*, alias *wall*), or write
@@ -721,7 +722,9 @@ spaces and tabs included.
 	and rc loaded -- the analog of vim's *VimEnter*, e.g. to load a *-q* list), or
 	*bufenter*/*bufleave*/*bufdelete* (buffer switches, with that buffer's path in
 	*LVI_FILE* -- the glue for repainting per-buffer list overlays; see
-	*contrib/lvi-list*), or *markset*/*markjump* (an uppercase mark *m*_A-Z_ was
+	*contrib/lvi-list*; *bufenter* also fires on a rename, *f* _file_ or a
+	save-as, since that too changes which file the buffer is), or
+	*markset*/*markjump* (an uppercase mark *m*_A-Z_ was
 	set, or *`*_A-Z_ / *'*_A-Z_ jumped to, with the letter in *LVI_MARK* -- the
 	seam *contrib/lvi-gmark* uses for global, cross-file marks), or *exit*
 	(a clean quit, the analog of vim's *VimLeave* -- the moment to save state
@@ -864,6 +867,10 @@ spaces and tabs included.
 	it from a shell, then point the buffer at the new name. Without that the
 	buffer still holds the old path, and the next bare *w* silently recreates the
 	file there.
+
+	Renaming fires *bufenter*: it changes which file this buffer is, so anything
+	keyed to the name recomputes -- the *lvi -l* listing, and an *on bufenter*
+	hook that picks settings off the extension.
 
 	POSIX also parks the old name in the alternate pathname. lvi has no such slot
 	(*#* names the alternate buffer, an index into the one buffer list), so the
