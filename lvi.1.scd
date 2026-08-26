@@ -397,6 +397,9 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 	same key; *<ESC>* backs out. lvi does not interpret _c_ -- it is handed to
 	the completer in *LVI_COMPL_KIND*, so which letters mean anything is the
 	completer's business, and a new source needs no change to lvi.
+	*contrib/lvi-complete* answers to *f* (file paths) and *w* (buffer words):
+	*Ctrl-X f* completes a bare _READ_ to _README.md_, where an unprefixed
+	*Ctrl-P* would read it as a word and search the buffers instead.
 
 	The completer runs as one process per keypress and keeps nothing between
 	them, so unlike vim there is no completion mode to cycle inside: each
@@ -1341,8 +1344,9 @@ below, with the happy-path rc lines that turn it on:
 	```
 
 *lvi-complete* -- insert-mode completion
-	Complete the word before the cursor from every open buffer, on insert-mode
-	*Ctrl-N*/*Ctrl-P*:
+	Complete the token before the cursor on insert-mode *Ctrl-N*/*Ctrl-P*: a
+	word from every open buffer, or a file name when the token looks like a
+	path (*Ctrl-X f* when it doesn't):
 
 	```
 	on complete lvi-complete

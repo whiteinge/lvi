@@ -1,0 +1,70 @@
+#!/bin/sh
+# lvi-complete-path -- the file-path source for lvi-complete.
+#
+# One of the completion sources behind `on complete lvi-complete`: it lists one
+# directory's entries as candidates and prints them. lvi-complete picks and
+# splices the choice into the buffer; see its header for the source contract and
+# for how this source gets selected (a token holding a `/` or opening with `~`,
+# or Ctrl-X f to force it on a bare name like `READ` -> `README.md`).
+#
+# It is not registered directly -- `on complete lvi-complete` is.
+#
+# ONE LEVEL PER PRESS, which is the whole design. The token is split at its last
+# `/` into a directory and the part you are typing; we list that one directory.
+# A directory candidate comes back with a trailing `/`, so picking one leaves
+# the token ending in `/` -- and the next Ctrl-X f lists inside it. Walking down
+# a deep path is repeated presses rather than a loop in here, and the editor's
+# own repeat is the loop. Type `../` yourself to go up.
+#
+# The directory prefix is carried through on every candidate, exactly as typed:
+# lvi replaces the whole token, and a `~` or a relative path is what you meant
+# to write. We expand `~` only to read the directory, never in the output. A bare
+# `~` counts as `~/` and lists $HOME -- it is the one token that names a
+# directory before you have typed the `/`.
+#
+# Reads the environment lvi's complete_run sets up:
+#   $LVI_COMPL_TOKEN   the non-blank run before the cursor
+# Buffer text arrives on stdin and is ignored -- this source reads the disk.
+#
+# Because a token is a non-blank run, a path with a space in it cannot be
+# completed (lvi has already decided where the token starts). Escaping is not a
+# fix: the shell quoting that would survive the round trip is not what you are
+# typing into a text file.
+#
+# Dotfiles are always listed. The picker is seeded with what you have typed, so
+# they stay out of the way until you type a leading `.`.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+token=${LVI_COMPL_TOKEN:-}
+
+# Split at the LAST `/`: everything up to it (kept verbatim for the output) and
+# the part being typed (which we don't need -- lvi-complete seeds the picker).
+# A bare `~` is the one token that names a directory without a `/` in it yet, so
+# it reads as `~/`: without that it falls through to the empty prefix below and
+# lists the cwd, and picking a candidate eats the `~` you typed. The pattern is
+# quoted because an unquoted one in a case pattern is tilde-expanded.
+case $token in
+  */*) pfx=${token%/*}/ ;;
+  '~') pfx='~/' ;;
+  *)   pfx= ;;
+esac
+
+# The directory to read. `~` is expanded here only; $pfx keeps its original
+# spelling so the completed path reads the way you typed it. $pfx either ends in
+# a `/` or is empty, so `~/` is the only tilde shape that reaches this.
+dir=$pfx
+case $dir in
+  '~/'*) dir=$HOME/${dir#'~/'} ;;
+esac
+[ -n "$dir" ] || dir=./
+
+# Glob rather than `ls`: no output to parse, no dependence on which `ls` is on
+# PATH, and names with spaces or newlines survive as shell words. An unmatched
+# pattern comes back literal, which the existence test drops.
+for e in "$dir"* "$dir".*; do
+  [ -e "$e" ] || [ -L "$e" ] || continue
+  b=${e##*/}
+  case $b in '.'|'..') continue ;; esac
+  if [ -d "$e" ]; then printf '%s%s/\n' "$pfx" "$b"; else printf '%s%s\n' "$pfx" "$b"; fi
+done

@@ -675,7 +675,7 @@ Caveats: bat's manpage grammar is coarse (headings, options, some emphasis), and
 it's a full editor per page — the cost your `$MANPAGER` already pays under vim.
 Copy `lvirc-man` and point `$LVI_MAN_RC` at it to tune the pager environment.
 
-### `lvi-complete` — insert-mode word completion
+### `lvi-complete` — insert-mode word and path completion
 
 Insert-mode Ctrl-N/Ctrl-P completion is drawn from **all open buffers**
 and invokes your choice of fuzzy-finder.  `on complete CMD` registers a
@@ -696,12 +696,21 @@ a whole replacement for the token, since that is what lvi splices. Sources run
 no picker of their own: that lives in `lvi-complete`, so `$LVI_PICKER` and the
 popup are configured once and every source gets both. (The `lvi-hl-<name>` and
 `lvi-lint-<name>` adapters each finish their job alone; here the picker is the
-part worth sharing.)
+shared part.)
 
-Because the funnel is generic — token + left-context + buffers in, one word out —
-the *kind* of completion is just which command you register: a file-path, whole-
-line, or `readtags` symbol completer is the same contract, and a dispatcher can
-pick one by context (a `/` in the token → paths, etc.) with no menu.
+Two sources ship. `lvi-complete-word` reads the buffers; `lvi-complete-path`
+lists file names under the path you're typing, one directory level per press —
+pick a directory and the token ends in `/`, so the next press lists inside it.
+Walking down a path is repeated presses, not a loop.
+
+Which source runs is either inferred or forced. A token holding a `/` or opening
+with `~` is a path; anything else is a word. That reads the intent right nearly
+always, because a path token says so lexically. The case it can't call is the
+bare name, where `READ` is both a word in some buffer and the head of
+`README.md`. `Ctrl-X f` forces the path source for exactly that case, and lvi
+passes the `f` through without interpreting it (see `LVI_COMPL_KIND` in the
+manpage). A whole-line or `readtags` symbol source is another script and one
+more line in the dispatcher — no change to lvi.
 
 ### `lvi-pos` — remember where you were (viminfo's `` `" ``)
 

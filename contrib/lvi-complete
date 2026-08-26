@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-complete -- insert-mode completion for lvi: run a source, run the picker.
+# lvi-complete -- insert-mode completion for lvi: pick a source, then pick a word.
 #
 # The completer behind lvi's `on complete` funnel. lvi binds Ctrl-P/Ctrl-N and
 # Ctrl-X<c> in insert mode to the `on complete` command; on the keypress it runs
@@ -10,12 +10,19 @@
 # Turn it on in your rc:
 #   on complete lvi-complete
 #
-# SOURCES. A source is a `lvi-complete-<name>` script beside this one. One
-# ships: `word`, every word in the open buffers. $LVI_COMPL_KIND holds the char
-# after a Ctrl-X and names which source to run (`w` -> word); it is empty for
-# Ctrl-P/Ctrl-N, which take the default. A char naming no source is a silent
-# no-op, since our stdout is text lvi inserts and there is nowhere to put an
-# error.
+# SOURCES. A source is a `lvi-complete-<name>` script beside this one. Two ship:
+#   word   every word in the open buffers          (Ctrl-P, Ctrl-N, Ctrl-X w)
+#   path   file names under the path you are typing        (Ctrl-X f)
+# Which one runs is either forced by the key or inferred from the token:
+# $LVI_COMPL_KIND holds the char after a Ctrl-X and wins when set (`f` -> path,
+# `w` -> word; any other char is a silent no-op, since our stdout is text lvi
+# inserts and there is nowhere to put an error). With no forced kind -- the
+# Ctrl-P/Ctrl-N case -- a token holding a `/` or opening with `~` is a path and
+# anything else is a word.
+#
+# That inference is right nearly always, because a path token says so lexically.
+# The case it cannot call is the bare name: `READ` is both a word in some buffer
+# and the head of `README.md`. Ctrl-X f is for that case.
 #
 # It reads the environment + stdin that lvi's complete_run sets up:
 #   stdin              every open buffer's text, CURRENT BUFFER FIRST
@@ -23,8 +30,8 @@
 #                      with our output
 #   $LVI_COMPL_KIND    the char after Ctrl-X; empty for Ctrl-P/Ctrl-N
 #   $LVI_COMPL_LINE    the line up to the cursor. Unused here, and the room to
-#                      grow: a source picked by context rather than by keypress
-#                      (a `.` -> members, say) would classify on it.
+#                      grow: classifying on it rather than on the token alone is
+#                      what a `word.word` -> members source would need.
 #   $LVI_COMPL_DIR     prev (Ctrl-P) or next (Ctrl-N); advisory, unused here
 #
 # THE SOURCE CONTRACT: a source inherits our stdin (the buffer text) and the
@@ -56,9 +63,18 @@ PICKER=${LVI_PICKER:-fzf}
 token=${LVI_COMPL_TOKEN:-}
 kind=${LVI_COMPL_KIND:-}
 
+# No forced kind (Ctrl-P/Ctrl-N): infer one from the token's shape. The `~`
+# pattern is quoted because an unquoted one in a case pattern is tilde-expanded.
+if [ -z "$kind" ]; then
+  case $token in
+    */*|'~'*) kind=f ;;
+    *)        kind=w ;;
+  esac
+fi
 case $kind in
-  ''|w) name=word ;;                            # empty: Ctrl-P/Ctrl-N
-  *)    exit 0 ;;                               # a char naming no source
+  f) name=path ;;
+  w) name=word ;;
+  *) exit 0 ;;                                  # unknown kind: nothing to run
 esac
 src="$DIR/lvi-complete-$name"
 [ -x "$src" ] || exit 0
@@ -68,11 +84,15 @@ cands=$("$src") || exit 0
 [ -n "$cands" ] || exit 0
 
 # Seed the picker's query so the list opens already narrowed: the token after
-# its last `/`, minus any leading punctuation (`(foo` queries `foo`; a stray `(`
-# would match nothing, and a leading `!` or `^` is a search operator to fzf
-# rather than a character).
+# its last `/` (a path completes on the part you are typing, not the directory
+# you already named), minus any leading punctuation -- `(foo` queries `foo`,
+# since a stray `(` would match nothing and a leading `!` or `^` is a search
+# operator to fzf rather than a character. A leading `.` is the exception and
+# stays: every picker takes it as a plain character, and it is the one that says
+# you meant the directory's dotfiles rather than the rest of it. One rule, and
+# it fits both shipped sources.
 query=${token##*/}
-query=$(printf '%s' "$query" | sed 's/^[^A-Za-z0-9_]*//')
+query=$(printf '%s' "$query" | sed 's/^[^.A-Za-z0-9_]*//')
 
 # One candidate needs no picker -- that is the unambiguous completion.
 if [ "$(printf '%s\n' "$cands" | wc -l)" -eq 1 ]; then
@@ -83,8 +103,8 @@ fi
 if [ -n "${LVI_COMPL_POPUP:-}" ] && [ -n "${TMUX:-}" ]; then
   # display-popup runs a separate command with its own tty, so hand the list in
   # and take the selection out through temp files. The list is derived from
-  # buffer text, so the files live beside the socket in lvi's private per-uid
-  # dir (the completion funnel always runs us inside lvi).
+  # buffer text and file names, so the files live beside the socket in lvi's
+  # private per-uid dir (the completion funnel always runs us inside lvi).
   td=${LVI_SOCK%/*}; [ -d "$td" ] || td=${TMPDIR:-/tmp}
   cf=$(mktemp "$td/lvi-compl.XXXXXX") || exit 0
   sf=$(mktemp "$td/lvi-compl.XXXXXX") || { rm -f "$cf"; exit 0; }

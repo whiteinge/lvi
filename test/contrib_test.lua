@@ -273,6 +273,56 @@ describe("contrib", function()
       expect(status([[-- 'a\{2' /dev/null]])).to.equal(false)
       os.execute("rm -rf '" .. d .. "'")
     end)
+
+    -- lvi-complete-path is a pure filter too: a token in the env, candidate
+    -- lines out. Every candidate carries the directory prefix exactly as typed,
+    -- because lvi replaces the WHOLE token with the line that comes back.
+    it("lvi-complete-path lists one level, keeping the prefix as typed", function()
+      local d = tmpdir()
+      os.execute(("mkdir -p '%s/proj/sub' '%s/home/hdir'"):format(d, d))
+      write(d .. "/proj/afile", "")
+      write(d .. "/home/hfile", "")
+      local function cands(token, env)
+        env = env or {}; env.LVI_COMPL_TOKEN = token
+        return (run(env, ("cd '%s/proj' && lvi-complete-path </dev/null"):format(d)))
+      end
+      -- No `/` yet: the cwd, bare names, and a directory marked with a trailing
+      -- `/` so the next press lists inside it.
+      expect(cands("a")).to.equal("afile\nsub/\n")
+      expect(cands("sub/")).to.equal("")             -- one level down, and empty
+      -- A bare `~` names a directory before you have typed the `/`, so it reads
+      -- as `~/` -- and the tilde survives into the candidates, or picking one
+      -- would rewrite the `~` you typed as a name in the cwd.
+      expect(cands("~", { HOME = d .. "/home" })).to.equal("~/hdir/\n~/hfile\n")
+      expect(cands("~/h", { HOME = d .. "/home" })).to.equal("~/hdir/\n~/hfile\n")
+      os.execute("rm -rf '" .. d .. "'")
+    end)
+
+    -- lvi-complete's own job either side of a source: pick which one runs, and
+    -- seed the picker. The seed decides what the list opens on, so a leading `.`
+    -- has to survive it -- the dotfile you asked for would otherwise rank with
+    -- everything else in the directory.
+    it("lvi-complete seeds the picker with the token, keeping a leading dot", function()
+      local d = tmpdir()
+      os.execute(("mkdir -p '%s/proj' '%s/bin'"):format(d, d))
+      write(d .. "/proj/.gitignore", "")
+      write(d .. "/proj/gamma", "")
+      -- A picker that records the query it was seeded with and takes the top row.
+      write(d .. "/bin/fakepick", "#!/bin/sh\nprintf '%s\\n' \"$2\" > '"
+        .. d .. "/q'\nhead -n1\n")
+      os.execute("chmod +x '" .. d .. "/bin/fakepick'")
+      local function seed(token, stdin)
+        run({ PATH = d .. "/bin", LVI_PICKER = "fakepick", LVI_COMPL_TOKEN = token },
+          ("cd '%s/proj' && printf '%s' | lvi-complete"):format(d, stdin or ""))
+        return read(d .. "/q")
+      end
+      -- A `/` in the token routes to the path source; the dot rides through.
+      expect(seed("./.gi")).to.equal(".gi\n")
+      -- No `/`, so the words source -- and its `(` comes off, since a stray one
+      -- matches nothing and fzf would read a `!` or `^` there as an operator.
+      expect(seed("(gam", "gamma delta\n")).to.equal("gam\n")
+      os.execute("rm -rf '" .. d .. "'")
+    end)
   end)
 
   describe("socket scripts against the stub", function()
