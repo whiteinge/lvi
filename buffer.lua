@@ -20,7 +20,8 @@
 ---   * noeol records whether the source file lacked a final newline, so
 ---     read/write round-trips byte-for-byte; on an empty buffer it instead
 ---     marks vi's "0 lines" state (the empty file), and splice() maintains it
----     across the empty/non-empty boundary.
+---     across the empty/non-empty boundary, its undo record carrying the
+---     displaced value back.
 
 local M = {}
 
@@ -175,6 +176,7 @@ end
 function Buffer:splice(start, ndel, ins)
   local lines = self.lines
   local was_empty = #lines == 1 and lines[1] == ""
+  local was_noeol = self.noeol
   local old = {}
   for i = start, start + ndel - 1 do old[#old + 1] = lines[i] end
   local nins = #ins
@@ -201,13 +203,17 @@ function Buffer:splice(start, ndel, ins)
   -- line and gets its terminator (typing into a new or 0-byte file must not
   -- produce a noeol file); entering it means the buffer is back to zero lines,
   -- which vi writes as zero bytes. Doing it here rather than at write time is
-  -- undo-symmetric for free: undo replays the inverse splice, which lands on
-  -- whichever side of the boundary it came from.
+  -- undoable: the inverse carries the value it displaced (see below).
   local now_empty = #lines == 1 and lines[1] == ""
   if now_empty then self.noeol = true elseif was_empty then self.noeol = false end
   -- Inverse: replace the region now holding `ins` with `old`. If the guard
-  -- fired, that region is the single guard line at 1.
-  record(self, { start = guard and 1 or start, ndel = guard and 1 or nins, ins = old })
+  -- fired, that region is the single guard line at 1. It carries noeol too,
+  -- because replaying the lines alone does NOT put it back: the flip above is
+  -- one-directional at the empty boundary, so undoing a `dd` on a file that is
+  -- exactly "\n" would land on {""} and read as zero lines -- writing the file
+  -- back as zero bytes and losing its one byte, where vi keeps it.
+  record(self, { start = guard and 1 or start, ndel = guard and 1 or nins, ins = old,
+                 noeol = was_noeol })
   update_modified(self)
   self.rev = self.rev + 1   -- monotonic mutation counter (undo/redo bump it too)
   -- Optional line-shape notification for position bookkeeping (marks, the
@@ -290,6 +296,11 @@ local function apply_group(self, g)
     local start = g[i].start
     local before = self.lines[start] or ""
     self:splice(start, g[i].ndel, g[i].ins)
+    -- Plus the noeol the record displaced, which replaying lines cannot
+    -- re-derive (splice's flip is one-directional at the empty boundary). The
+    -- splice above recorded ITS own inverse first, capturing the value from
+    -- before this restore, so redo lands back here -- symmetric both ways.
+    self.noeol = g[i].noeol
     firstline, firstcol = start, first_diff(before, self.lines[start] or "")
   end
   return firstline, firstcol

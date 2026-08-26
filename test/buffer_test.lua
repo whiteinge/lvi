@@ -76,6 +76,36 @@ describe("buffer", function()
       expect(b:text()).to.equal("a\nbb")
     end)
 
+    -- The flip is one-directional, so replaying the lines alone does not put
+    -- noeol back: the inverse record has to carry it. Without that, a file that
+    -- is exactly "\n" comes back from `dd` + `u` reading as zero lines, and the
+    -- next :w truncates it to zero bytes.
+    it("restores a blank-line file's newline on undo (and drops it on redo)", function()
+      local b = buffer.new("\n")
+      b:undo_checkpoint()
+      b:delete()                                -- dd on the only line
+      b:undo_checkpoint()
+      expect(b.noeol).to.be(true)               -- zero lines: zero bytes
+      expect(b:text()).to.equal("")
+      b:undo()
+      expect(b.noeol).to.be(false)              -- back to one blank line
+      expect(b:text()).to.equal("\n")
+      b:redo()
+      expect(b:text()).to.equal("")             -- symmetric the other way
+      b:undo()
+      expect(b:text()).to.equal("\n")
+    end)
+
+    it("restores an unterminated file's noeol on undo", function()
+      local b = buffer.new("abc")
+      b:undo_checkpoint()
+      b:delete()
+      b:undo_checkpoint()
+      b:undo()
+      expect(b.noeol).to.be(true)
+      expect(b:text()).to.equal("abc")          -- still unterminated, as opened
+    end)
+
     it("round-trips text() for both eol and noeol", function()
       for _, s in ipairs({ "a\nb\nc\n", "a\nb\nc", "", "\n", "x" }) do
         expect(buffer.new(s):text()).to.equal(s)
