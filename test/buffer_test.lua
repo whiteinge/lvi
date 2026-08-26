@@ -38,6 +38,44 @@ describe("buffer", function()
       expect(b.noeol).to.be(false)
     end)
 
+    -- On an empty buffer noeol is vi's "0 lines" state, not a line missing its
+    -- terminator, so it has to move when the buffer crosses that boundary --
+    -- otherwise typing into a new (or 0-byte) file writes it back without a
+    -- final newline. Checked against vim: `vim new; ihello; :wq` -> "hello\n",
+    -- and `:%d` + `:w` on any file -> zero bytes.
+    it("gives a new/empty file's first typed line a final newline", function()
+      local b = buffer.new("")                  -- editing a file that does not exist
+      expect(b:text()).to.equal("")             -- untouched: still the empty file
+      b:set(1, "hello")
+      expect(b.noeol).to.be(false)
+      expect(b:text()).to.equal("hello\n")
+    end)
+
+    it("re-empties to the empty file when every line is deleted", function()
+      local b = buffer.new("a\nb\n")
+      b:delete()
+      expect(b:nlines()).to.equal(1)
+      expect(b.noeol).to.be(true)
+      expect(b:text()).to.equal("")
+    end)
+
+    it("restores the empty file's zero bytes on undo", function()
+      local b = buffer.new("")
+      b:undo_checkpoint()
+      b:set(1, "hello")
+      b:undo_checkpoint()
+      b:undo()
+      expect(b.noeol).to.be(true)
+      expect(b:text()).to.equal("")
+    end)
+
+    it("keeps noeol on a genuinely unterminated file across edits", function()
+      local b = buffer.new("a\nb")
+      b:set(2, "bb")
+      expect(b.noeol).to.be(true)
+      expect(b:text()).to.equal("a\nbb")
+    end)
+
     it("round-trips text() for both eol and noeol", function()
       for _, s in ipairs({ "a\nb\nc\n", "a\nb\nc", "", "\n", "x" }) do
         expect(buffer.new(s):text()).to.equal(s)

@@ -18,7 +18,9 @@
 ---   * a buffer always has at least one line (an empty file is {""}),
 ---   * a line never contains a newline (enforced by set/insert),
 ---   * noeol records whether the source file lacked a final newline, so
----     read/write round-trips byte-for-byte.
+---     read/write round-trips byte-for-byte; on an empty buffer it instead
+---     marks vi's "0 lines" state (the empty file), and splice() maintains it
+---     across the empty/non-empty boundary.
 
 local M = {}
 
@@ -172,6 +174,7 @@ end
 -- is applied once, at the end, so undoing a whole-buffer delete round-trips.
 function Buffer:splice(start, ndel, ins)
   local lines = self.lines
+  local was_empty = #lines == 1 and lines[1] == ""
   local old = {}
   for i = start, start + ndel - 1 do old[#old + 1] = lines[i] end
   local nins = #ins
@@ -190,6 +193,18 @@ function Buffer:splice(start, ndel, ins)
   end
   local guard = false
   if #lines == 0 then lines[1] = ""; guard = true end
+  -- noeol has to be MAINTAINED here, not just set at open. The >=1-line
+  -- invariant represents both the empty file (zero bytes) and a one-blank-line
+  -- file ("\n") as {""}, and noeol is the only thing telling them apart -- so on
+  -- an empty buffer it is really vi's "0 lines" state, not a property of any
+  -- line the user can see. Leaving emptiness means the first line is now a real
+  -- line and gets its terminator (typing into a new or 0-byte file must not
+  -- produce a noeol file); entering it means the buffer is back to zero lines,
+  -- which vi writes as zero bytes. Doing it here rather than at write time is
+  -- undo-symmetric for free: undo replays the inverse splice, which lands on
+  -- whichever side of the boundary it came from.
+  local now_empty = #lines == 1 and lines[1] == ""
+  if now_empty then self.noeol = true elseif was_empty then self.noeol = false end
   -- Inverse: replace the region now holding `ins` with `old`. If the guard
   -- fired, that region is the single guard line at 1.
   record(self, { start = guard and 1 or start, ndel = guard and 1 or nins, ins = old })
