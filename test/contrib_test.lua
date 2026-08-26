@@ -1505,7 +1505,7 @@ describe("contrib", function()
         local out = bash({ LVI = STUB, LVI_WID = "w1" },
                          "cd " .. dir .. " && printf %s \"$LVI_CWD\"")
         expect(out).to_not.equal(dir)                        -- not where we cd'd
-        expect(out:find("lvi", 1, true)).to.exist()          -- the repo we sourced from
+        expect(out).to.equal(pwd)                            -- where the shell started
         cleanup(dir)
       end)
 
