@@ -16,6 +16,8 @@ Linux, macOS, BSD, and WSL.
   highlighting, quickfix, completion, diffing, multi-pane editing, folding,
   linting, formatting and many more live — the external tools that turn
   lvi into an IDE.
+- 🧭 **[Migrating from Vim](VIM.md)** translates the vim features and plugins
+  you use daily into the lvi key, tool, or rc line that stands in for them.
 
 ## Why lvi?
 
@@ -39,7 +41,8 @@ Linux, macOS, BSD, and WSL.
 ## What it isn't (non-goals)
 
 - **A Vim/Neovim clone.** No Vimscript, no plugin runtime, no in-process
-  extension language. The extensibility comes from external tools: the
+  extension language. ([Migrating from Vim](VIM.md) maps what you use onto what
+  replaces it.) The extensibility comes from external tools: the
   socket plus the shell; the editor process keeps state and logic, then
   farms functionality out via a few hooks and documented APIs.
 - **Not a reimplementation of ex.** Unrecognized ex commands are delegated to the
