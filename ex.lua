@@ -1358,7 +1358,8 @@ end)
 
 -- :on EVENT [command] -- run a shell command when EVENT fires (autocmd-ish,
 -- but pointed at external tools). EVENT is change|bufenter|bufleave|bufdelete.
--- Multiple hooks per event compose; `:on EVENT` with no command clears them.
+-- Multiple hooks per event compose; `:on EVENT` with no command clears them,
+-- and `:on! EVENT command` retracts just that one (see below).
 -- Hooks run detached and non-blocking (editor.lua's spawn_bg). Only
 -- keyboard-initiated changes fire `change`, so a hook's own socket-driven
 -- edits can't retrigger it (see editor.lua). The buf* events fire on buffer
@@ -1369,10 +1370,41 @@ end)
 -- command with the tty and inserts its stdout -- the completion funnel (see
 -- editor.lua's complete_run and normal.lua). Being single, it REPLACES on
 -- re-register instead of composing.
+--
+-- `:on! EVENT command` removes the hook whose command is exactly `command`,
+-- leaving every other hook on that event in place. Adding composes, so removing
+-- has to be per-item too: without it the only retraction is `:on EVENT`, which
+-- takes down the other tools' hooks along with yours -- so a tool that arms a
+-- hook temporarily (contrib/lvi-send's on-write runner) could never disarm.
+-- Matching on the exact string keeps this off the state-reading path the hooks
+-- are otherwise held to: a tool retracts the string it registered, so it needs
+-- no :hooks read (whose read-to-write gap would race the user) to disarm. It is
+-- the mirror of the dedupe below -- same comparison, opposite verb -- so a
+-- command that :on would refuse to add twice is one :on! can remove. Removing a
+-- hook that was never registered is a silent no-op for that symmetry. The bang
+-- REQUIRES a command: bare `:on! EVENT` is an error rather than a synonym for
+-- the clear-all, since a script whose command variable came out empty would
+-- otherwise nuke every hook on the event -- the exact accident this exists to
+-- prevent.
 def("on", function(ed, c)
   local event, rest = c.args:match("^(%S+)%s*(.-)%s*$")
   if not event or event == "" then return "usage: on EVENT [command]", "err" end
   if not EVENTS[event] then return "unknown event: " .. event, "err" end
+  if c.bang then
+    if rest == "" then return "usage: on! EVENT command", "err" end
+    local hooks = ed.hooks[event]
+    if not hooks then return "", "ok" end
+    for i, h in ipairs(hooks) do
+      if h == rest then
+        table.remove(hooks, i)
+        -- Drop the empty list rather than leave one behind: :hooks and the
+        -- fire path both read "no hooks" as absent, not as a zero-length table.
+        if #hooks == 0 then ed.hooks[event] = nil end
+        return "", "ok"
+      end
+    end
+    return "", "ok"
+  end
   if rest == "" then ed.hooks[event] = nil; return "", "ok" end
   -- `complete` names a single completer (you can't merge two pickers), so it
   -- REPLACES; the fire-and-forget events compose (append).

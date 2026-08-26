@@ -726,9 +726,15 @@ spaces and tabs included.
 	for a fold tool that recomputes where the folds go (*contrib/lvi-fold*), so
 	an *on bufenter* re-fold never re-closes what you opened.
 
-*on* _event_ [_cmd_]
+*on*[*!*] _event_ [_cmd_]
 	Run shell _cmd_ when _event_ fires (debounced/non-blocking); no _cmd_ clears
-	that event's hooks. Re-registering an identical _cmd_ is a no-op, so a
+	that event's hooks. *on!* _event_ _cmd_ instead removes the one hook whose
+	command is exactly _cmd_ and leaves the event's others alone, which is the
+	retraction a tool that arms a hook temporarily needs (*contrib/lvi-send*
+	disarms its on-write runner this way; clearing the event would take down
+	your linter and everything else on it). Removing a hook that was never
+	registered is a no-op, but *on!* with no _cmd_ is an error, not a synonym
+	for the clear-all. Re-registering an identical _cmd_ is a no-op, so a
 	script that wires hooks can be re-run without stacking duplicates. _event_ is *change* (a keyboard edit settled -- for live
 	highlighting), *write* (after a successful *w*/*wq*/*x*), *scroll* (a keyboard
 	action moved the viewport top -- fired at once, undebounced, with the new top
