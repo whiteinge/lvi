@@ -427,7 +427,7 @@ argument is taken verbatim, no expansion (*:e -- foo $bar.txt* opens exactly
 that file). Without it the script must backslash-escape every metacharacter,
 spaces and tabs included.
 
-\[_range_]*w*[*!*] [[*>>*]_file_ | *!*_cmd_], *wq*, *x*
+\[_range_]*w*[*!*] [[*>>*]_file_ | *!*_cmd_], \[_range_]*wq*[*!*], \[_range_]*x*[*!*]
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
 	untouched). *ZZ* is *x*. If the file on disk changed since lvi last read or
@@ -451,10 +451,15 @@ spaces and tabs included.
 	copy. A partial range, an append, and a pipe write bytes elsewhere, so they
 	leave the buffer's name and modified flag untouched.
 
-	Two deviations. *w* _file_ renames the buffer to _file_ (vim's *saveas*),
-	where POSIX leaves the current pathname alone; use *f* _file_ to rename
-	without writing. And *wq*/*x* reject *>>* and *!*_cmd_: an append leaves the
-	buffer modified, so *wq >>* would quit and discard your changes.
+	*wq* and *x* take the range too, but refuse a partial one unless forced
+	(*1,2wq!*): the lines outside it are not written, and quitting would discard
+	them. They also reject *>>* and *!*_cmd_, which are write-only forms -- an
+	append leaves the buffer modified, so *wq >>* would quit and discard your
+	changes.
+
+	One deviation: *w* _file_ renames the buffer to _file_ (vim's *saveas*), where
+	POSIX leaves the current pathname alone; use *f* _file_ to rename without
+	writing.
 
 *wa*[*!*], *xa*[*!*]
 	Write every modified buffer to its own path (*wa*, alias *wall*), or write

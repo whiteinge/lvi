@@ -838,22 +838,19 @@ end)
 -- The `write` hook fires for every form that names a file, including a save-as
 -- elsewhere (as it always has). It does NOT fire for `w !cmd`: the command is
 -- opaque, so lvi cannot say whether a file was written or which one.
-def("w write", function(ed, c)
-  -- In the command window, bare :w runs the current line instead of writing.
-  -- :w <file> still saves normally -- a handy "dump my recent commands to disk".
-  if ed.buf.cmdwin_origin and c.args == "" then return cmdwin_exec(ed) end
+-- The addressed range, defaulting to the whole buffer; `whole` is the flag the
+-- write forms turn on, so both :w and :wq/:x read it the same way.
+local function write_range(ed, c)
   local nlines = ed.buf:nlines()
-  local from, to = 1, nlines
-  if c.a then from, to = line_range(ed, c.a, c.b) end
-  local whole = (from == 1 and to == nlines)
+  if not c.a then return 1, nlines, true end
+  local from, to = line_range(ed, c.a, c.b)
+  return from, to, (from == 1 and to == nlines)
+end
 
-  if c.args:sub(1, 1) == "!" then
-    return do_write_cmd(ed, from, to, c.args:sub(2))
-  end
-
-  local target, append = c.args, false
-  local tail = c.args:match("^>>%s*(.*)$")
-  if tail then target, append = tail, true end       -- bare `>>` appends to our own file
+-- The file-writing core, shared by :w and :wq/:x so the two cannot drift (they
+-- had: :w grew POSIX's forms and the range while :wq kept filing `>>log` as a
+-- literal name and ignoring its address). Returns payload, status.
+local function do_write_file(ed, c, from, to, whole, target, append)
   local p, xerr = expand_file(ed, target)
   if xerr then return xerr, "err" end
   p = p or ed.buf.path
@@ -882,6 +879,22 @@ def("w write", function(ed, c)
   if ed.fire_event then ed.fire_event("write") end
   return ('"%s" %dL, %dB %s'):format(p, to - from + 1, n,
                                      append and "appended" or "written"), "ok"
+end
+
+def("w write", function(ed, c)
+  -- In the command window, bare :w runs the current line instead of writing.
+  -- :w <file> still saves normally -- a handy "dump my recent commands to disk".
+  if ed.buf.cmdwin_origin and c.args == "" then return cmdwin_exec(ed) end
+  local from, to, whole = write_range(ed, c)
+
+  if c.args:sub(1, 1) == "!" then
+    return do_write_cmd(ed, from, to, c.args:sub(2))
+  end
+
+  local target, append = c.args, false
+  local tail = c.args:match("^>>%s*(.*)$")
+  if tail then target, append = tail, true end       -- bare `>>` appends to our own file
+  return do_write_file(ed, c, from, to, whole, target, append)
 end)
 
 -- Snapshot the live buffer (unsaved edits and all) to the per-view scratch
@@ -912,29 +925,21 @@ end)
 -- metacharacter expand_file expands: `:wq !cat` took the whole thing as a file
 -- name, created `!cat`, repointed the buffer at it and quit.
 def("wq x", function(ed, c)
-  if c.name == "x" and c.args == "" and not ed.buf.modified then
+  local from, to, whole = write_range(ed, c)
+  if c.name == "x" and c.args == "" and whole and not ed.buf.modified then
     ed.running = false
     return "", "ok"
   end
   if c.args:sub(1, 1) == "!" or c.args:sub(1, 2) == ">>" then
     return (":%s takes a file name only -- write with :w, then :q"):format(c.name), "err"
   end
-  local p, xerr = expand_file(ed, c.args)
-  if xerr then return xerr, "err" end
-  p = p or ed.buf.path
-  if not p then return "No file name", "err" end
-  if readonly_block(ed.buf, p, c.bang) then
-    return "'readonly' option is set (add ! to override)", "err"
+  if not whole and not c.bang then
+    return "Use ! to write partial buffer", "err"
   end
-  if not c.bang and write_conflict(ed, ed.buf, p) then
-    return "File changed since last read (add ! to override)", "err"
-  end
-  local ok, n = pcall(ed.buf.write, ed.buf, p)
-  if not ok then return "write failed: " .. tostring(n), "err" end
-  if ed.stamp then ed.stamp(ed.buf) end
-  if ed.fire_event then ed.fire_event("write") end
+  local payload, status = do_write_file(ed, c, from, to, whole, c.args, false)
+  if status ~= "ok" then return payload, status end
   ed.running = false
-  return "", "ok"
+  return "", "ok"                                    -- quitting: nothing to print
 end)
 
 -- :[range]d[elete] [buffer] -- delete the lines, saving them to a register just

@@ -645,6 +645,36 @@ describe("ex.dispatch", function()
       expect(ed.running).to.be(false)
       os.remove(target)
     end)
+    -- The range :wq shares with :w, and vim's E140 rule for it: the lines
+    -- outside a partial range are not written, so quitting on one discards
+    -- them. Forced, that is your call to make.
+    it(":wq refuses a partial range unless forced, then honors it", function()
+      local ed = ed_with("a\nb\nc\nd\n")
+      local target = os.tmpname()
+      ed.buf.path = target
+      local msg, s = ex.dispatch(ed, "1,2wq")
+      expect(s).to.equal("err")
+      expect(msg:find("partial buffer", 1, true)).to.exist()
+      expect(ed.running).to.be(true)
+
+      local _, s2 = ex.dispatch(ed, "1,2wq!")
+      expect(s2).to.equal("ok")
+      expect(ed.running).to.be(false)
+      local f = io.open(target, "rb"); local body = f:read("*a"); f:close()
+      expect(body).to.equal("a\nb\n")               -- the range, not the buffer
+      os.remove(target)
+    end)
+    it(":x with a whole-buffer range still skips a clean write", function()
+      local ed = ed_with("a\nb\n")
+      local target = os.tmpname(); os.remove(target)
+      ed.buf.path = target
+      local _, s = ex.dispatch(ed, "1,2x")
+      expect(s).to.equal("ok")
+      expect(ed.running).to.be(false)
+      local f = io.open(target, "rb")
+      expect(f).to_not.exist()                       -- clean: never written
+      if f then f:close(); os.remove(target) end
+    end)
     it(":wa in a headless single-buffer ed writes the lone buffer", function()
       local ed = ed_with("a\nb\n")               -- no ed.buffers -> fallback path
       local target = os.tmpname()
