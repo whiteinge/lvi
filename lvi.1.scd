@@ -431,10 +431,11 @@ spaces and tabs included.
 	Write (to _file_ or the current path); write and quit; write and quit but
 	only if the buffer is modified (so *x* leaves an unchanged file's timestamp
 	untouched). *ZZ* is *x*. If the file on disk changed since lvi last read or
-	wrote it (another writer), the write is refused; *w!* overrides. During the
-	write the full new text sits in a sibling _file.lvi~_ safety copy, removed
-	when the write completes -- a surviving _.lvi~_ means the write was cut
-	short and holds the intended contents.
+	wrote it (another writer), the write is refused; *w!* overrides. Every write
+	that _replaces_ a file first puts the full new text in a sibling _file.lvi~_
+	safety copy, removed when the write completes -- a surviving _.lvi~_ means
+	the write was cut short and holds the intended contents. An append has
+	nothing to lose, so it skips the copy.
 
 	*>>* appends to _file_ rather than replacing it, and *!*_cmd_ pipes the lines
 	to _cmd_'s standard input rather than to a file. _range_ defaults to the whole
@@ -447,9 +448,9 @@ spaces and tabs included.
 	Then *e!* to re-read it, since a pipe does not tell lvi what it wrote.
 
 	Only writing the whole buffer to a file saves the buffer *as* that file: it
-	takes the name and clears the modified flag, and it alone gets the _.lvi~_
-	copy. A partial range, an append, and a pipe write bytes elsewhere, so they
-	leave the buffer's name and modified flag untouched.
+	takes the name and clears the modified flag. A partial range, an append, and
+	a pipe write bytes elsewhere, so they leave the buffer's name and modified
+	flag untouched.
 
 	*wq* and *x* take the range too, but refuse a partial one unless forced
 	(*1,2wq!*): the lines outside it are not written, and quitting would discard

@@ -439,6 +439,32 @@ describe("ex.dispatch", function()
       expect(s).to.equal("err")
     end)
 
+    -- The .lvi~ copy is about the bytes already in the file, not the buffer's
+    -- identity: `:1,2w` with no name REPLACES the buffer's own file, and a
+    -- write cut short there would leave neither the old text nor the new.
+    it("a partial write reaps its .lvi~ safety copy", function()
+      local ed = ed_with("a\nb\nc\n")
+      local tmp = os.tmpname()
+      ed.buf.path = tmp
+      local _, s = ex.dispatch(ed, "1,2w " .. tmp)   -- replaces our OWN file
+      expect(s).to.equal("ok")
+      expect(slurp(tmp)).to.equal("a\nb\n")
+      expect(io.open(tmp .. ".lvi~", "rb")).to_not.exist()   -- removed on success
+      os.remove(tmp)
+    end)
+
+    -- A directory: the sibling copy opens fine, the target cannot -- so this is
+    -- the branch that has a copy on disk and has to reap it.
+    it("a partial write that cannot open the target reaps the copy anyway", function()
+      local ed = ed_with("a\nb\nc\n")
+      local dir = os.tmpname(); os.remove(dir)
+      os.execute("mkdir -p '" .. dir .. "'")
+      local _, s = ex.dispatch(ed, "1,2w " .. dir)
+      expect(s).to.equal("err")
+      expect(io.open(dir .. ".lvi~", "rb")).to_not.exist()   -- no stray copy
+      os.execute("rmdir '" .. dir .. "'")
+    end)
+
     it("w! before a name is still a forced file write, not a pipe", function()
       local ed = ed_with("a\n")
       local tmp = os.tmpname()

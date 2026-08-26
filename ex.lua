@@ -436,16 +436,33 @@ end
 
 -- Write bytes to a path, replacing or appending. The plain-bytes counterpart
 -- to Buffer:write, for the writes that are NOT the buffer saving itself: a
--- partial range, an append, the :wbuf snapshot. None of those carry the
--- buffer's identity, so they skip the backup-then-write dance -- the .lvi~
--- copy protects the file the buffer IS, and a foreign target has no buffer to
--- be recovered from. Returns true, or nil + a message.
-local function write_text(path, body, append)
+-- partial range, an append, the :wbuf snapshot. Returns true, or nil + a
+-- message.
+--
+-- `backup` runs Buffer:write's dance -- the whole new text into PATH.lvi~
+-- first, the target rewritten in place after, the copy removed on success --
+-- and every :w that REPLACES a file asks for it. What that protects is not the
+-- buffer's identity but the bytes already in the file: replacing them destroys
+-- them, and a write cut short leaves neither the old nor the new, whoever's
+-- file it is. (`:1,2w` with no name replaces the buffer's OWN file, which was
+-- the case that made the identity reading wrong.) An append only adds, so it
+-- has nothing to lose; :wbuf's snapshot is regenerated on demand.
+local function write_text(path, body, append, backup)
+  local bak = path .. ".lvi~"
+  local bf = backup and not append and io.open(bak, "wb")
+  if bf then bf:write(body); bf:close() end
   local f, oerr = io.open(path, append and "ab" or "wb")
-  if not f then return nil, ("cannot open %s: %s"):format(path, tostring(oerr)) end
+  if not f then
+    if bf then os.remove(bak) end               -- target untouched; copy not needed
+    return nil, ("cannot open %s: %s"):format(path, tostring(oerr))
+  end
   local ok, werr = f:write(body)
   f:close()
-  if not ok then return nil, ("short write to %s: %s"):format(path, tostring(werr)) end
+  if not ok then
+    return nil, ("short write to %s: %s%s"):format(path, tostring(werr),
+      bf and (" (new text preserved in " .. bak .. ")") or "")
+  end
+  if bf then os.remove(bak) end
   return true
 end
 
@@ -869,7 +886,7 @@ local function do_write_file(ed, c, from, to, whole, target, append)
     n = err
   else
     local body = ed.buf:text(from, to)
-    local ok, werr = write_text(p, body, append)
+    local ok, werr = write_text(p, body, append, true)
     if not ok then return "write failed: " .. werr, "err" end
     n = #body
   end
