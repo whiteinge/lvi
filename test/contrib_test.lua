@@ -1511,6 +1511,120 @@ cat >> '%s/sent'
       cleanup(d)
     end)
 
+    -- lvi-lsp. A language server is a subprocess speaking framed JSON-RPC, so
+    -- the double here IS a server: $LVI_LSP_CMD (the documented "try a server
+    -- with no adapter" knob) points at a script that drains requests and
+    -- replies with a canned answer, so both halves are assertable with no
+    -- language server installed -- the ENTRIES built from the reply, and the
+    -- POSITION asked about, read from the tool's own $LVI_LSP_DEBUG transcript
+    -- rather than from the fake (the fake's copy is written by a background
+    -- drain that need not have flushed by the time the tool exits). The
+    -- `window/log` notification in the middle is deliberate: an unsolicited
+    -- message must not be mistaken for the reply.
+    describe("lvi-lsp", function()
+      local FAKE = [==[
+cat > /dev/null &
+emit() { n=$(printf %s "$1" | wc -c); printf 'Content-Length: %d\r\n\r\n%s' "$n" "$1"; }
+emit '{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}'
+emit '{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"noise"}}'
+emit "$(cat "$ANSWER")"
+emit '{"jsonrpc":"2.0","id":3,"result":null}'
+wait
+]==]
+      -- The buffer's line 2 is `const ü = näive + x;`: the identifier starts at
+      -- BYTE 12 and at UTF-16 CHARACTER 10, so a tool that forwards the byte
+      -- column unconverted is caught here.
+      local BUF = "const x = 1;\nconst \195\188 = n\195\164ive + x;\n"
+      -- ...and the target's line 5 is `  const naïve = 1;`: UTF-16 characters
+      -- 8..13 are BYTES 9..14, which is what the entry must carry.
+      local TARGET = "a\nb\nc\nd\n  const na\195\175ve = 1;\n"
+
+      local function env(d, answer, line, col)
+        write(d .. "/fake", FAKE)
+        write(d .. "/answer", answer)
+        return { LVI = STUB, STUB_DIR = d, LVI_SOCK = d .. "/sock", LVI_WID = "w1",
+                 LVI_LINE = tostring(line), LVI_COL = tostring(col), LVI_CWORD = "naive",
+                 ANSWER = d .. "/answer", LVI_LSP_DEBUG = d .. "/debug",
+                 LVI_LSP_CMD = "sh " .. d .. "/fake" }
+      end
+
+      it("def converts the cursor's byte column to UTF-16 for the query", function()
+        local d = stub({ buffer = BUF, path = "buf.ts\n" })
+        write(d .. "/other.ts", TARGET)
+        run(env(d, ('{"jsonrpc":"2.0","id":2,"result":[{"uri":"file://%s/other.ts",'
+          .. '"range":{"start":{"line":4,"character":8},"end":{"line":4,"character":13}}}]}')
+          :format(d), 2, 12), "contrib/lvi-lsp def")
+        expect(read(d .. "/debug"):find('"line":1,"character":10', 1, true)).to.exist()
+        cleanup(d)
+      end)
+
+      it("def turns the reply's UTF-16 range into byte columns and jumps", function()
+        local d = stub({ buffer = BUF, path = "buf.ts\n" })
+        write(d .. "/other.ts", TARGET)
+        run(env(d, ('{"jsonrpc":"2.0","id":2,"result":[{"uri":"file://%s/other.ts",'
+          .. '"range":{"start":{"line":4,"character":8},"end":{"line":4,"character":13}}}]}')
+          :format(d), 2, 12), "contrib/lvi-lsp def")
+        expect(read(d .. "/sock.lists/def"))
+          .to.equal(("%s/other.ts:5.9-14: const na\195\175ve = 1;\n"):format(d))
+        expect(read(d .. "/log"):find("pos 5 9 byte jump", 1, true)).to.exist()
+        cleanup(d)
+      end)
+
+      -- The buffer's own hits must read from the LIVE buffer, not the file: here
+      -- there is no file at all on disk, and the entries still carry its text.
+      -- One definition is a jump, so it must not take n/N off whatever list you
+      -- were stepping; two candidates are a list, so it must.
+      it("def takes the step keys only when the answer is ambiguous", function()
+        local one = ('{"jsonrpc":"2.0","id":2,"result":[{"uri":"file://%s/other.ts",'
+          .. '"range":{"start":{"line":4,"character":8},"end":{"line":4,"character":13}}}]}')
+        local d = stub({ buffer = BUF, path = "buf.ts\n" })
+        write(d .. "/other.ts", TARGET)
+        run(env(d, one:format(d), 2, 12), "contrib/lvi-lsp def")
+        expect(read(d .. "/sock.focus")).to_not.equal("def\n")
+        run(env(d, (one:format(d):gsub("%]%}$", ',{"uri":"file://' .. d .. '/other.ts",'
+          .. '"range":{"start":{"line":3,"character":0},"end":{"line":3,"character":1}}}]}')),
+          2, 12), "contrib/lvi-lsp def")
+        expect(read(d .. "/sock.focus")).to.equal("def\n")
+        cleanup(d)
+      end)
+
+      it("refs lists every hit, seeds at the cursor, and does not jump", function()
+        local d = stub({ buffer = BUF })
+        write(d .. "/path", d .. "/buf.ts\n")
+        run(env(d, '{"jsonrpc":"2.0","id":2,"result":['
+          .. '{"uri":"file://' .. d .. '/buf.ts","range":{"start":{"line":1,"character":10},'
+          .. '"end":{"line":1,"character":15}}},'
+          .. '{"uri":"file://' .. d .. '/buf.ts","range":{"start":{"line":0,"character":6},'
+          .. '"end":{"line":0,"character":7}}}]}', 2, 12), "contrib/lvi-lsp refs")
+        local list = read(d .. "/sock.lists/refs")
+        expect(select(2, list:gsub("\n", ""))).to.equal(2)      -- both hits kept
+        expect(list:find(":2.12-17: const", 1, true)).to.exist() -- bytes, from the live buffer
+        expect(read(d .. "/log"):find("jump", 1, true)).to_not.exist()
+        expect(read(d .. "/log"):find("status refs [2/2]", 1, true)).to.exist()
+        cleanup(d)
+      end)
+
+      it("def says so when the server has no answer, and leaves a clean list", function()
+        local d = stub({ buffer = BUF, path = "buf.ts\n" })
+        run(env(d, '{"jsonrpc":"2.0","id":2,"result":null}', 2, 12), "contrib/lvi-lsp def")
+        expect(read(d .. "/sock.lists/def")).to.equal("")
+        expect(read(d .. "/log"):find("status def [0/0]", 1, true)).to.exist()
+        expect(read(d .. "/log"):find("msge lvi%-lsp: no definition")).to.exist()
+        cleanup(d)
+      end)
+
+      it("lvi-lsp-deno sends enable and the nearest deno.json, or the query is empty", function()
+        local d = tmpdir()
+        os.execute(("mkdir -p '%s/js/deep' && printf '{}\\n' > '%s/deno.json'"):format(d, d))
+        local out = run({}, ("contrib/lvi-lsp-deno '%s/js/deep/a.jsx'"):format(d))
+        expect(out:find("cmd=deno lsp", 1, true)).to.exist()
+        expect(out:find("languageid=javascriptreact", 1, true)).to.exist()
+        expect(out:find('"enable":true', 1, true)).to.exist()
+        expect(out:find(('"config":"%s/deno.json"'):format(d), 1, true)).to.exist()
+        cleanup(d)
+      end)
+    end)
+
     -- lvi-cmd. The picker itself needs a terminal, so $LVI_PICKER points at a
     -- stub that saves the rows it was offered and echoes back the one matching
     -- $PICK -- which makes both halves assertable: what the tool put in front

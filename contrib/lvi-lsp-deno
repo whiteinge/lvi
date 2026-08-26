@@ -1,0 +1,54 @@
+#!/bin/sh
+# lvi-lsp-deno -- `deno lsp` backend for lvi-lsp (js/jsx/ts/tsx).
+#
+# Contract (see lvi-lsp): the buffer's real filename as $1; print the server
+# command, the LSP languageId for that file, and the initializationOptions.
+#
+# TWO OPTIONS ARE LOAD-BEARING and both fail silently when missing. Deno's
+# server answers every query with `null` unless `enable` is true, and it
+# resolves an import map only when it knows which config file to read -- so a
+# project whose imports are aliases (`import * as core from 'core'`) looks like
+# a project with no definitions at all. Neither is an error: you get an empty
+# list and no reason. So `enable` is always sent, and `config` is the nearest
+# deno.json(c) walking up from the file, absolute (the server resolves a
+# relative one against its own cwd, not ours).
+#
+# `lint` is on because the server then also reports deno lint's findings as
+# diagnostics -- which lvi-lsp ignores, being a def/refs tool, but a future
+# diagnostics consumer gets them for free without a second adapter.
+#
+# The languageId matters for JSX: `javascript` and `javascriptreact` are
+# different grammars to the server, and a .jsx file typed as the former parses
+# as far as its first tag.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+command -v deno >/dev/null 2>&1 || { echo "lvi-lsp-deno: deno not found on PATH" >&2; exit 127; }
+
+f=${1:?lvi-lsp-deno: needs the buffer filename}
+case $f in
+  *.jsx) lang=javascriptreact ;;
+  *.tsx) lang=typescriptreact ;;
+  *.ts|*.mts|*.cts) lang=typescript ;;
+  *) lang=javascript ;;
+esac
+
+# The nearest deno.json(c) at or above the file's directory.
+dir=$(CDPATH= cd -- "$(dirname -- "$f")" 2>/dev/null && pwd) || dir=$PWD
+conf=
+while [ -n "$dir" ]; do
+  for c in deno.json deno.jsonc; do
+    [ -f "$dir/$c" ] && { conf="$dir/$c"; break; }
+  done
+  [ -n "$conf" ] && break
+  [ "$dir" = / ] && break
+  dir=$(dirname -- "$dir")
+done
+
+echo "cmd=deno lsp"
+echo "languageid=$lang"
+if [ -n "$conf" ]; then
+  echo "init={\"enable\":true,\"lint\":true,\"config\":\"$conf\"}"
+else
+  echo "init={\"enable\":true,\"lint\":true}"
+fi

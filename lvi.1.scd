@@ -1371,6 +1371,35 @@ below, with the happy-path rc lines that turn it on:
 	map \\t :wbuf<CR>:silent !lvi-tags<CR>
 	```
 
+*lvi-lsp* -- ask a language server
+	Definition and references from a language server, as lists: *def* jumps to
+	where the symbol under the cursor is defined, *refs* lists every use. The
+	server is spawned per press, asked one question, and killed -- no daemon,
+	and no stale mirror of the buffer, since the text goes over with the
+	question. It costs a second or two on a mid-size project, which is the trade
+	being made:
+
+	```
+	map <C-]> :bg lvi-lsp def<CR>
+	map \\u :bg lvi-lsp refs<CR>
+	map ]u :bg lvi-list next refs<CR>
+	map [u :bg lvi-list prev refs<CR>
+	hi def bg=22 pri=12
+	hi refs bg=22 pri=12
+	```
+
+	*def* is complete, since a definition lies along an import out of the file you
+	are in; *refs* is as complete as the module graph the server has loaded, which
+	for a one-shot is what that file reaches -- so asking for the uses of a symbol
+	from the file that defines it can come back empty.
+
+	A server is an adapter of three lines (*deno lsp* ships), so this is also the
+	demonstration that lvi and LSP fit: the socket already lets an outside
+	program edit, jump, and paint, which is all a language client ever does.
+	*$LVI_LSP_CMD* runs a server directly, for trying one before writing its
+	adapter. What lvi-lsp does not do is hover, rename, or diagnostics -- for
+	diagnostics see *lvi-lint*, which needs no server.
+
 *lvi-fold* -- fold by structure
 	The core ships the fold mechanism (*zf*/*zo*/*zc*/*zR*); *lvi-fold* supplies
 	the policy, folding by *marker* or *indent*:

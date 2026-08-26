@@ -301,6 +301,38 @@ map \c :silent !lvi-cmd<CR>
 map \t :wbuf<CR>:silent !lvi-tags<CR>
 
 " }}}
+" ---- language server (def / refs) --------------------------------------- {{{
+
+" lvi-lsp asks a language server the two questions ctags cannot answer well:
+" where is this defined (following imports and re-exports, not matching names),
+" and where is it used. Both arrive as lists, so n/N and the counter work as
+" they do everywhere else; \u aims them at `refs`, and ]u/[u are pinned keys
+" that never steal focus from search. <C-]> is vi's tag jump, left free by the
+" core (there is no tags support in it to shadow).
+"
+" The server is spawned per press and killed -- no daemon, nothing to keep in
+" sync, and about a second on a mid-size project. Non-interactive, so :bg.
+" One consequence of one-shot: `def` always works (it follows an import out of
+" this file), while `refs` only knows the modules this file reaches -- ask for
+" the uses of a symbol from the file that defines it and the answer is empty.
+map <C-]> :bg lvi-lsp def<CR>          " jump to the definition
+map \u :bg lvi-lsp refs<CR>            " list the uses (n/N steps them)
+map ]u :bg lvi-list next refs<CR>      " ...or step them with pinned keys
+map [u :bg lvi-list prev refs<CR>
+" A group with no style is invisible, so theme the two lists; pri lifts their
+" marks above syntax paint, which would otherwise own the cell.
+hi def      bg=22 pri=12
+hi def-cur  bg=28 pri=13
+hi refs     bg=22 pri=12
+hi refs-cur bg=28 pri=13
+
+" A server per language is an adapter of three lines; `deno lsp` ships as
+" lvi-lsp-deno. To try a server with no adapter yet, name it directly:
+"     export LVI_LSP_CMD='gopls serve'
+" When a server answers nothing, $LVI_LSP_DEBUG is the first thing to reach for:
+" several reply `null` rather than an error when an option they need is missing.
+
+" }}}
 " ---- git changes ------------------------------------------------------- {{{
 
 " git MENU (\g). lvi-gitchanges turns `git diff` for the current file into a

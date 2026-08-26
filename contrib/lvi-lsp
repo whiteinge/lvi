@@ -1,0 +1,473 @@
+#!/usr/bin/env luajit
+-- lvi-lsp def|refs [-w auto|WID] -- ask a language server about the symbol
+-- under the cursor, and hand the answer to `lvi-list`.
+--
+-- ONE-SHOT BY DESIGN: a server is spawned, asked one question, and killed. No
+-- daemon to manage, and nothing to keep in sync -- the buffer text goes over
+-- with the question, so the answer is always about the buffer as it is now. The
+-- price is the server's project load on every press (1-2s on a mid-size
+-- project; the handshake itself is ~15ms). A resident server would answer in
+-- tens of milliseconds, and is the upgrade path if you find you want it.
+--
+-- `def` IS COMPLETE; `refs` IS AS COMPLETE AS THE GRAPH. A definition lies
+-- along an edge leading OUT of the file you are in -- the import you can see --
+-- so a server that has read this one file can always follow it. References
+-- point the other way, and a one-shot server knows only the modules the open
+-- file reaches. Asked from a consumer of a symbol, a mid-size project here
+-- answers with all ten or eleven of its uses; asked from the file that DEFINES
+-- it, nothing points in yet and the answer is empty. That asymmetry is the
+-- sharpest argument for a resident server, and the reason `refs` says which
+-- graph it searched when it finds nothing.
+--
+-- SYNOPSIS
+--   lvi-lsp def                 jump to the definition of the word at the cursor
+--   lvi-lsp refs                list every reference to it
+--   lvi-lsp {def|refs} -w WID   target a specific view instead of $LVI_WID
+--
+-- Bindings (rc):
+--     map <C-]> :bg lvi-lsp def<CR>          " vi's tag jump
+--     map \u    :bg lvi-lsp refs<CR>         " usages
+--     map ]u :bg lvi-list next refs<CR>      " step them with pinned keys
+--     map [u :bg lvi-list prev refs<CR>
+--     hi def   bg=22 pri=12                  " un-themed = invisible, so theme it
+--     hi refs  bg=22 pri=12
+-- `def` puts its hits in a `def` list and jumps to the first, so a second
+-- candidate is one n away -- but it takes n/N only when there IS a second,
+-- leaving an unambiguous jump to keep your search list aimed where it was.
+-- `refs` puts a `refs` list at the cursor and leaves you where you are: the
+-- counter (`refs [3/11]`) is the answer, and n/N walks it.
+--
+-- THE ADAPTER CONTRACT (the lvi-lint/lvi-hl shape): an executable
+-- `lvi-lsp-<name>` beside this script gets the buffer's real filename as $1 and
+-- prints up to three `key=value` lines. That is all a language server is here:
+--     cmd=deno lsp                   how to run it (run through the shell)
+--     languageid=javascriptreact     the LSP languageId for this file
+--     init={"enable":true}           initializationOptions, verbatim JSON
+-- `cmd` is required; `languageid` defaults to the extension; `init` to `{}`.
+-- The adapter runs before the server, so it may also refuse (exit non-zero with
+-- a message) when its server is not installed.
+--
+-- POSITIONS, both directions. LSP counts lines from 0 and columns in UTF-16
+-- code units; lvi counts lines from 1 and columns in bytes. Both conversions
+-- walk the actual bytes of the line in question -- the buffer line the cursor
+-- sits on going out, the target line coming back -- so they are exact, surrogate
+-- pairs included, and a hit lands on its symbol rather than near it on a line
+-- with multibyte text before it. Entries therefore carry BYTE columns, the unit
+-- lvi-list needs to paint an extent: a `--cols=char` list can only draw a sign,
+-- since converting for the overlay would take the line's bytes, which lvi-list
+-- does not have (this script does, having read the line for the entry text).
+--
+-- WHY THE SERVER IS ASKED ABOUT THE LIVE BUFFER, not the file: `didOpen` hands
+-- it the text pulled over the socket, so a symbol you just typed resolves and
+-- an unsaved rename does not throw the columns off. The same reason lvi-lint
+-- feeds its linter on stdin.
+--
+-- Written in LuaJIT so it adds no dependency beyond lvi's own runtime: two
+-- FIFOs carry JSON-RPC to and from the server, and the JSON reader below is
+-- some 60 lines. Server stderr is discarded unless $LVI_LSP_DEBUG names a file.
+-- The FIFOs carry buffer text, so they live in a private directory beside the
+-- socket (`$LVI_SOCK.lsp.XXXXXX`, else a 0700 `mktemp -d`), removed on the way
+-- out. If `timeout`(1) is on PATH the server runs under it, so a server that
+-- hangs on a bad project ends the press instead of the session.
+--
+-- Config: LVI (client, default `lvi`), LVI_LSP_BACKEND (adapter name, else
+-- picked from the file extension), LVI_LSP_TIMEOUT (seconds, default 20),
+-- LVI_LSP_DEBUG (file for server stderr and a transcript). Needs lvi-list on
+-- PATH and a `lvi-lsp-<backend>` adapter for the file's language.
+
+-- -h/--help: print this script's header comment (its full reference), then exit.
+if arg[1] == "-h" or arg[1] == "--help" then
+  for line in io.lines(arg[0]) do
+    if line:sub(1, 2) == "#!" then
+    elseif line:sub(1, 2) == "--" then print((line:gsub("^%-%- ?", "")))
+    else break end
+  end
+  os.exit(0)
+end
+
+local DIR = arg[0]:match("^(.*)/[^/]*$") or "."
+local LVI = os.getenv("LVI") or "lvi"
+local DEBUG = os.getenv("LVI_LSP_DEBUG")
+
+local function q(s) return "'" .. (tostring(s):gsub("'", "'\\''")) .. "'" end
+local function log(...) if DEBUG then
+  local f = io.open(DEBUG, "a"); if f then f:write("lvi-lsp: ", table.concat({...}, " "), "\n"); f:close() end
+end end
+
+local target, tmpd
+local function cleanup() if tmpd then os.execute("rm -rf " .. q(tmpd)) end end
+-- Errors also go to the view's status line: every documented binding is `:bg`
+-- or `:silent !`, so this script's stderr has nobody reading it.
+local function die(msg)
+  io.stderr:write("lvi-lsp: ", msg, "\n")
+  if target then os.execute(("%s -w %s --detach -- %s >/dev/null 2>&1")
+    :format(q(LVI), q(target), q("msge lvi-lsp: " .. msg))) end
+  cleanup(); os.exit(1)
+end
+
+local function capture(cmd)
+  local p = io.popen(cmd, "r"); if not p then return nil end
+  local out = p:read("*a") or ""
+  local ok = p:close()
+  return ok and out or nil, out
+end
+
+-- ---- arguments ---------------------------------------------------------------
+local what, want_wid
+local i = 1
+while arg[i] do
+  local a = arg[i]
+  if a == "def" or a == "refs" then what = a
+  elseif a == "-w" then want_wid = arg[i + 1] or die("-w needs auto|WID"); i = i + 1
+  else die(("unknown argument '%s' (usage: lvi-lsp def|refs [-w auto|WID])"):format(a)) end
+  i = i + 1
+end
+what = what or die("say what to ask: def or refs")
+target = want_wid or os.getenv("LVI_WID") or "auto"
+local wflag = want_wid and ("-w " .. want_wid) or ""
+
+-- A server names files by URI, absolute; lvi names the buffer whatever was on
+-- its command line. Both spellings are needed: the absolute one to talk to the
+-- server and to recognize the buffer's own hits (whose text must come from the
+-- live buffer, not the stale file), the relative one to keep entries short.
+local cwd = ((capture("pwd") or ""):gsub("%s+$", ""))
+local function absolute(p) return (p:sub(1, 1) == "/") and p or (cwd .. "/" .. p) end
+local function fileuri(p)
+  return "file://" .. (absolute(p):gsub("[^%w/._~%-]",
+    function(c) return ("%%%02X"):format(c:byte()) end))
+end
+local function unuri(u)
+  local p = u:gsub("^file://", "")
+  return (p:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+end
+
+-- ---- the buffer, its name, and the cursor ------------------------------------
+local fname = capture(("%s -w %s -- path"):format(q(LVI), q(target)))
+  or die("cannot read view " .. target)
+fname = fname:gsub("%s+$", "")
+if fname == "" then die("this buffer has no file name (a server resolves imports from it)") end
+local fabs = absolute(fname)
+local text = capture(("%s -w %s -- %s"):format(q(LVI), q(target), q("%p")))
+  or die("cannot read view " .. target)
+
+local cline = tonumber(os.getenv("LVI_LINE") or "") or 1
+local ccol = tonumber(os.getenv("LVI_COL") or "") or 1
+if (os.getenv("LVI_CWORD") or "") == "" then
+  die("cursor is not on a word")
+end
+
+-- Split into lines once; needed for the outgoing column conversion, for entry
+-- text in the current file, and nothing else.
+local lines = {}
+for l in (text .. "\n"):gmatch("([^\n]*)\n") do lines[#lines + 1] = l end
+if #lines > 0 and lines[#lines] == "" then lines[#lines] = nil end
+
+-- Byte column (1-based) -> UTF-16 code units (0-based), and back. A UTF-8 lead
+-- byte tells its own length; a codepoint over U+FFFF is a surrogate pair, so it
+-- counts twice.
+local function u16_of_byte(line, bytecol)
+  local n, i, stop = 0, 1, math.min(bytecol, #line + 1)
+  while i < stop do
+    local b = line:byte(i)
+    local len = (b < 0x80 and 1) or (b < 0xE0 and 2) or (b < 0xF0 and 3) or 4
+    n = n + (len == 4 and 2 or 1); i = i + len
+  end
+  return n
+end
+local function byte_of_u16(line, u16)
+  local i, units = 1, 0
+  while units < u16 and i <= #line do
+    local b = line:byte(i)
+    local len = (b < 0x80 and 1) or (b < 0xE0 and 2) or (b < 0xF0 and 3) or 4
+    units = units + (len == 4 and 2 or 1); i = i + len
+  end
+  return i - 1                                   -- bytes before the position
+end
+
+-- ---- the adapter -------------------------------------------------------------
+-- $LVI_LSP_CMD names a server directly, skipping the adapter: how you try a
+-- server you have no adapter for yet (and how the tests drive a canned one).
+local srvcmd = os.getenv("LVI_LSP_CMD")
+local langid = os.getenv("LVI_LSP_LANGID")
+local initopts = os.getenv("LVI_LSP_INIT")
+if not srvcmd or srvcmd == "" then
+  local backend = os.getenv("LVI_LSP_BACKEND")
+  if not backend or backend == "" then
+    local BY_EXT = { js = "deno", jsx = "deno", mjs = "deno",
+                     ts = "deno", tsx = "deno", mts = "deno" }
+    local ext = fname:match("%.([%w]+)$")
+    backend = ext and BY_EXT[ext:lower()]
+      or die(("no backend for '%s' (set LVI_LSP_BACKEND, or add an adapter)"):format(fname))
+  end
+  local adapter = ("%s/lvi-lsp-%s"):format(DIR, backend)
+  local cfg = capture(("%s %s 2>&1"):format(q(adapter), q(fname)))
+    or die(("adapter lvi-lsp-%s failed (is the server installed?)"):format(backend))
+  for line in cfg:gmatch("[^\n]+") do
+    local k, v = line:match("^(%w+)=(.*)$")
+    if k == "cmd" then srvcmd = v
+    elseif k == "languageid" then langid = v
+    elseif k == "init" then initopts = v end
+  end
+  srvcmd = srvcmd or die(("adapter lvi-lsp-%s printed no cmd= line"):format(backend))
+end
+langid = (langid and langid ~= "") and langid or (fname:match("%.([%w]+)$") or "plaintext")
+initopts = (initopts and initopts ~= "") and initopts or "{}"
+
+-- ---- JSON --------------------------------------------------------------------
+-- Encoding is only ever of strings we build, so one escaper covers it. Control
+-- bytes go out as \u escapes; everything else, invalid UTF-8 included, passes
+-- through as the bytes the buffer holds (a server may reject those, which is
+-- the honest outcome for a binary file).
+local function jstr(s)
+  return '"' .. (s:gsub('[%c"\\]', function(c)
+    if c == '"' then return '\\"' elseif c == "\\" then return "\\\\"
+    elseif c == "\n" then return "\\n" elseif c == "\r" then return "\\r"
+    elseif c == "\t" then return "\\t" else return ("\\u%04x"):format(c:byte()) end
+  end)) .. '"'
+end
+
+local function decode(s)
+  local pos = 1
+  local function err(m) error(("json: %s at byte %d"):format(m, pos), 0) end
+  local function ws() pos = s:find("[^ \t\r\n]", pos) or #s + 1 end
+  local value
+  local function str()
+    pos = pos + 1                                  -- the opening quote
+    local out = {}
+    while true do
+      local c = s:sub(pos, pos)
+      if c == "" then err("unterminated string")
+      elseif c == '"' then pos = pos + 1; return table.concat(out)
+      elseif c == "\\" then
+        local e = s:sub(pos + 1, pos + 1); pos = pos + 2
+        if e == "u" then
+          local hex = s:sub(pos, pos + 3); pos = pos + 4
+          local cp = tonumber(hex, 16) or err("bad \\u")
+          if cp >= 0xD800 and cp <= 0xDBFF and s:sub(pos, pos + 1) == "\\u" then
+            local lo = tonumber(s:sub(pos + 2, pos + 5), 16)
+            if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+              cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00); pos = pos + 6
+            end
+          end
+          -- codepoint -> UTF-8
+          if cp < 0x80 then out[#out + 1] = string.char(cp)
+          elseif cp < 0x800 then
+            out[#out + 1] = string.char(0xC0 + math.floor(cp / 0x40), 0x80 + cp % 0x40)
+          elseif cp < 0x10000 then
+            out[#out + 1] = string.char(0xE0 + math.floor(cp / 0x1000),
+              0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+          else
+            out[#out + 1] = string.char(0xF0 + math.floor(cp / 0x40000),
+              0x80 + math.floor(cp / 0x1000) % 0x40,
+              0x80 + math.floor(cp / 0x40) % 0x40, 0x80 + cp % 0x40)
+          end
+        else
+          out[#out + 1] = ({ n = "\n", t = "\t", r = "\r", b = "\b", f = "\f" })[e] or e
+        end
+      else
+        local nxt = s:find('[\\"]', pos) or #s + 1
+        out[#out + 1] = s:sub(pos, nxt - 1); pos = nxt
+      end
+    end
+  end
+  value = function()
+    ws()
+    local c = s:sub(pos, pos)
+    if c == "{" then
+      pos = pos + 1; local o = {}
+      ws(); if s:sub(pos, pos) == "}" then pos = pos + 1; return o end
+      while true do
+        ws(); local k = str(); ws()
+        if s:sub(pos, pos) ~= ":" then err("expected :") end
+        pos = pos + 1; o[k] = value(); ws()
+        local d = s:sub(pos, pos); pos = pos + 1
+        if d == "}" then return o elseif d ~= "," then err("expected , or }") end
+      end
+    elseif c == "[" then
+      pos = pos + 1; local a = {}
+      ws(); if s:sub(pos, pos) == "]" then pos = pos + 1; return a end
+      while true do
+        a[#a + 1] = value(); ws()
+        local d = s:sub(pos, pos); pos = pos + 1
+        if d == "]" then return a elseif d ~= "," then err("expected , or ]") end
+      end
+    elseif c == '"' then return str()
+    elseif s:sub(pos, pos + 3) == "true" then pos = pos + 4; return true
+    elseif s:sub(pos, pos + 4) == "false" then pos = pos + 5; return false
+    elseif s:sub(pos, pos + 3) == "null" then pos = pos + 4; return nil
+    else
+      local num = s:match("^%-?%d+%.?%d*[eE]?[-+]?%d*", pos) or err("bad value")
+      pos = pos + #num; return tonumber(num)
+    end
+  end
+  return value()
+end
+
+-- ---- transport ---------------------------------------------------------------
+-- Two FIFOs, because a language server speaks over stdin/stdout and Lua has no
+-- bidirectional popen. Opening order matters: the server's shell blocks on
+-- `< in` until a writer appears and on `> out` until a reader does, so open the
+-- write end first.
+local sock = os.getenv("LVI_SOCK")
+local mk = sock and ("mktemp -d " .. q(sock .. ".lsp.XXXXXX")) or "mktemp -d"
+tmpd = (capture(mk) or die("cannot make a private directory for the server")):gsub("%s+$", "")
+local fin, fout = tmpd .. "/in", tmpd .. "/out"
+os.execute(("mkfifo %s %s"):format(q(fin), q(fout)))
+
+local secs = tonumber(os.getenv("LVI_LSP_TIMEOUT") or "") or 20
+local tmo = os.execute("command -v timeout >/dev/null 2>&1") and ("timeout %d "):format(secs) or ""
+local errto = DEBUG and (">> " .. q(DEBUG)) or "> /dev/null"
+os.execute(("%s%s < %s > %s 2%s &"):format(tmo, srvcmd, q(fin), q(fout), errto))
+
+local wf = io.open(fin, "w") or die("cannot open the server's input")
+local rf = io.open(fout, "r") or die("cannot open the server's output")
+wf:setvbuf("no")
+
+local nextid = 0
+local function send(body)
+  log("-> " .. body)
+  wf:write(("Content-Length: %d\r\n\r\n%s"):format(#body, body))
+end
+-- `params` is omitted when nil: shutdown/exit take none, and a server may
+-- reject an explicit null there.
+local function request(method, params)
+  nextid = nextid + 1
+  send(('{"jsonrpc":"2.0","id":%d,"method":%s%s}')
+    :format(nextid, jstr(method), params and (',"params":' .. params) or ""))
+  return nextid
+end
+local function notify(method, params)
+  send(('{"jsonrpc":"2.0","method":%s%s}')
+    :format(jstr(method), params and (',"params":' .. params) or ""))
+end
+
+local function recv()
+  local len
+  while true do
+    local line = rf:read("*l")
+    if not line then return nil end
+    line = line:gsub("\r$", "")
+    if line == "" then break end
+    local n = line:match("^[Cc]ontent%-[Ll]ength:%s*(%d+)$")
+    if n then len = tonumber(n) end
+  end
+  if not len then return nil end
+  local body = rf:read(len)
+  if not body then return nil end
+  log("<- " .. body)
+  return decode(body)
+end
+
+-- Wait for the reply to `id`, answering anything the server asks on the way.
+-- A server that asks a question and is ignored may never answer ours, so an
+-- unknown request gets a null result rather than silence.
+local function await(id)
+  while true do
+    local m = recv() or die("the server closed early (see LVI_LSP_DEBUG)")
+    if m.id == id then
+      if m.error then die("server error: " .. tostring(m.error.message or "?")) end
+      return m.result
+    elseif m.id and m.method then
+      if m.method == "workspace/configuration" then
+        local n = m.params and m.params.items and #m.params.items or 1
+        local reps = {}
+        for _ = 1, n do reps[#reps + 1] = initopts end
+        send(('{"jsonrpc":"2.0","id":%s,"result":[%s]}'):format(tostring(m.id), table.concat(reps, ",")))
+      else
+        send(('{"jsonrpc":"2.0","id":%s,"result":null}'):format(tostring(m.id)))
+      end
+    end
+  end
+end
+
+-- ---- the conversation --------------------------------------------------------
+local rootUri = fileuri(cwd)
+local uri = fileuri(fabs)
+
+local id = request("initialize", ([[{"processId":null,"rootUri":%s,"capabilities":{},
+  "workspaceFolders":[{"uri":%s,"name":"root"}],"initializationOptions":%s}]])
+  :format(jstr(rootUri), jstr(rootUri), initopts))
+await(id)
+notify("initialized", "{}")
+notify("textDocument/didOpen", ('{"textDocument":{"uri":%s,"languageId":%s,"version":1,"text":%s}}')
+  :format(jstr(uri), jstr(langid), jstr(text)))
+
+local u16 = u16_of_byte(lines[cline] or "", ccol)
+local pos = ('{"line":%d,"character":%d}'):format(cline - 1, u16)
+local method = what == "def" and "textDocument/definition" or "textDocument/references"
+local params = what == "def"
+  and ('{"textDocument":{"uri":%s},"position":%s}'):format(jstr(uri), pos)
+  or ('{"textDocument":{"uri":%s},"position":%s,"context":{"includeDeclaration":false}}')
+    :format(jstr(uri), pos)
+local result = await(request(method, params))
+
+await(request("shutdown"))
+notify("exit")
+wf:close(); rf:close(); cleanup(); tmpd = nil
+
+-- ---- the answer, as list entries ---------------------------------------------
+-- A result is a Location, a list of them, or a list of LocationLinks; each
+-- shape names a uri and a range under a different key.
+local hits = {}
+local function add(loc)
+  if type(loc) ~= "table" then return end
+  local u = loc.uri or loc.targetUri
+  local r = loc.range or loc.targetSelectionRange or loc.targetRange
+  if u and r then hits[#hits + 1] = { uri = u, range = r } end
+end
+if result then
+  if result.uri or result.targetUri then add(result) else for _, l in ipairs(result) do add(l) end end
+end
+
+-- The text of an entry is the line it points at, which makes the list read like
+-- an outline. The current file comes from the buffer we already pulled (so an
+-- unsaved definition still shows its real text); other files come off disk.
+local filecache = {}
+local function lineof(path, n)
+  if path == fabs then return lines[n] end             -- the live buffer, not the file
+  local ls = filecache[path]
+  if not ls then
+    ls = {}
+    local f = io.open(path, "r")
+    if f then for l in f:lines() do ls[#ls + 1] = l end; f:close() end
+    filecache[path] = ls
+  end
+  return ls[n]
+end
+
+local entries = {}
+for _, h in ipairs(hits) do
+  local path = unuri(h.uri)
+  local rel = (path:sub(1, #cwd + 1) == cwd .. "/") and path:sub(#cwd + 2) or path
+  local l1, l2 = h.range.start.line + 1, h.range["end"].line + 1
+  local src = lineof(path, l1) or ""
+  -- LSP end columns are exclusive, so a 0-based exclusive end IS the 1-based
+  -- inclusive one; the start needs the usual +1.
+  local c1 = byte_of_u16(src, h.range.start.character) + 1
+  local c2 = byte_of_u16(lineof(path, l2) or src, h.range["end"].character)
+  local where = (l1 == l2) and ("%d.%d-%d"):format(l1, c1, math.max(c2, c1))
+    or ("%d.%d-%d.%d"):format(l1, c1, l2, math.max(c2, 1))
+  local shown = src:gsub("^%s+", ""):sub(1, 200)
+  entries[#entries + 1] = ("%s:%s: %s"):format(rel, where, shown)
+end
+
+local name = what
+-- `def` takes n/N only when the answer is ambiguous: one hit is a jump, and
+-- stealing the step keys to say "(end)" about it would be a nuisance.
+local flags = (what == "def")
+  and ((#entries > 1) and "--focus --paint=extent" or "--paint=extent")
+  or "--at-cursor --focus --paint=extent"
+local p = io.popen(("lvi-list %s put %s %s"):format(wflag, name, flags), "w")
+  or die("cannot run lvi-list")
+p:write(table.concat(entries, "\n"))
+if #entries > 0 then p:write("\n") end
+p:close()
+
+if #entries == 0 then
+  local why = (what == "def") and ("no definition for '%s'")
+    or "no references for '%s' (only what this file's imports reach)"
+  os.execute(("%s -w %s --detach -- %s >/dev/null 2>&1"):format(q(LVI), q(target),
+    q("msge lvi-lsp: " .. why:format(os.getenv("LVI_CWORD") or "?"))))
+elseif what == "def" then
+  os.execute(("lvi-list %s first def >/dev/null 2>&1"):format(wflag))
+end

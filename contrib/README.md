@@ -643,6 +643,80 @@ on-disk `tags` file, but here ctags' own stdout *is* the query result —
 every tag comes from this one buffer by construction, so there is nothing
 to filter and nothing for a `tags` file to add.
 
+### `lvi-lsp` — definition and references, from a language server
+
+Two questions a language server answers better than `ctags` can: `def` jumps to
+where the symbol under the cursor is defined, `refs` lists every use. Both land
+as `lvi-list` lists, so stepping, painting and the counter come from the shared
+machinery, and `def` jumps to its first hit rather than assuming there is only
+one.
+
+```
+map <C-]> :bg lvi-lsp def<CR>          " vi's tag jump
+map \u    :bg lvi-lsp refs<CR>         " usages
+map ]u :bg lvi-list next refs<CR>
+map [u :bg lvi-list prev refs<CR>
+hi def bg=22 pri=12                    " un-themed = invisible, so theme it
+hi refs bg=22 pri=12
+```
+
+Where ctags matches names, a server resolves *imports*: on a project whose
+modules re-export through a barrel file, `def` on `core.lanesFromLanes` follows
+the alias and the re-export to the line that defines it, and `refs` scopes its
+hits instead of finding the word in a comment. That is the reason to want one.
+
+**`def` is complete; `refs` is as complete as the graph.** A definition lies
+along an edge leading *out* of the file you are in — the import you can see — so
+a server handed that one file can always follow it. References point the other
+way, and a one-shot server knows only the modules the open file reaches. In the
+project the example above comes from, asking for the uses of `lanesFromLanes`
+from a file that consumes it answers with ten or eleven; asking from the file
+that *defines* it answers with none, because nothing points in yet. `refs` names
+the graph it searched when it comes back empty, so the surprise is explained
+where it happens. That asymmetry, not the second of latency, is the strongest
+argument for a resident server.
+
+**One-shot, by design.** The server is spawned, asked one question, and killed.
+The cost is real: a server does its project load lazily on the first query, so a
+press costs a second or two where a warm one would answer in tens of
+milliseconds. What it buys is no daemon to manage and no synchronization to get
+wrong — the buffer text goes over with the question (`didOpen`), so the answer is
+about the buffer as it is now, unsaved edits included, and no mirror can drift.
+If you decide you want the warm one, the client is the same either way; only
+where the process lives would change.
+
+The adapter contract is `lvi-lint`'s, cut down: an executable `lvi-lsp-<name>`
+beside the script gets the buffer's filename and prints how to run the server,
+the LSP `languageId` for that file, and the `initializationOptions`.
+
+```
+cmd=deno lsp
+languageid=javascriptreact
+init={"enable":true,"lint":true,"config":"/path/to/deno.json"}
+```
+
+`deno lsp` ships as `lvi-lsp-deno`. `$LVI_LSP_CMD` names a server directly, for
+trying one before writing its adapter — which is also how the tests drive a
+canned server with nothing installed.
+
+Positions are the fiddly part if you write an adapter. LSP counts lines from 0
+and columns in **UTF-16 code units**; lvi counts lines from 1 and columns in
+bytes. Both conversions here walk the actual bytes of the line in question, so
+they are exact rather than only right on ASCII: a hit on a line with multibyte
+text before it still lands on its symbol, and the entries carry byte columns,
+which is what lets a list paint the extent instead of degrading to a sign.
+
+It is written in LuaJIT — lvi's own runtime, so no new dependency — with two
+FIFOs carrying JSON-RPC and a small JSON reader inline. `$LVI_LSP_DEBUG` names a
+file for the transcript and the server's stderr, which is where to start when a
+server answers nothing: several treat a missing option as "this project is not
+mine" and reply `null` with no error at all (Deno wants `enable`, and an import
+map needs `config`).
+
+What it leaves alone: hover, rename, and diagnostics. Diagnostics already have a
+tool that needs no server (`lvi-lint`), and the other two want somewhere to put
+the answer that a list is not.
+
 ### `lvi-fold` — collapse the buffer by structure
 
 lvi ships the fold *mechanism* — a closed fold collapses its lines to one

@@ -126,7 +126,7 @@ current file is `$LVI_FILE` and `:w ${LVI_FILE%.md}.html` works.
 | `:make` + errorformat | `lvi -q errorfile`, or lint on write | `lvi-list`, `lvi-lint` |
 | `:nohlsearch` | `\lh` hides the focused list's marks; the next `n` re-shows them (`:nohl` clears *every* overlay, syntax included) | `lvi-list` |
 | `matchadd()` | `\hm` marks the word under the cursor | `lvi-match` |
-| `Ctrl-]`, `:tag` | no tags file: `\t` outlines the *current* file; across a project, grep into a list | `lvi-tags`, `lvi-list` |
+| `Ctrl-]`, `:tag` | `<C-]>` asks a language server; with no server, `\t` outlines the *current* file (there is no tags file) | `lvi-lsp`, `lvi-tags` |
 | global marks `A`–`Z` | same keys, once `on markset`/`on markjump` are wired | `lvi-gmark` |
 | `` `" `` (viminfo position) | `on ready lvi-pos restore` | `lvi-pos` |
 | `Ctrl-O` / `Ctrl-I`, `g;` | identical | core |
@@ -203,7 +203,7 @@ env knob.
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
 | ALE, Syntastic, neomake | `lvi-lint` — one small adapter per linter, findings as a list | `on write lvi-lint` |
-| coc.nvim, YouCompleteMe, an LSP client | nothing ships. See *What isn't coming back* | — |
+| coc.nvim, YouCompleteMe, an LSP client | `lvi-lsp` — definition and references only, one-shot, no daemon | `map <C-]> :bg lvi-lsp def<CR>` |
 | vim-polyglot and friends (syntax) | `lvi-highlight` — Pygments or bat lexers over the live buffer | `on change lvi-highlight` |
 | neoformat, vim-autoformat | `lvi-fmt` — splices back only the changed window | `map \= :bg lvi-fmt<CR>` |
 | vim-sleuth, editorconfig-vim | `lvi-detect-indent` (delegates to `editorconfig`(1) when present) | called by `lvi-ftype` |
@@ -232,12 +232,14 @@ sends ex commands to a running view and reads its state back. That is why every
 row above is a program you can also run from a terminal, and why turning one on
 is one line in an rc file that is itself just ex commands.
 
-**An LSP client.** None ships, and this one is a gap rather than a translation.
-Symbol lookup is an in-file ctags outline or a project grep, diagnostics come
-from `lvi-lint`, formatting from `lvi-fmt`, and completion from buffer words and
-paths. Hover, project-wide rename, and call hierarchy have no answer today.
-Nothing stands in the way of a client — it would be another program driving the
-socket — but it is not written.
+**A full LSP client.** `lvi-lsp` asks a language server for a definition or a
+list of references, which is the part that beats ctags; it spawns the server per
+press and kills it, so there is no resident process and nothing to keep in sync.
+Diagnostics come from `lvi-lint` and need no server at all, formatting from
+`lvi-fmt`, completion from buffer words and paths. Hover, project-wide rename,
+and call hierarchy are not there. Nothing structural is in the way — a client is
+just a program driving the socket, which is what `lvi-lsp` demonstrates — but
+those three are not written.
 
 **`:set number` and the sign column.** The renderer draws buffer text from the
 left edge, so every column is content and the highlight overlay stays a recolor
