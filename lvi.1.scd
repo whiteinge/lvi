@@ -387,8 +387,20 @@ Typed characters are inserted; *Esc* returns to normal mode. Line editing:
 	Complete the word before the cursor. Both run the command registered with
 	*on complete* (nothing happens if none is), handing it the token and every
 	open buffer's text and splicing its choice in; *contrib/lvi-complete* is the
-	shipped completer (a fuzzy pick of the buffers' words). *Ctrl-N*/*Ctrl-P*
-	pass a forward/backward hint the completer may use.
+	shipped completer (a fuzzy pick of the buffers' words, plus file paths).
+	*Ctrl-N*/*Ctrl-P* pass a forward/backward hint the completer may use, and
+	leave the SOURCE to the completer, which classifies the token itself.
+
+*Ctrl-X*_c_
+	Complete as above, but force the source the char _c_ names instead of
+	letting the completer classify. *Ctrl-X*_c_ and *Ctrl-X Ctrl-*_c_ are the
+	same key; *<ESC>* backs out. lvi does not interpret _c_ -- it is handed to
+	the completer in *LVI_COMPL_KIND*, so which letters mean anything is the
+	completer's business, and a new source needs no change to lvi.
+
+	The completer runs as one process per keypress and keeps nothing between
+	them, so unlike vim there is no completion mode to cycle inside: each
+	press stands alone, and a forced source carries no direction.
 
 # EX COMMANDS
 
@@ -731,8 +743,10 @@ spaces and tabs included.
 	or reap sidecars; the socket is closing, so an exit hook reads *LVI_\** and
 	the disk rather than calling back). *complete* is
 	special: not auto-fired but run
-	synchronously by insert-mode *Ctrl-N*/*Ctrl-P* (above), and is a single
-	completer that replaces on re-register instead of composing. Socket-driven
+	synchronously by insert-mode *Ctrl-N*/*Ctrl-P*/*Ctrl-X* (above), and is a
+	single completer that replaces on re-register instead of composing (two
+	pickers cannot merge; a completer that serves several sources dispatches on
+	*LVI_COMPL_KIND*). Socket-driven
 	changes never fire *change*/*scroll* (only keyboard input does), so a hook's
 	own edits or a scroll pushed onto a view can't loop back.
 
@@ -1484,6 +1498,18 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	empty for every other child (*:bg*, *:!*, *g@*). Lets one tool serve both
 	surfaces: quiet about a shortfall when re-fired by a hook, loud when you
 	asked by hand.
+
+*LVI_COMPL_TOKEN*, *LVI_COMPL_LINE*, *LVI_COMPL_DIR*, *LVI_COMPL_KIND*
+	The completion context, set only for the *on complete* command (see
+	*Ctrl-N*, *Ctrl-P* and *Ctrl-X*_c_ above). *LVI_COMPL_TOKEN* is the
+	non-blank run before the cursor, which the completer's stdout REPLACES
+	whole -- so a completer that narrows the token to part of itself has to
+	put the rest back. *LVI_COMPL_LINE* is the line up to the cursor, for
+	classifying by context. The last two are independent hints, either of
+	which a completer may ignore: *LVI_COMPL_DIR* is *prev* or *next* (which
+	way to cycle), *LVI_COMPL_KIND* one char naming a forced source, empty
+	when the completer should classify the token itself. Every open buffer's text
+	arrives on stdin, current buffer first.
 
 *XDG_RUNTIME_DIR*, *TMPDIR*
 	Preferred locations for the socket directory (else _/tmp_).

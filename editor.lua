@@ -782,16 +782,20 @@ function M.run(opts)
     -- the completer synchronously, handing it the real terminal (keep=true, so a
     -- picker/popup draws over our frame), which freezes the poll loop -- so the
     -- completer can't read us back over the socket. We therefore feed it
-    -- everything up front: the token being completed and the line's left context
-    -- in the env, and ALL buffers' text (current first) on stdin. Its stdout is
-    -- the replacement text. normal.lua splices it in over the token. Cross-buffer
-    -- words work because the current view's other buffers live only in memory
-    -- here, not on any socket the frozen loop could answer.
-    ed.complete_run = function(cmd, token, left, dir)
+    -- everything up front: the token being completed, the line's left context and
+    -- the two advisory hints in the env, and ALL buffers' text (current first) on
+    -- stdin. Its stdout is the replacement text. normal.lua splices it in over
+    -- the token. Cross-buffer words work because the current view's other buffers
+    -- live only in memory here, not on any socket the frozen loop could answer.
+    -- One process per keypress, no state kept between them: a completer cannot
+    -- hold a session open across presses, so each press stands alone (which is
+    -- why LVI_COMPL_KIND carries no direction -- see normal.lua's complete).
+    ed.complete_run = function(cmd, token, left, dir, kind)
       ed.export_context()
       sys.setenv("LVI_COMPL_TOKEN", token or "")
       sys.setenv("LVI_COMPL_LINE", left or "")
       sys.setenv("LVI_COMPL_DIR", dir or "")
+      sys.setenv("LVI_COMPL_KIND", kind or "")
       local tmp = path.tmp()                          -- all buffers' text: keep it private
       local f = io.open(tmp, "wb")
       if f then

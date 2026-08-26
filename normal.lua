@@ -226,19 +226,31 @@ local function get_reg(ed, name)
   return ed.regs[name or '"']
 end
 
--- Insert-mode completion (Ctrl-P/Ctrl-N): replace the non-blank token before the
--- cursor with a word chosen by the `on complete` command. Core hands the command
--- its context and inserts its stdout (see editor.lua's complete_run and the
--- lvi-complete contrib script); a no-op with no completer registered or headless
--- (ed.complete_run absent). Byte-based like insert_char, so a multibyte token
--- round-trips. dir (prev/next) is advisory -- the completer may ignore it.
-local function complete(ed, dir)
+-- Insert-mode completion (Ctrl-P/Ctrl-N and Ctrl-X<c>): replace the non-blank
+-- token before the cursor with a word chosen by the `on complete` command. Core
+-- hands the command its context and inserts its stdout (see editor.lua's
+-- complete_run and the lvi-complete contrib script); a no-op with no completer
+-- registered or headless (ed.complete_run absent). Byte-based like insert_char,
+-- so a multibyte token round-trips.
+--
+-- Two advisory hints ride along, on deliberately separate axes, and BOTH are the
+-- completer's to ignore. `dir` (prev/next) is which way to cycle -- vestigial for
+-- a picker-based completer, meaningful for one that walks matches in place.
+-- `kind` is which SOURCE to complete from, and it is an opaque char that core
+-- forwards without interpreting: `f` for paths, `l` for lines, whatever a
+-- completer wants to answer to. That opacity is the point -- core stays ignorant
+-- of what can be completed, so a new source is a contrib-side change and never a
+-- core patch. An EMPTY kind is the standing case (Ctrl-P/Ctrl-N): no override,
+-- the completer classifies the token itself. So the two spellings differ in
+-- exactly one bit -- whether the completer's own classifier gets overruled --
+-- and the source choice lives in one place, which is not here.
+local function complete(ed, dir, kind)
   local cmd = ed.hooks.complete and ed.hooks.complete[1]
   if not cmd or not ed.complete_run then return end
   local s = line(ed, ed.cy)
   local left = s:sub(1, ed.cx - 1)
   local token = left:match("%S+$") or ""
-  local sel = ed.complete_run(cmd, token, left, dir)
+  local sel = ed.complete_run(cmd, token, left, dir, kind)
   if not sel or sel == "" then return end
   local at = ed.cx - #token                              -- start of the token
   ed.buf:set(ed.cy, s:sub(1, at - 1) .. sel .. s:sub(ed.cx))
@@ -444,8 +456,19 @@ local function insert_mode(ed, ai)
     -- vi's answer is <Esc> then I / A. Included by request.
     elseif k == 1 then ed.cx = 1                       -- Ctrl-A: start of line
     elseif k == 5 then ed.cx = #line(ed, ed.cy) + 1    -- Ctrl-E: end of line
-    elseif k == 16 then complete(ed, "prev")           -- Ctrl-P: complete (backward)
-    elseif k == 14 then complete(ed, "next")           -- Ctrl-N: complete (forward)
+    elseif k == 16 then complete(ed, "prev", "")       -- Ctrl-P: complete (backward)
+    elseif k == 14 then complete(ed, "next", "")       -- Ctrl-N: complete (forward)
+    -- Ctrl-X<c>: complete, forcing the source the char names (Ctrl-X Ctrl-F and
+    -- Ctrl-X f are the same key -- a control byte folds to its letter, so the
+    -- vim reflex and the easier spelling both land). <Esc> backs out, which is
+    -- the way out of a mistyped Ctrl-X: we have already committed to eating the
+    -- next key by the time we know it was a mistake.
+    elseif k == 24 then
+      local k2 = getkey(ed)
+      if k2 ~= 27 then                                 -- <Esc> backs out
+        if k2 < 32 then k2 = k2 + 96 end               -- ^F folds to f
+        complete(ed, "", string.char(k2))
+      end
     elseif k == 9 then insert_tab(ed)                  -- Tab: literal, or spaces if expandtab
     elseif k >= 32 and k ~= 127 then insert_char(ed, k) -- printable + UTF-8 bytes
     end

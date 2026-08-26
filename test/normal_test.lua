@@ -1832,18 +1832,19 @@ describe("normal-mode interpreter", function()
     end)
   end)
 
-  describe("insert-mode completion (Ctrl-P/Ctrl-N)", function()
+  describe("insert-mode completion (Ctrl-P/Ctrl-N, Ctrl-X)", function()
     -- Stub the completer: record the context core hands over, return a canned word.
     local function with_completer(ed, ret)
       local seen = {}
       ed.hooks = { complete = { "stub" } }
-      ed.complete_run = function(cmd, token, left, dir)
+      ed.complete_run = function(cmd, token, left, dir, kind)
         seen.cmd, seen.token, seen.left, seen.dir = cmd, token, left, dir
+        seen.kind = kind
         return ret
       end
       return seen
     end
-    local CP, CN = string.char(16), string.char(14)
+    local CP, CN, CX = string.char(16), string.char(14), string.char(24)
 
     it("replaces the token before the cursor with the completer's word", function()
       local ed = make("")
@@ -1882,6 +1883,47 @@ describe("normal-mode interpreter", function()
     it("is a no-op with no completer registered", function()
       local ed = make("")
       feed(ed, "ifoo" .. CP .. "bar")            -- Ctrl-P ignored; typing continues
+      expect(ed.buf:line(1)).to.equal("foobar")
+    end)
+
+    -- Ctrl-P/Ctrl-N leave kind empty: no override, the completer classifies. The
+    -- two hints are separate axes, so a forced kind carries no direction.
+    it("Ctrl-P/Ctrl-N force no kind", function()
+      local ed = make("")
+      local seen = with_completer(ed, "x")
+      feed(ed, "ia" .. CP)
+      expect(seen.kind).to.equal("")
+    end)
+
+    it("Ctrl-X<c> forces the kind the char names and passes no direction", function()
+      local ed = make("")
+      local seen = with_completer(ed, "README.md")
+      feed(ed, "iREAD" .. CX .. "f")
+      expect(ed.buf:line(1)).to.equal("README.md")
+      expect(seen.token).to.equal("READ")
+      expect(seen.kind).to.equal("f")
+      expect(seen.dir).to.equal("")
+    end)
+
+    -- The vim reflex (Ctrl-X Ctrl-F) and the easier spelling are one key.
+    it("Ctrl-X Ctrl-F folds to the same kind as Ctrl-X f", function()
+      local ed = make("")
+      local seen = with_completer(ed, "y")
+      feed(ed, "ia" .. CX .. string.char(6))
+      expect(seen.kind).to.equal("f")
+    end)
+
+    it("Ctrl-X <Esc> backs out without completing", function()
+      local ed = make("")
+      local seen = with_completer(ed, "NOPE")
+      feed(ed, "ifoo" .. CX .. string.char(27) .. "bar")
+      expect(ed.buf:line(1)).to.equal("foobar")   -- typing continues, still inserting
+      expect(seen.kind).to_not.exist()            -- completer never ran
+    end)
+
+    it("Ctrl-X eats its kind char rather than inserting it, with no completer", function()
+      local ed = make("")
+      feed(ed, "ifoo" .. CX .. "f" .. "bar")      -- the f is the kind, not text
       expect(ed.buf:line(1)).to.equal("foobar")
     end)
   end)
