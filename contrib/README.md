@@ -37,6 +37,12 @@ lvi-list paint` is the glue that repaints the current buffer's matches when
 you arrive in it, which is what makes *cross-file* lists (project grep,
 a compiler) light up per file.
 
+**`$LVI_PICKER` is one setting, and it may carry flags.** Every tool that picks
+reads it (default `fzf`; `fzy` and `sk` work too), and the value is split into
+words — so `LVI_PICKER='fzf --height 10'` in your rc reaches all of them. Rows
+are built so any of them work: the column a tool reads back sits at the front of
+the line, never behind an fzf-only `--with-nth`.
+
 **Three spawn disciplines** — the reason the bindings differ:
 
 - `:silent !CMD` hands over the terminal (drops to and back from the alt screen).

@@ -31,7 +31,7 @@
 # file order. The jump uses --detach (fire-and-forget -- a synchronous reply would
 # deadlock while lvi is frozen on us).
 #
-# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags),
 # LVI_CTAGS (ctags binary, default `ctags`; wants Universal Ctags), LVI_TAGS_DUMP
 # (buffer-snapshot file to read instead of $LVI_BUFFER/%p). Needs ctags and a
 # picker on PATH. Run from inside lvi ($LVI_WID/$LVI_FILE/$LVI_BUFFER exported);
@@ -101,7 +101,7 @@ rows=$($CTAGS -f - --sort=no --fields=+n "$tmpf" 2>/dev/null | awk -F'\t' '
 
 # Show line + kind + name + its definition, keep the line number as column 1 so
 # we can read it straight back off the selection.
-sel=$(printf '%s\n' "$rows" | awk -F'\t' '{printf "%6s  %-4s %-24s %s\n", $1, $2, $3, $4}' | "$PICKER") || exit 0
+sel=$(printf '%s\n' "$rows" | awk -F'\t' '{printf "%6s  %-4s %-24s %s\n", $1, $2, $3, $4}' | $PICKER) || exit 0
 line=$(printf '%s' "$sel" | awk '{print $1}')
 case "$line" in ''|*[!0-9]*) exit 0 ;; esac
 # In this buffer already, so just move. Jump-class, since `:tag` is one in vi:

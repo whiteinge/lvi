@@ -170,7 +170,7 @@
 # explicitly. And avoid $PAGER: zsh does not word-split it, so a `less -imMWR`-
 # style value runs as one command name and fails -- name the pager plain.
 #
-# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags).
 # Run from inside lvi (a map) and $LVI_WID/$LVI_SOCK are already in the env; from
 # another terminal, pass `-w auto|WID`.
 
@@ -524,12 +524,12 @@ case "$sub" in
     # so any $LVI_PICKER works: no fzf-only --with-nth/--delimiter (fzy, a plain
     # line filter, rejects them). The visible index just numbers the entries.
     sel=$(awk -v hdr="$HDR" '$0 ~ hdr {printf "%d: %s\n", ++n, $0}' "$listdir/$name" \
-            | "$PICKER") || exit 0
+            | $PICKER) || exit 0
     i=${sel%%:*}
     [ -n "$i" ] && { setcur "$name" "$i"; jump "$(nth "$name" "$i")" "$name"; paint "$name"; show_cur "$name"; } ;;
 
   switch)
-    name=$(names | "$PICKER") || exit 0
+    name=$(names | $PICKER) || exit 0
     [ -n "$name" ] && { focus_set "$name"; paint "$name"; } ;;
 
   focus)

@@ -26,7 +26,7 @@
 # The switch uses --detach (fire-and-forget -- a synchronous reply would deadlock
 # while lvi is frozen on us).
 #
-# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags).
 # Needs a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_BUFS exported); from
 # elsewhere pass -w.
 
@@ -53,7 +53,7 @@ fi
 count=$(printf '%s\n' "$rows" | grep -c .)
 [ "$count" -gt 1 ] || { send "msg lvi-buf: only one buffer"; exit 0; }
 
-sel=$(printf '%s\n' "$rows" | awk -F'\t' 'NF>=3 {printf "%3s  %s  %s\n", $1, $2, $3}' | "$PICKER") || exit 0
+sel=$(printf '%s\n' "$rows" | awk -F'\t' 'NF>=3 {printf "%3s  %s  %s\n", $1, $2, $3}' | $PICKER) || exit 0
 idx=$(printf '%s' "$sel" | awk '{print $1}')
 case "$idx" in ''|*[!0-9]*) exit 0 ;; esac
 send "b $idx"

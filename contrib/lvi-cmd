@@ -62,7 +62,7 @@
 # fzf-only, since --preview has no equivalent in fzy or a plain filter; every
 # other picker still gets the one-line purpose in the row itself.
 #
-# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf).
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags).
 # Needs a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_MAPS exported);
 # from elsewhere pass -w.
 
@@ -158,9 +158,11 @@ rows=$( { [ -n "$maps" ] && printf '%s\n' "$maps" | awk -F'\t' 'NF>=2 {printf "k
 # The kind and key stay in columns 1 and 2 so the selection is read straight
 # back off them, which keeps any $LVI_PICKER usable (no fzf-only --with-nth).
 # --preview is the one fzf-only flag, added only when fzf is what we have.
-set -- "$PICKER"
-case $PICKER in
-  fzf|*/fzf) set -- "$PICKER" --preview "$SELFCMD --preview {}" --preview-window=right,60%,wrap ;;
+# Unquoted on purpose: LVI_PICKER may carry flags, so it splits into words and
+# $1 is the command. The preview is APPENDED, which keeps any flags you set.
+set -- $PICKER
+case $1 in
+  fzf|*/fzf) set -- "$@" --preview "$SELFCMD --preview {}" --preview-window=right,60%,wrap ;;
 esac
 sel=$(printf '%s\n' "$rows" | awk -F'\t' '{printf "%-4s %-18s %s\n", $1, $2, $3}' | "$@") || exit 0
 

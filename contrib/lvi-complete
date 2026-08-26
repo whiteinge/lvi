@@ -53,7 +53,7 @@
 # (lvi stays on its alt screen under it). Any overlay that reads a list on stdin
 # and prints one line is a drop-in.
 #
-# Config: LVI_PICKER (fzf/fzy/sk, default fzf), LVI_COMPL_POPUP (tmux popup when
+# Config: LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags), LVI_COMPL_POPUP (tmux popup when
 # set and $TMUX), plus each source's own knobs -- see its header.
 
 # -h/--help: print this script's header comment (its full reference), then exit.

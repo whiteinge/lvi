@@ -66,7 +66,7 @@
 # command, default `aspell -a`; `hunspell -a` speaks the same protocol -- add
 # a dictionary here, e.g. `aspell -a --lang=en_US`), LVI_SPELL_MAXBYTES (skip
 # buffers larger than this, default 262144), LVI_SPELL_DEBUG (file to capture
-# worker stderr), LVI_PICKER (fzf/fzy/sk, default fzf). Needs lvi-list on PATH.
+# worker stderr), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags). Needs lvi-list on PATH.
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

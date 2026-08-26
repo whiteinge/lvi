@@ -73,7 +73,7 @@
 # without one charwise. A linewise yank round-trips; a charwise multi-line yank
 # comes back linewise. Same tradeoff `"+` makes.
 #
-# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf),
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags),
 # LVI_YANKRING_MAX (entries kept, default 50), LVI_YANKRING_REG (the read-backed
 # register the maps put from, default `~` -- a name you will not yank into),
 # LVI_YANKRING_DIR (relocate the shared store; for tests, not a workflow knob --
@@ -192,7 +192,7 @@ case "$sub" in
             e=$((seq - i))
             printf '%d: [%s] %s\n' "$i" "$(widof "$e")" "$(head -n1 "$dir/$e" 2>/dev/null)"
             i=$((i + 1))
-          done | "$PICKER") || exit 0
+          done | $PICKER) || exit 0
     i=${sel%%:*}
     case "$i" in ''|*[!0-9]*) exit 0 ;; esac
     setcur "$i"
