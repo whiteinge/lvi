@@ -86,6 +86,21 @@ current file is `$LVI_FILE` and `:w ${LVI_FILE%.md}.html` works.
 
 ## Rosetta: the editor
 
+The third column names what an answer comes from. Where it is an rc line, the
+same few spellings recur, and most have no vim equivalent:
+
+- **`:bg CMD`** runs a command detached, with no terminal handover and no
+  alt-screen flash. It is what a map fires for a tool that does not prompt, and
+  the reason most bindings below read `:bg something`.
+- **`:silent !CMD`** hands the terminal over, for a tool that *does* prompt —
+  every picker. This one is vim's.
+- **`on EVENT CMD`** is a change hook: run a tool when something happens
+  (`change`, `write`, `bufenter`, `ready`). This is what replaces an autocmd,
+  and there are only a handful of events.
+- **A list is *focused*.** Search hits, lint findings and git hunks are all
+  `lvi-list` lists; `n`/`N` step whichever one was aimed last, which is why
+  several tools also bind a pinned `]x`/`[x` pair that only ever steps theirs.
+
 ### Command line and reference
 
 | Vim | lvi | Comes from |
@@ -184,7 +199,7 @@ env knob.
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
 | fzf.vim, ctrlp | `lvi-open`, `lvi-buf`, `lvi-cmd` — `$LVI_PICKER` aims them all | `map \f :silent !lvi-open<CR>` |
-| Tagbar, vista | `lvi-tags` — the current file's tags in a picker, so jump and outline are one key | `map \t :wbuf<CR>:silent !lvi-tags<CR>` |
+| Tagbar, vista | `lvi-tags` — the current file's tags in a picker, so jump and outline are one key (`:wbuf` snapshots the buffer for it to read) | `map \t :wbuf<CR>:silent !lvi-tags<CR>` |
 | vim-unimpaired | the `]x`/`[x` pairs in the sample rc: `]c` hunks, `]e` lint, `]s` spelling | `map ]e :bg lvi-list next lint<CR>` |
 | vim-illuminate, interestingwords | `lvi-match` — sticky pattern marks, one color apiece | `map \hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>` |
 | vim-searchindex | the list's `[3/57]` counter in the status line | `lvi-list` |
