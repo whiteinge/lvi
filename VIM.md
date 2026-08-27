@@ -105,10 +105,11 @@ current file is `$LVI_FILE` and `:w ${LVI_FILE%.md}.html` works.
 | `viwc`, `vt)d` | `ciw`, `dt)` | core |
 | `Vjj>`, `Vipd` | `3>>`, `dip` | core |
 | `Ctrl-V` block edit | `:[range]normal keys`, or a `!` filter over the range | core |
+| `!{motion}`, `!!`, `:%!cmd` | identical — `!ip sort` filters the paragraph, `!G column -t` to end of file. `gq` is `!` with a fixed command | core |
 | multiple cursors | `:%normal @a` — record once, stamp across a range | core |
 | `gv` (reselect) | marks: `ma`, then `d'a` or `:'a,'b …` | core |
 | `Ctrl-A` / `Ctrl-X` | `map <C-a> :.!lvi-incr<CR>` | `lvi-incr` |
-| `g Ctrl-A` (renumber) | `!ip lvi-incr -b 1` | `lvi-incr` |
+| `g Ctrl-A` (renumber) | `!ip lvi-incr -b 1` — the paragraph, through the filter | `lvi-incr` |
 | `:set textwidth` + `gq` | `set fmtprg=…` and `gq` (default `fmt`) | core |
 | `:earlier`, `:undolist` | `u` / `Ctrl-R`, `g;` / `g,`, `:changes` (no undo tree) | core |
 | `:registers` | `:registers`, mapped to `\r` | core |
@@ -172,7 +173,7 @@ env knob.
 | vim-surround, vim-sandwich | `lvi-surround` on the `g@` operator; `.` repeats | `map s( :set opfunc=lvi-surround paren<CR>g@` |
 | vim-commentary, NERDCommenter | `lvi-comment`, a toggle over any motion | `map gc :set opfunc=lvi-comment<CR>g@` |
 | vim-repeat | already there — `.` repeats a `g@` operator | core |
-| tabular, vim-easy-align | `!ip column -t` | core |
+| tabular, vim-easy-align | `!ip column -t` — the `!` filter, no plugin involved | core |
 | yankring, vim-yankstack | `lvi-yankring` — `\yp`/`\yn` cycle at paste time | `register "" write lvi-yankring push` |
 | vim-peekaboo | `:registers` | `map \r :registers<CR>` |
 | vim-slime | `lvi-send` — `gsip` runs a paragraph in the next pane | `map gs :set operatorfunc=lvi-send<CR>g@` |
