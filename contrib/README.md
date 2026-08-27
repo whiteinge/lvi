@@ -239,11 +239,10 @@ from inside lvi (`lvi-highlight -h` covers the state files and the caveat).
 
 A **list** is a plain file of `file:line[:col]:text` entries — the GNU
 error-message format (GNU Coding Standards §4.3), which Vim calls the quickfix
-format and which grep, a compiler, a linter, and `git diff` all speak. Vim's
-multi-line variant works too: each `file:line:` header may carry indented body
-lines (a compiler note, a full diagnostic), and `n`/`N` step through the
-headers while the bodies are available via `lvi-list preview` to show on
-demand.
+format and which grep, a compiler, and a linter all speak. Vim's multi-line
+variant works too: each `file:line:` header may carry indented body lines (a
+compiler note, a full diagnostic), and `n`/`N` step through the headers while
+the bodies are available via `lvi-list preview` to show on demand.
 
 The column is optional **per entry**, so the two shapes mix in one list: a
 producer that can't name one (grep reports lines; a diff hunk has none) just
