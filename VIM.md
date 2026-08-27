@@ -203,7 +203,7 @@ env knob.
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
 | ALE, Syntastic, neomake | `lvi-lint` — one small adapter per linter, findings as a list | `on write lvi-lint` |
-| coc.nvim, YouCompleteMe, an LSP client | `lvi-lsp` — definition and references only, one-shot, no daemon | `map <C-]> :bg lvi-lsp def<CR>` |
+| coc.nvim, vim-lsp, nvim-lspconfig | `lvi-lsp` — `def` jumps to the definition, `refs` lists the uses, both as lists; the server is spawned per press, so there is no daemon. Hover and rename have no equivalent | `map <C-]> :bg lvi-lsp def<CR>`, and `\u` for `refs` |
 | vim-polyglot and friends (syntax) | `lvi-highlight` — Pygments or bat lexers over the live buffer | `on change lvi-highlight` |
 | neoformat, vim-autoformat | `lvi-fmt` — splices back only the changed window | `map \= :bg lvi-fmt<CR>` |
 | vim-sleuth, editorconfig-vim | `lvi-detect-indent` (delegates to `editorconfig`(1) when present) | called by `lvi-ftype` |
