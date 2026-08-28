@@ -48,6 +48,18 @@ describe("fold.lua (pure)", function()
     expect(fold.next_vline(f, 3, 10)).to.equal(4)
   end)
 
+  it("reveal opens every closed fold covering the line, head included", function()
+    local f = { { s = 2, e = 8, open = false }, { s = 4, e = 6, open = false },
+                { s = 9, e = 10, open = false } }
+    fold.reveal(f, 5)                                   -- inside both nested folds
+    expect(f[1].open and f[2].open).to.be.truthy()       -- all levels, like zO
+    expect(f[3].open).to_not.be.truthy()                 -- an uncovered fold is untouched
+    local g = folds()
+    fold.reveal(g, 3); expect(g[1].open).to.be.truthy()  -- covering includes the head
+    local h = folds()
+    fold.reveal(h, 7); expect(h[1].open).to_not.be.truthy()  -- no fold here: no-op
+  end)
+
   it("nested folds: outer closed hides the inner head", function()
     local f = { { s = 2, e = 8, open = false }, { s = 4, e = 6, open = false } }
     expect(fold.next_vline(f, 2, 10)).to.equal(9)         -- outer swallows inner
@@ -136,6 +148,81 @@ describe("fold commands (normal mode)", function()
     feed(ed, "5G")       -- cursor deep inside the (open) fold
     feed(ed, "zc")       -- reclose: cursor must leave the hidden interior
     expect(ed.cy).to.equal(3)
+  end)
+end)
+
+-- A starting insert reveals the folds over the cursor (normal.lua's insert_mode).
+-- The overlay must never RELOCATE an edit -- o still opens the line right below
+-- the cursor, as it would with folds off -- it only has to make it visible,
+-- because clamp's snap would otherwise drag the caret onto the fold head and
+-- redirect every keystroke there.
+describe("an insert reveals the folds over it", function()
+  it("o on a closed fold types into the new line, not the fold head", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")                          -- fold 3..6 closed, cursor on the head
+    feed(ed, "oNEW\27")
+    expect(ed.folds[1].open).to.be.truthy()     -- revealed, and it stays open after ESC
+    expect(ed.buf:line(3)).to.equal("l3")       -- head line untouched (was "NEWl3")
+    expect(ed.buf:line(4)).to.equal("NEW")      -- the typing landed on the opened line
+    expect(ed.buf:line(5)).to.equal("l4")       -- no orphaned blank left behind
+    expect(ed.cy).to.equal(4)
+  end)
+
+  it("O on a closed fold opens the line above it", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")
+    feed(ed, "ONEW\27")
+    expect(ed.buf:line(3)).to.equal("NEW")
+    expect(ed.buf:line(4)).to.equal("l3")
+    expect(ed.folds[1].s).to.equal(4)           -- the splice shifted the fold down past it
+  end)
+
+  it("appending on the head reveals it too (a summary row cannot show a caret)", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")
+    feed(ed, "AX\27")
+    expect(ed.buf:line(3)).to.equal("l3X")
+    expect(ed.folds[1].open).to.be.truthy()
+  end)
+
+  it("R reveals as well", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")
+    feed(ed, "RX\27")
+    expect(ed.buf:line(3)).to.equal("X3")
+    expect(ed.folds[1].open).to.be.truthy()
+  end)
+
+  it("nofoldenable leaves the fold state alone", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")
+    feed(ed, "zi")                              -- folds off: every line already shows
+    feed(ed, "3GoNEW\27")
+    expect(ed.buf:line(4)).to.equal("NEW")
+    expect(ed.folds[1].open).to_not.be.truthy() -- kept intact for when zi comes back
+  end)
+end)
+
+-- The other half of the ruling: motions are fold-aware (they are about the
+-- view), edits are not (they are about the buffer). dj deletes the two rows you
+-- can SEE because `j` targets the next visible line; dd takes no motion, so it
+-- stays the line at the cursor, exactly as it behaves with folds off.
+describe("operators stay fold-blind", function()
+  it("dd on a closed fold deletes only the head line", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")                          -- fold 3..6
+    feed(ed, "dd")
+    expect(ed.buf:nlines()).to.equal(9)
+    expect(ed.buf:line(3)).to.equal("l4")
+    expect(ed.folds[1].open).to_not.be.truthy() -- no reveal: nothing is being typed
+  end)
+
+  it("dj deletes the whole fold plus the next visible line", function()
+    local ed = make(TEXT)
+    feed(ed, "3Gzf3j")                          -- fold 3..6, next visible line is 7
+    feed(ed, "dj")
+    expect(ed.buf:nlines()).to.equal(5)         -- 3..7 gone
+    expect(ed.buf:line(3)).to.equal("l8")
   end)
 end)
 

@@ -279,6 +279,14 @@ lands inside a closed fold snaps to its head). The summary row is themed by the
 *Folded* highlight group when set (*:hi Folded fg=cyan italic*), otherwise it
 draws as plain text.
 
+Folding changes what you can see, not where an edit lands: every command puts
+text exactly where it would with folding off, so *o* on a closed fold opens a
+line inside it and *dd* deletes only the head line. Entering insert or replace
+mode opens every fold covering the cursor line (the same reveal as *zO*) so
+that an edit in progress is visible; the fold stays open afterwards, like any
+*zo*. Motions work from the view instead, so *dj* on a closed fold deletes the
+fold and the line after it: the two rows you could see.
+
 Nothing folds automatically: lvi ships the fold *mechanism* only. A tool
 computes *where* the folds go and pushes *:foldset* over the socket, exactly as
 external search feeds *:hl* -- see *contrib/lvi-fold* (by marker or by indent).

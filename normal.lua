@@ -107,6 +107,11 @@ local function first_nonblank(s)
   return (s:find("%S")) or 1
 end
 
+-- Are folds in play at all? `zi` (nofoldenable) leaves ed.folds intact but
+-- makes every line visible, so every fold path below -- stepping, clamping,
+-- revealing -- hangs off this one predicate.
+local function has_folds(ed) return ed.opts.foldenable and ed.folds and ed.folds[1] ~= nil end
+
 -- Clamp the cursor to the buffer: the ONE cursor-bounds rule. Exported because
 -- the driver's refresh() applies the same invariant after socket-driven motion
 -- -- a single definition, so the insert-mode EOL+1 special case cannot drift.
@@ -117,7 +122,7 @@ function M.clamp(ed)
   -- fold's (visible) head. This is the one place that invariant lives, so every
   -- motion that lands in a fold -- G, marks, gg, a mistyped count -- collapses
   -- onto the fold line, and render's crow can always be found on a visible row.
-  if ed.opts.foldenable and ed.folds and ed.folds[1] and fold.hidden(ed.folds, ed.cy) then
+  if has_folds(ed) and fold.hidden(ed.folds, ed.cy) then
     ed.cy = fold.innermost_closed(ed.folds, ed.cy).s
   end
   local s = line(ed, ed.cy)
@@ -419,11 +424,21 @@ end
 -- `ai` is the autoindent this insert opened with -- only o/O have one to declare.
 -- Every other entry point resets it here, so a stale indent from an earlier o
 -- can never make Esc trim blanks the user typed by hand.
+--
+-- An insert starting on a line a closed fold covers reveals that fold (every
+-- nesting level) *before* clamp runs. Two bugs in one: clamp's snap would drag
+-- the cursor onto the fold head, so `o` on a closed fold typed into the head
+-- line and left the opened line orphaned inside the fold; and even on the head
+-- itself the caret has nowhere to sit, since render draws that row as the fold
+-- summary. Reveal keeps the edit exactly where a fold-blind editor put it (the
+-- overlay must never relocate an edit) and merely makes it visible. Nothing
+-- re-closes on ESC -- the fold is yours again, like any zo.
 local function insert_mode(ed, ai)
   ed.changed = true
   ed.mode = "insert"
   ed.message = "-- INSERT --"
   ed.ai_text = ai or ""
+  if has_folds(ed) then fold.reveal(ed.folds, ed.cy) end
   clamp(ed)
   local sy, sx = ed.cy, ed.cx
   local fresh = true                                 -- nothing typed yet (NUL's window)
@@ -492,6 +507,7 @@ local function replace_mode(ed)
   ed.changed = true
   ed.mode = "insert"
   ed.message = "-- REPLACE --"
+  if has_folds(ed) then fold.reveal(ed.folds, ed.cy) end   -- same reveal as insert_mode
   clamp(ed)
   while true do
     local k = getkey(ed)
@@ -960,7 +976,6 @@ local function textrows(ed) return ed.rows - 1 end
 -- the single point where this module bends the buffer-line <-> screen-row
 -- mapping away from affine -- the same bend wrap already made (one line -> many
 -- rows); folding is its inverse (many lines -> one row).
-local function has_folds(ed) return ed.opts.foldenable and ed.folds and ed.folds[1] ~= nil end
 local function nextv(ed, l)
   if has_folds(ed) then return fold.next_vline(ed.folds, l, ed.buf:nlines()) end
   return (l < ed.buf:nlines()) and l + 1 or nil
@@ -1692,7 +1707,7 @@ actions = {
     if k == b("f") then return fold_create_motion(ed, count)
     elseif k == b("o") then return fold_open(ed)
     elseif k == b("O") then                       -- open every fold covering the cursor (all levels)
-      for _, f in ipairs(ed.folds) do if ed.cy >= f.s and ed.cy <= f.e then f.open = true end end
+      fold.reveal(ed.folds, ed.cy)                -- the same reveal a starting insert does
       return
     elseif k == b("c") then return fold_close(ed)
     elseif k == b("a") then return fold_toggle(ed)

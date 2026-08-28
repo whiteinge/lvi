@@ -64,6 +64,18 @@ function M.innermost(folds, l)
   return best
 end
 
+-- Open every closed fold covering line l (all nesting levels at once). The
+-- insert-mode counterpart to normal.lua's clamp() snap: normal mode keeps the
+-- cursor off hidden lines by MOVING it, which would silently redirect an edit
+-- in progress, so a starting insert reveals instead. "Covering" is s..e
+-- inclusive, so it also fires on a closed fold's own head -- that row renders
+-- as the synthetic summary, which cannot show a caret. Also zO's body.
+function M.reveal(folds, l)
+  for _, f in ipairs(folds) do
+    if not f.open and l >= f.s and l <= f.e then f.open = true end
+  end
+end
+
 -- The next visible buffer line after l (skipping closed-fold interiors), or nil
 -- past `nlines`. From a closed head you step past the fold's end; if the landing
 -- line is itself hidden (adjacent/nested folds) advance over the widest fold
