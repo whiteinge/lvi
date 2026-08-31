@@ -2,10 +2,9 @@
 
 **A tiny, POSIX-style modal editor that any program can drive.**
 
-vi has always been great at calling *out* to the shell (`!`, `:r !`,
-filters). `lvi` adds a **control socket**, so a shell script, a `Makefile`,
-a linter, or a five-line client in any language can call *in* — send it
-commands and read back its state.
+Every vi calls *out* to the shell. lvi also lets the shell call *in*: every
+view listens on a **control socket**, so any program can send it commands and
+read its state back.
 
 It runs on **just LuaJIT** — no compiler, no build step, no C dependency — on
 Linux, macOS, BSD, and WSL.

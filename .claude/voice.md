@@ -68,9 +68,11 @@ The teach-the-design passages (README's *Design & implementation*,
 > client in any language can call *in* — send it commands and read back its
 > state.~~
 >
-> vi calls *out* to the shell — `!`, `:r !`, filters. lvi adds the way *in*:
-> every running editor exposes a control socket, so a script, a Makefile, or a
-> linter can send it commands and read its state back.
+> Every vi calls *out* to the shell. lvi also lets the shell call *in*: every
+> view listens on a **control socket**, so any program can send it commands and
+> read its state back.
+
+The after is the current `README.md` lede — shipped prose, not a proposal.
 
 **Explainer register — open on the subject, drop the reveal and the self-praise:**
 
