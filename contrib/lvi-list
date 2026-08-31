@@ -31,7 +31,7 @@
 #                                              (NAME defaults to the last-stepped list;
 #                                              bind it to a tmux popup -- see PREVIEW below)
 #   lvi-list goto|switch                       fzf over entries / over list names
-#   lvi-list focus [NAME] | ls | paint [NAME]
+#   lvi-list focus [NAME] | ls | paint [NAME] | policy NAME [POLICY]
 #   lvi-list hide [NAME]                       stop showing a list (keep it; n/N re-show)
 #   lvi-list save NAME PATH | load PATH [NAME] [--focus] [--cols=UNIT]
 #   lvi-list drop NAME | clear NAME | path NAME
@@ -148,10 +148,14 @@
 # step, every jump, `:on bufenter` -- and a subcommand flag would reach only the
 # last of them.
 #
-# $LVI_LIST_PAINT supplies the policy for a producer that names none -- which is
-# how you move `lvi-lint` and `lvi-gitchanges` into the margin without touching
-# either script. A producer that DOES name one (search, spell, lsp all ask for
-# `extent`) is stating a fact about its entries, not a preference, so it wins.
+# `policy NAME POLICY` is the USER's say, and `put` leaves a stored policy alone
+# unless the run actually named one -- so `on ready lvi-list policy lint gutter:E`
+# in the rc moves lvi-lint into the margin without touching the script. A producer
+# that DOES name one (search, spell and lsp all ask for `extent`) is stating a
+# fact about its entries rather than a preference, so it wins. A column UNIT is
+# such a fact too, which is why --cols= keeps overwriting: letting a stale
+# preference reinterpret a new producer's columns would land the cursor wrong.
+# `drop` forgets the policy along with everything else about the list.
 #
 # An extent needs BYTE columns, because `:hl` takes byte ranges and never learned
 # units the way `:pos` did. lvi-list cannot convert: that needs the line's bytes,
@@ -253,7 +257,12 @@ setcols()   { if [ -n "$2" ]; then printf '%s\n' "$2" > "$listdir/$1.cols"; else
 paintmode() { m=$(cat "$listdir/$1.paint" 2>/dev/null); case "$m" in extent|cur) echo "$m";; gutter*) echo gutter;; *) echo sign;; esac; }
 # `gutter` may carry the mark it draws with (`--paint=gutter:E`); default `>`.
 paintmark() { m=$(cat "$listdir/$1.paint" 2>/dev/null); case "$m" in gutter:?*) printf '%s\n' "${m#gutter:}";; *) printf '>\n';; esac; }
-setpaint()  { if [ -n "$2" ]; then printf '%s\n' "$2" > "$listdir/$1.paint"; else rm -f "$listdir/$1.paint"; fi; }
+setpaint()  { mkdir -p "$listdir"; printf '%s\n' "$2" > "$listdir/$1.paint"; }
+# `?` would match one BYTE, and a mark is a glyph -- `â` is three of them.
+check_paint() {
+  case "$1" in ''|sign|extent|cur|gutter|gutter:?*) ;;
+    *) die "unknown paint policy: $1 (sign|extent|cur|gutter[:CHAR])" ;; esac
+}
 
 # Entry boundaries in vim's MULTI-LINE quickfix format: a `file:line[:col]:text`
 # HEADER (digits right after the first colon) starts an entry; the lines after it,
@@ -457,23 +466,25 @@ check_name() { case "$1" in *-cur) die "'$1': a list may not end in -cur (it is 
 
 case "$sub" in
   put)
-    name=; dofocus=; atcur=; back=; cols=; pmode=
+    name=; dofocus=; atcur=; back=; cols=; pmode=; pgiven=
     for a in "$@"; do case "$a" in
       --focus)          dofocus=1 ;;
       --at-cursor)      atcur=1 ;;
       --at-cursor-back) atcur=1; back=1 ;;
       --cols=*)         cols=${a#--cols=} ;;
-      --paint=*)        pmode=${a#--paint=} ;;
+      --paint=*)        pmode=${a#--paint=}; pgiven=1 ;;
       *)                name=$a ;;
     esac; done
     [ -n "$name" ] || die "usage: lvi-list put NAME [--focus] [--at-cursor[-back]] [--cols=UNIT] [--paint=POLICY]"
     check_name "$name"
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
-    pmode=${pmode:-${LVI_LIST_PAINT:-}}
-    # `?` would match one BYTE, and a mark is a glyph -- `│` is three of them.
-    case "$pmode" in ''|sign|extent|cur|gutter|gutter:?*) ;; *) die "unknown paint policy: $pmode (sign|extent|cur|gutter[:CHAR])" ;; esac
+    check_paint "$pmode"
     mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
-    setcols "$name" "$cols"; setpaint "$name" "$pmode"
+    # A column UNIT is a fact about the entries, so a producer that names none
+    # means `byte` and overwriting is right. A paint POLICY is a preference the
+    # user may have set once with `policy`, so leave it alone unless this run
+    # actually named one.
+    setcols "$name" "$cols"; [ -n "$pgiven" ] && setpaint "$name" "$pmode"
     if [ -n "$atcur" ]; then
       # Seed the index from the cursor, so the step that follows is RELATIVE to
       # where you are. Two callers, one mechanism: a REFRESHING producer (spell
@@ -608,6 +619,19 @@ case "$sub" in
   focus)
     if [ -n "${1:-}" ]; then focus_set "$1"; paint "$1"; else focus_get; fi ;;
 
+  policy)
+    # The USER's say over how a list paints, kept where the list keeps the rest
+    # of its metadata. This exists because `put` used to delete the stored policy
+    # whenever a producer named none, so there was no way to state a preference
+    # that survived the next run -- and a producer naming one is asserting a
+    # capability (extent needs byte columns), not a taste. With a VALUE, set it;
+    # without, print it. The list need not exist yet, so an rc can say this once
+    # at startup: `on ready lvi-list policy lint gutter:E`.
+    name=${1:?usage: policy NAME [POLICY]}
+    check_name "$name"
+    if [ -n "${2:-}" ]; then check_paint "$2"; setpaint "$name" "$2"
+    else paintmode "$name"; fi ;;
+
   paint)                                     # :on bufenter -> repaint all lists
     if [ -n "${1:-}" ]; then paint "$1"; else names | while IFS= read -r nm; do paint "$nm"; done; fi ;;
 
@@ -622,13 +646,19 @@ case "$sub" in
     src=${1:?usage: load PATH [NAME] [--focus] [--cols=UNIT] [--paint=POLICY]}
     name=${2:-$(basename "$src")}; case "$name" in --focus|--cols=*|--paint=*) name=$(basename "$src");; esac
     check_name "$name"
-    cols=; pmode=; for a in "$@"; do case "$a" in --cols=*) cols=${a#--cols=} ;; --paint=*) pmode=${a#--paint=} ;; esac; done
+    cols=; pmode=; pgiven=
+    for a in "$@"; do case "$a" in
+      --cols=*)  cols=${a#--cols=} ;;
+      --paint=*) pmode=${a#--paint=}; pgiven=1 ;;
+    esac; done
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
-    pmode=${pmode:-${LVI_LIST_PAINT:-}}
-    # `?` would match one BYTE, and a mark is a glyph -- `│` is three of them.
-    case "$pmode" in ''|sign|extent|cur|gutter|gutter:?*) ;; *) die "unknown paint policy: $pmode (sign|extent|cur|gutter[:CHAR])" ;; esac
+    check_paint "$pmode"
     mkdir -p "$listdir"; cp "$src" "$listdir/$name" || true; setcur "$name" 0
-    setcols "$name" "$cols"; setpaint "$name" "$pmode"
+    # A column UNIT is a fact about the entries, so a producer that names none
+    # means `byte` and overwriting is right. A paint POLICY is a preference the
+    # user may have set once with `policy`, so leave it alone unless this run
+    # actually named one.
+    setcols "$name" "$cols"; [ -n "$pgiven" ] && setpaint "$name" "$pmode"
     case " $* " in *" --focus "*) focus_set "$name" ;; esac
     paint "$name" ;;
 

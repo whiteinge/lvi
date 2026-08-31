@@ -275,9 +275,10 @@ to fight over, so a line that is both a lint hit and a todo shows one of them,
 picked by whichever `:hl` group resolved last. A column per list removes the
 contest: turn them on in the rc with `set gutter=number,lint,todo` and both
 marks are there, side by side. It also works where an extent cannot, since a
-margin mark needs no columns at all. `$LVI_LIST_PAINT` sets the policy for any
-producer that doesn't name its own, which moves `lvi-lint` and `lvi-gitchanges`
-into the margin without editing either one.
+margin mark needs no columns at all. `lvi-list policy NAME POLICY` is the user's
+say — `put` leaves a stored policy alone unless the run named one — so one rc
+line moves `lvi-lint` or `lvi-gitchanges` into the margin without editing either
+one.
 
 It is also the only policy that can draw a **multi-line** extent. An entry
 spelled as a GNU line range — `f.c:4-9: text` — marks every line it covers,

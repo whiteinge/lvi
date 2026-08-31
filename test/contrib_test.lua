@@ -1281,6 +1281,25 @@ cat >> '%s/sent'
       cleanup(d)
     end)
 
+    -- The user's say over how a list paints has to survive the producer's next
+    -- run: `put` used to delete the stored policy whenever a run named none.
+    it("lvi-list policy outlives a producer that names no policy", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, "contrib/lvi-list policy s gutter:E")        -- before the list exists
+      expect(run(env, "contrib/lvi-list policy s"):find("gutter")).to.exist()
+      run(env, [[printf '/cur/f.c:12: one\n' | contrib/lvi-list put s --focus]])
+      expect(read(d .. "/log"):find("gutter s 12:E")).to.exist()
+      -- ...and a producer stating a capability still wins
+      run(env, [[printf '/cur/f.c:12.1-4: one\n' ]] ..
+               [[| contrib/lvi-list put s --paint=extent]])
+      expect(read(d .. "/log"):find("hl s 12:1%-4")).to.exist()
+      expect(select(2, run(env, "contrib/lvi-list policy s blink"))).to.equal(false)
+      cleanup(d)
+    end)
+
     it("lvi-list falls back to signs when an extent list is not in bytes", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",

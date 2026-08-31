@@ -365,7 +365,7 @@ map [c :bg lvi-list prev gitchanges<CR>
 " an extent, so painting there gives you a change bar down the whole hunk rather
 " than a mark on its first line (gitgutter's look, from plain `git diff`). Needs
 " a `gitchanges` column in `set gutter=`:
-"   map \gg :bg LVI_LIST_PAINT=gutter:│ lvi-gitchanges<CR>
+"   on ready lvi-list policy gitchanges gutter:│
 "   hi gitchanges     fg=green
 "   hi gitchanges-cur fg=black bg=green   " the hunk you are standing in
 "
@@ -397,9 +397,9 @@ hi CursorLineNr fg=yellow bold         " ...and the line you are on
 map \nn :set number!<CR>               " numbers off/on -- off to copy with the mouse
 map \nr :set rnu!<CR>                  " relative off/on (the cursor's line stays absolute)
 
-" WHAT a list paints is $LVI_LIST_PAINT, and the rc's way to set it is on the
-" command in the map or hook -- `:bg` runs a shell, so a var prefix works. Any
-" producer that names its own policy keeps it (search and spell need `extent`,
+" WHAT a list paints is its paint policy, and `lvi-list policy` is your say over
+" it: set it once at startup and a producer's own runs leave it alone. Any
+" producer that names a policy itself keeps it (search and spell need `extent`,
 " which is a fact about their entries, not a preference), so this reaches exactly
 " the ones that don't: lvi-lint and lvi-gitchanges. See both sections below.
 
@@ -423,8 +423,7 @@ hi lint-cur bg=124 pri=11
 " which leaves the text alone and lets a lint hit and a git hunk mark the same
 " line. Needs a `lint` column in `set gutter=` above, and its own theme, since a
 " margin mark has no text under it to stay legible against:
-"   map \e :bg LVI_LIST_PAINT=gutter:E lvi-lint --focus<CR>
-"   on write LVI_LIST_PAINT=gutter:E lvi-lint
+"   on ready lvi-list policy lint gutter:E
 "   hi lint fg=magenta bold
 "   hi lint-cur fg=black bg=magenta"
 
