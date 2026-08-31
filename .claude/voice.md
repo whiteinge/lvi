@@ -1,8 +1,8 @@
 # Voice: lvi docs
 
-The voice model for `README.md`, `contrib/README.md`, and the prose parts of
-`lvi.1.scd`. This governs *voice* — stance, rhythm, diction. *Format* (scdoc
-rules, link style, wrapping, which doc owns what) follows `CLAUDE.md` §
+The voice model for `README.md`, `contrib/README.md`, `VIM.md`, and the prose
+parts of `lvi.1.scd`. This governs *voice* — stance, rhythm, diction. *Format*
+(scdoc rules, link style, wrapping, which doc owns what) follows `CLAUDE.md` §
 Documentation. Where the two meet — em-dash use especially — voice wins: the
 format is legal, the question here is whether it's *earning its keep*.
 
