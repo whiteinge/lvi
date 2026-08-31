@@ -1242,8 +1242,8 @@ below, with the happy-path rc lines that turn it on:
 	whichever is _focused_:
 
 	```
-	map / :silent !lvi-search<CR>
-	map ? :silent !lvi-search -b<CR>
+	map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
+	map ? :prompt ? bg lvi-search -b -- "$LVI_INPUT"<CR>
 	map * :bg lvi-search "$LVI_CWORD"<CR>
 	map # :bg lvi-search -b "$LVI_CWORD"<CR>
 	map n :bg lvi-list next<CR>
@@ -1290,7 +1290,7 @@ below, with the happy-path rc lines that turn it on:
 
 	```
 	map \\hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>
-	map \\hp :silent !lvi-match<CR>
+	map \\hp :prompt match/ bg lvi-match -- "$LVI_INPUT"<CR>
 	map \\hd :bg lvi-match del<CR>
 	map \\hc :bg lvi-match clear<CR>
 	```

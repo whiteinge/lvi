@@ -90,10 +90,13 @@ The third column names what an answer comes from. Where it is an rc line, the
 same few spellings recur, and most have no vim equivalent:
 
 - **`:bg CMD`** runs a command detached, with no terminal handover and no
-  alt-screen flash. It is what a map fires for a tool that does not prompt, and
+  alt-screen flash. It is what a map fires for a tool that needs no terminal, and
   the reason most bindings below read `:bg something`.
-- **`:silent !CMD`** hands the terminal over, for a tool that *does* prompt —
-  every picker. This one is vim's.
+- **`:silent !CMD`** hands the terminal over, for a tool that draws its own
+  screen — every picker. This one is vim's.
+- **`:prompt / CMD`** reads a line first, under the given prompt, and runs `CMD`
+  with it in `$LVI_INPUT`. It is how `/` asks for a pattern: the editor's own
+  line editor handles the keys, so the tool stays a `:bg` spawn.
 - **`on EVENT CMD`** is a change hook: run a tool when something happens
   (`change`, `write`, `bufenter`, `ready`). This is what replaces an autocmd,
   and there are only a handful of events.

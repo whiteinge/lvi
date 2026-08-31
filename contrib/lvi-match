@@ -66,7 +66,7 @@
 #
 # Bindings (rc) -- the highlight menu \h already holds lvi-highlight's \hh/\ht:
 #     map \hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>  " mark the cursor word
-#     map \hp :silent !lvi-match<CR>                        " prompt for a pattern
+#     map \hp :prompt match/ bg lvi-match -- "$LVI_INPUT"<CR>  " a typed pattern
 #     map \hd :bg lvi-match del<CR>                         " drop the newest mark
 #     map \hc :bg lvi-match clear<CR>                       " drop them all
 #     map \hl :!lvi-match list<CR>                          " what is marked
@@ -273,10 +273,15 @@ match_add() {
   done
   pat=${1:-}
 
-  # Prompt in the foreground (where `:!` handed us the tty). Skipped when a
-  # pattern was supplied, e.g. the \hm map passing $LVI_CWORD.
+  # Prompt in the foreground, for a hand invocation at a shell. Skipped when a
+  # pattern was supplied, e.g. the \hm map passing $LVI_CWORD or the \hp map
+  # passing what `:prompt` read. The test is stderr, NOT stdin: a `:bg` child
+  # keeps the editor's raw-mode tty on stdin and redirects only the output, so a
+  # `read` here would eat the keys being typed at the editor.
+  # No terminal and no pattern is a bare Enter at the map's `:prompt` -- a change
+  # of mind, so nothing is added and nothing is said.
   if [ -z "$pat" ]; then
-    [ -t 0 ] || die "no pattern, and no tty to prompt on (bind :silent !lvi-match)"
+    [ -t 2 ] && [ -t 0 ] || exit 0
     printf 'match/' >&2
     IFS= read -r pat || exit 0
     [ -n "$pat" ] || exit 0
