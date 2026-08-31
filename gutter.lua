@@ -59,6 +59,33 @@ function M.names(ed)
   return out
 end
 
+-- POSIX vi's `number` option, defined ONTO the column list rather than kept as a
+-- second piece of state: `set number` appends the numeric column (innermost,
+-- next to the text, where vim puts it), `set nonumber` removes it whichever
+-- spelling it wears, and `set relativenumber` swaps the spelling in place.
+-- One store, so `set gutter=` and `set number` can never disagree.
+function M.numkind(ed)
+  for _, n in ipairs(M.names(ed)) do
+    if isnum(n) then return "number" elseif isrel(n) then return "relativenumber" end
+  end
+  return nil
+end
+
+-- kind: "number" | "relativenumber" | nil (remove). Order is preserved when the
+-- column is already there, so toggling relative does not move the margin around.
+function M.setnum(ed, kind)
+  local out, placed = {}, false
+  for _, n in ipairs(M.names(ed)) do
+    if isnum(n) or isrel(n) then
+      if kind then out[#out + 1] = kind; placed = true end   -- swap in place
+    else
+      out[#out + 1] = n
+    end
+  end
+  if kind and not placed then out[#out + 1] = kind end
+  ed.opts.gutter = table.concat(out, ",")
+end
+
 -- One column's width. A number column grows with the buffer (so opening a
 -- 10000-line file reflows the text by one column, as in vim); a tool column is
 -- always one cell -- a mark is a mark, and a producer that wants two symbols

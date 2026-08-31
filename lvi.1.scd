@@ -698,6 +698,20 @@ spaces and tabs included.
 		*LineNr* and *CursorLineNr* for the numbers, the column's own name for
 		a tool column. Selecting text with the mouse picks the margin up with
 		it, so *set gutter=* before copying, as in vi's cousins.
+	*number*, *nonumber* (*nu*, *nonu*), *relativenumber*, *norelativenumber* (*rnu*, *nornu*)
+		vi's line-number option, and vim's relative spelling of it. Both act on
+		the *gutter* list above rather than carrying a flag of their own, so
+		*set nu* and *set gutter=* can never tell different stories: *set nu*
+		adds the numeric column innermost, *set nonumber* removes it whichever
+		spelling it wears, and *set rnu* swaps the spelling without moving the
+		margin. lvi has ONE numeric column, so *relativenumber* is the hybrid
+		vim gets from setting both: distances, with the cursor's own line
+		showing its absolute number.
+
+		POSIX's *number* also numbers the output of the print commands. lvi's
+		does not, deliberately: *p* here is a socket API (*:%p* hands a script
+		the buffer's raw text), so a line-number prefix would corrupt every
+		reader of it. The margin is where lvi puts the numbers.
 	*linebreak*, *nolinebreak* (*lbr*, *nolbr*)
 		When wrapping, break at the last whitespace that fits instead of
 		mid-word; a single word wider than the screen still breaks mid-word.

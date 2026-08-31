@@ -13,6 +13,7 @@ local buffer = require("buffer")
 local disp = require("disp")   -- :pos converts a char/display column to a byte
 local vpath = require("path")   -- `path` the name is taken by locals below
 local sys = require("sys")      -- shq, to quote a prompted :motion argument
+local gutter = require("gutter") -- `set number` is defined onto the gutter column list
 
 local M = {}
 
@@ -214,6 +215,10 @@ local function do_set(ed, args)
       elseif n == "linebreak" or n == "lbr" then out[#out + 1] = ed.opts.linebreak and "linebreak" or "nolinebreak"
       elseif n == "foldenable" or n == "fen" then out[#out + 1] = ed.opts.foldenable and "foldenable" or "nofoldenable"
       elseif n == "gutter" then out[#out + 1] = "gutter=" .. ed.opts.gutter
+      elseif n == "number" or n == "nu" then
+        out[#out + 1] = (gutter.numkind(ed) == "number") and "number" or "nonumber"
+      elseif n == "relativenumber" or n == "rnu" then
+        out[#out + 1] = (gutter.numkind(ed) == "relativenumber") and "relativenumber" or "norelativenumber"
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
       elseif n == "fmtprg" or n == "fp" then out[#out + 1] = "fmtprg=" .. ed.opts.fmtprg
@@ -229,6 +234,10 @@ local function do_set(ed, args)
       if n == "wrap" then ed.opts.wrap = not ed.opts.wrap
       elseif n == "linebreak" or n == "lbr" then ed.opts.linebreak = not ed.opts.linebreak
       elseif n == "foldenable" or n == "fen" then ed.opts.foldenable = not ed.opts.foldenable
+      elseif n == "number" or n == "nu" then
+        gutter.setnum(ed, gutter.numkind(ed) ~= "number" and "number" or nil)
+      elseif n == "relativenumber" or n == "rnu" then
+        gutter.setnum(ed, gutter.numkind(ed) ~= "relativenumber" and "relativenumber" or nil)
       elseif n == "expandtab" or n == "et" then ed.opts.expandtab = not ed.opts.expandtab
       elseif n == "autoindent" or n == "ai" then ed.opts.autoindent = not ed.opts.autoindent
       elseif n == "modified" or n == "mod" then
@@ -247,6 +256,10 @@ local function do_set(ed, args)
     elseif opt == "nolinebreak" or opt == "nolbr" then ed.opts.linebreak = false
     elseif opt == "foldenable" or opt == "fen" then ed.opts.foldenable = true
     elseif opt == "nofoldenable" or opt == "nofen" then ed.opts.foldenable = false
+    elseif opt == "number" or opt == "nu" then gutter.setnum(ed, "number")
+    elseif opt == "relativenumber" or opt == "rnu" then gutter.setnum(ed, "relativenumber")
+    elseif opt == "nonumber" or opt == "nonu" or opt == "norelativenumber" or opt == "nornu" then
+      gutter.setnum(ed, nil)
     elseif opt == "expandtab" or opt == "et" then ed.opts.expandtab = true
     elseif opt == "noexpandtab" or opt == "noet" then ed.opts.expandtab = false
     elseif opt == "autoindent" or opt == "ai" then ed.opts.autoindent = true
@@ -1032,6 +1045,10 @@ def("d delete", function(ed, c)
   return "", "ok"
 end)
 
+-- POSIX's `number` option also numbers THIS output; lvi's deliberately does not
+-- (a documented deviation, see the manpage). `p` here is a socket API -- `:%p`
+-- hands a script the buffer's raw text -- so a line-number prefix would corrupt
+-- every reader of it, and the option's whole job is the left margin anyway.
 def("p print", function(ed, c)
   local from, to = line_range(ed, c.a, c.b)
   return table.concat(ed.buf:get(from, to), "\n"), "ok"
