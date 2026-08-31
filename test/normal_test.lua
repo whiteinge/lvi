@@ -2144,4 +2144,66 @@ describe("external motions (:motion)", function()
   end)
 end)
 
+describe("prompted commands (:prompt)", function()
+  -- Stub the spawn surface: record the command line and what $LVI_INPUT would
+  -- have carried, i.e. ed.prompt_input as export_context reads it.
+  local function withspawn(ed)
+    local got = {}
+    ed.spawn_bg = function(cmd) got.cmd = cmd; got.input = ed.prompt_input end
+    return got
+  end
+
+  it("reads a line and runs the command with it", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    feed(ed, ':prompt / bg tool -- "$LVI_INPUT"\r')
+    feed(ed, "foo\r")
+    expect(got.cmd).to.equal('tool -- "$LVI_INPUT"')   -- never spliced into the line
+    expect(got.input).to.equal("foo")                  -- it travels in the env
+    expect(ed.prompt_input).to.be(false)               -- and is transient
+    expect(ed.mode).to.equal("normal")
+  end)
+
+  it("takes the typed line verbatim, spaces and shell metacharacters and all", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    feed(ed, ':prompt / bg tool -- "$LVI_INPUT"\r')
+    feed(ed, 'a b $(c) "d"\r')
+    expect(got.input).to.equal('a b $(c) "d"')
+  end)
+
+  it("shows the given prompt string, of any length", function()
+    local ed = make("a")
+    withspawn(ed)
+    feed(ed, ":prompt match/ bg tool\r")
+    expect(ed.mode).to.equal("command")                -- parked in the inner prompt
+    expect(ed.cmdchar).to.equal("match/")
+    feed(ed, "x\r")
+    expect(ed.mode).to.equal("normal")
+  end)
+
+  it("cancelling with Esc runs nothing, and is not an error", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    feed(ed, ":prompt / bg tool\r")
+    feed(ed, "foo" .. ESC)
+    expect(got.cmd).to.be(nil)
+    expect(ed.message).to.be(nil)
+    expect(ed.mode).to.equal("normal")
+  end)
+
+  it("is refused off the interpreter, where a key cannot be read", function()
+    local ed = make("a")
+    local payload, status = ex.dispatch(ed, "prompt / bg tool")   -- as the socket calls it
+    expect(status).to.equal("err")
+    expect(payload:find("keyboard")).to_not.be(nil)
+  end)
+
+  it("needs both a prompt and a command", function()
+    local ed = make("a")
+    local _, status = ex.dispatch(ed, "prompt /")
+    expect(status).to.equal("err")
+  end)
+end)
+
 os.exit(lust.errors == 0 and 0 or 1)

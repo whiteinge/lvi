@@ -2328,6 +2328,19 @@ end
 -- The coroutine body: parse commands forever. Quit is the driver noticing
 -- ed.running == false; this loop never has to return.
 function M.loop(ed)
+  -- Publish the line editor as a keyboard capability, for ex.lua's `:prompt`
+  -- (which has no getkey of its own and cannot reach this file's locals). It is
+  -- installed HERE, in the coroutine body, because this is exactly the scope
+  -- where it can be called: collect_line yields for every key, so only a
+  -- dispatch running INSIDE the interpreter may use it -- the socket and the rc
+  -- dispatch on the main thread, where a yield is an error. `:prompt` checks
+  -- that it is on this coroutine before calling; the field's presence alone is
+  -- not the permission (it outlives every park).
+  --
+  -- `full` is false, for the reason the `:motion` prompt has it false: what is
+  -- being typed is an argument to a tool, not an ex command, so the ex history
+  -- and the command-window handoff would only clutter it.
+  ed.read_line = function(ch, seed) return read_line(ed, ch, seed, false) end
   while true do
     command(ed)
     if ed.changed then

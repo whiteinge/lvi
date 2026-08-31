@@ -1213,6 +1213,50 @@ def("bg", function(ed, c)
   return "", "ok"
 end)
 
+-- :prompt PROMPT CMD -- read a line from the keyboard under PROMPT, then run
+-- CMD with that line in $LVI_INPUT. The map-side counterpart of `:motion`'s
+-- `prompt` keyword, and it exists for the same reason: the editor owns the
+-- prompt because only the editor can see keystrokes. The one terminal a tool
+-- spawned by a map could prompt on is the one `:!` hands it -- in cooked mode,
+-- on the primary screen -- where the tty's line editor, not lvi's, decides what
+-- the keys mean, and what it echoes lands on a screen lvi does not repaint.
+-- Prompting HERE gives the tool lvi's own line editor (Esc/Ctrl-C cancel,
+-- multibyte erase, Ctrl-V) on the status line, and leaves it with nothing
+-- interactive to do, so the map can run it under `:bg` -- no tty handoff:
+--
+--     map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
+--
+-- The typed line travels in the ENVIRONMENT, never spliced into CMD: it is user
+-- text about to reach a shell, and interpolating it would make quoting the
+-- binding's problem (and `$(rm -rf ~)` the user's). The binding quotes the
+-- expansion; the shell does the rest. That does mean CMD must be one of the
+-- surfaces export_context feeds -- `bg`, `!`, `silent !` -- since an ex command
+-- proper (`e`, `w`) never sees the variable except through its own shell
+-- expansion.
+--
+-- PROMPT is the string shown before the cursor, usually one character (`/`),
+-- but any run of non-blanks works (`match/`). A cancelled prompt runs nothing
+-- and is not an error -- Esc at a search prompt is a decision, not a failure.
+--
+-- Keyboard-only, by construction: read_line yields for every key, which is only
+-- legal on the interpreter coroutine, so a `:prompt` arriving over the socket or
+-- from the rc is refused rather than crashing the editor. A tool that wants to
+-- ask its user something has its own terminal to do it on.
+def("prompt", function(ed, c)
+  local pr, rest = c.args:match("^(%S+)%s+(.-)%s*$")
+  if not pr or rest == "" then return "usage: prompt PROMPT COMMAND", "err" end
+  if not ed.read_line or coroutine.running() ~= ed.interp then
+    return "prompt: no keyboard on this surface", "err"
+  end
+  local text = ed.read_line(pr, "")
+  if not text then return "", "ok" end                  -- cancelled: CMD never runs
+  local outer = ed.prompt_input                         -- restore, not clear: a
+  ed.prompt_input = text                                -- nested prompt must not
+  local payload, status = M.dispatch(ed, rest)          -- blank its caller's
+  ed.prompt_input = outer
+  return payload, status
+end)
+
 -- POSIX :sh -- an interactive shell; exit it to return to the editor. With
 -- LVI_WID in its environment this doubles as the path-completion escape hatch:
 -- build a path with the shell's own completion, queue a write for this view
