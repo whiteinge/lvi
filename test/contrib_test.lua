@@ -1225,6 +1225,62 @@ cat >> '%s/sent'
     -- :hl takes byte ranges and never learned units, and lvi-list has no way to
     -- convert (a col-bearing entry's text is a message, not the line). Signing
     -- is the honest degradation; a mispainted extent would be silent.
+    it("lvi-list --paint=gutter marks the margin, sparing the first cell", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:12: one\n/cur/f.c:30: two\n' ]] ..
+               [[| contrib/lvi-list put s --focus --paint=gutter:E]])
+      local log = read(d .. "/log")
+      expect(log:find("gutter s 12:E 30:E")).to.exist()
+      expect(log:find("\nhl s\n")).to.exist()             -- the overlay it replaces, cleared
+      cleanup(d)
+    end)
+
+    -- GNU's `line1-line2` spelling has always parsed; the end line used to be
+    -- dropped because one :hl range covers one line. The margin can hold a span,
+    -- which is how a git hunk gets marked for its whole length.
+    it("lvi-list fills a whole line span in the gutter, same glyph throughout", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:4-6: hunk\n/cur/f.c:9: point\n' ]] ..
+               [[| contrib/lvi-list put s --paint=gutter]])
+      expect(read(d .. "/log"):find("gutter s 4:> 5:> 6:> 9:>")).to.exist()
+      cleanup(d)
+    end)
+
+    -- A mark is a glyph, not a byte: a shell `?` matches one byte, so the obvious
+    -- validation pattern rejects every box-drawing character people reach for.
+    it("lvi-list takes a multibyte gutter mark", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      local bar = "\226\148\130"                          -- U+2502, three bytes
+      local _, ok = run(env, [[printf '/cur/f.c:3: one\n' ]] ..
+                             [[| contrib/lvi-list put s --paint=gutter:]] .. bar)
+      expect(ok).to_not.equal(false)
+      expect(read(d .. "/log"):find("gutter s 3:" .. bar, 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-list marks the span you are standing in as the current entry", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "5", LVI_COL = "1" }     -- inside the 4-6 span
+      run(env, [[printf '/cur/f.c:4-6: hunk\n/cur/f.c:9: point\n' ]] ..
+               [[| contrib/lvi-list put s --focus --paint=gutter]])
+      run(env, "contrib/lvi-list here")
+      local log = read(d .. "/log")
+      expect(log:find("gutter s 4:>:s%-cur 5:>:s%-cur 6:>:s%-cur 9:>")).to.exist()
+      expect(log:find("\npos 4 1 byte jump\n")).to.exist()   -- `here` picked the span, not 9
+      cleanup(d)
+    end)
+
     it("lvi-list falls back to signs when an extent list is not in bytes", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
@@ -1296,6 +1352,26 @@ cat >> '%s/sent'
       expect(out:find("doomed")).to_not.exist()            -- deletion: nowhere to go, skipped
       expect(out:find("1 deleted file%(s%) skipped")).to.exist()   -- ...and said so
       cleanup(r)
+    end)
+
+    -- A hunk is a range, so a gutter column can mark the whole thing. Its own
+    -- repo: the shared fixture's hunks are all one line long, which is exactly
+    -- the case that must NOT grow a range half.
+    it("lvi-gitchanges spells a multi-line hunk as a GNU line range", function()
+      local d = tmpdir()
+      assert(os.execute(([[
+        cd '%s' && git init -q . &&
+        git config user.email t@t && git config user.name t &&
+        printf '1\n2\n3\n4\n5\n6\n7\n8\n' > f.txt &&
+        git add -A && git commit -qm init &&
+        printf '1\n2\nB\nC\nD\n6\n7\n8\n' > f.txt
+      ]]):format(d)))
+      local out = run({}, ("cd '%s' && %s --repo"):format(d, GC))
+      expect(out:find("/f%.txt:3%-5:%+3 %-3")).to.exist()      -- three lines, one range
+      -- ...and a one-line hunk stays a point, not `L-L`.
+      assert(os.execute(("cd '%s' && printf '1\n2\nB\nC\nD\n6\nZ\n8\n' > f.txt"):format(d)))
+      expect(run({}, ("cd '%s' && %s --repo"):format(d, GC)):find("/f%.txt:7:%+1 %-1")).to.exist()
+      cleanup(d)
     end)
 
     it("lvi-gitchanges narrows to $LVI_FILE, and --repo opts back out", function()

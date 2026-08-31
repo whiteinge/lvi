@@ -269,7 +269,7 @@ takes byte ranges and lvi-list cannot convert, since a col-bearing entry's text
 is a message rather than the line. A char or display list signs rather than
 mispaint. The `lvi-list` header lists who reads a column and who ignores it.
 
-`--paint=gutter[:CHAR]` (spike) puts the mark in a real left-margin column
+`--paint=gutter[:CHAR]` puts the mark in a real left-margin column
 instead of the line's first cell. The first-cell sign gives every list one cell
 to fight over, so a line that is both a lint hit and a todo shows one of them,
 picked by whichever `:hl` group resolved last. A column per list removes the
@@ -278,6 +278,14 @@ marks are there, side by side. It also works where an extent cannot, since a
 margin mark needs no columns at all. `$LVI_LIST_PAINT` sets the policy for any
 producer that doesn't name its own, which moves `lvi-lint` and `lvi-gitchanges`
 into the margin without editing either one.
+
+It is also the only policy that can draw a **multi-line** extent. An entry
+spelled as a GNU line range — `f.c:4-9: text` — marks every line it covers,
+which is a git hunk as a bar down the margin rather than a mark on its first
+line. `:hl` can't express that: one range covers one line, which is why
+`lvi-list` read the range's end line and threw it away until there was a margin
+to draw it in. `lvi-gitchanges` now emits hunks that way, and nothing is asked
+of a producer beyond the spelling GNU already defines.
 
 lvi knows nothing about lists: `lvi-list` owns them and drives the view over
 the socket, jumping the cursor, painting the `:hl` overlay, and setting a

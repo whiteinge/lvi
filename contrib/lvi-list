@@ -123,7 +123,7 @@
 #   cur     sign every entry but light the CURRENT one's range: vi with
 #           `hlsearch` off.
 #   gutter[:CHAR]
-#           SPIKE. Put CHAR (default `>`) in the left-margin column named after
+#           Put CHAR (default `>`) in the left-margin column named after
 #           the list, via `:gutter`, instead of recoloring the line's first
 #           cell. The mark is beside the text rather than on it, and two lists
 #           can mark the SAME line at once -- lint and todo each get their own
@@ -133,6 +133,16 @@
 #           entry rides in the same column under the `<name>-cur` group, so a
 #           whole list is one push. Unlike an extent, it needs no columns: a
 #           char/display list signs the margin just as well as a byte one.
+#           CHAR may be multibyte (`gutter:│` draws a change bar); the editor
+#           slices it to the column's one cell.
+#
+#           This is also the only policy that can show a MULTI-LINE extent. An
+#           entry spelled as a GNU line range (`file:4-9:`) marks every line it
+#           covers, same glyph throughout -- a git hunk as a bar down the margin.
+#           `:hl` cannot express that at all, since one range covers one line,
+#           which is why the end line went unread until there was a margin to
+#           draw it in. Nothing is asked of the producer but the range spelling
+#           GNU already defines.
 # Recorded beside the entries (`<name>.paint`) rather than taken as a flag on the
 # `paint` subcommand, because paint runs from a dozen places in here -- every
 # step, every jump, `:on bufenter` -- and a subcommand flag would reach only the
@@ -321,7 +331,7 @@ canonpath() { printf '%s\n' "$1" | awk "$CANON_AWK"'{ print canon($0) }'; }
 # (0 = no extent -- a bare column, a line range, or a range that spans lines).
 POS_AWK='
 function epos(s, p,   f, n, a, b, m) {
-  p["l"] = 0; p["c"] = 0; p["e"] = 0
+  p["l"] = 0; p["c"] = 0; p["e"] = 0; p["el"] = 0
   n = split(s, f, ":")
   if (n < 2 || f[2] !~ /^[0-9]/) return 0
   m = f[2]
@@ -333,10 +343,19 @@ function epos(s, p,   f, n, a, b, m) {
     if (n >= 3 && f[3] ~ /^[0-9]+$/) p["c"] = f[3] + 0   # the `file:line:col:` form
   }
   if (b != "") {
-    if (split(b, a, "[.]") == 2) { if (a[1] + 0 == p["l"]) p["e"] = a[2] + 0 }
-    else if (p["c"] > 0) p["e"] = b + 0                  # `line.col1-col2`
+    # p["el"] is the range END LINE, which GNU has always allowed to spell and
+    # which used to be read and thrown away: `:hl` covers one line per range, so
+    # nothing could use it. A gutter column can, and that is how a hunk gets
+    # marked for its whole length (see PAINT POLICY).
+    if (split(b, a, "[.]") == 2) {
+      p["el"] = a[1] + 0
+      if (a[1] + 0 == p["l"]) p["e"] = a[2] + 0           # `line.col1-line.col2`
+    }
+    else if (p["c"] > 0) p["e"] = b + 0                   # `line.col1-col2`
+    else p["el"] = b + 0                                  # `line1-line2`: a span
   }
   if (p["e"] < p["c"]) p["e"] = 0                        # a backwards range is no extent
+  if (p["el"] <= p["l"]) p["el"] = 0                     # ditto, and a 1-line span is none
   return p["l"] > 0
 }'
 
@@ -388,8 +407,15 @@ paint() {
               "$CANON_AWK$POS_AWK"'
               BEGIN { f = canon(cf) }
               $0 ~ hdr && canon($1)==f && epos($0, p) {
-                if (p["l"] == cl) printf "%s:%s:%s-cur ", p["l"], mk, nm
-                else printf "%s:%s ", p["l"], mk
+                # A span marks every line it covers, same glyph throughout: the
+                # margin is the one channel that can show a multi-line extent at
+                # all, which is why the end line is worth reading here.
+                e = p["el"] ? p["el"] : p["l"]
+                cur = (cl != "" && p["l"] <= cl+0 && e >= cl+0)
+                for (i = p["l"]; i <= e; i++) {
+                  if (cur) printf "%s:%s:%s-cur ", i, mk, nm
+                  else printf "%s:%s ", i, mk
+                }
               }' "$listdir/$name")
     send "gutter $name $marks"
     send "hl $name"; send "hl $name-cur"      # drop the overlay this policy replaces
@@ -444,7 +470,8 @@ case "$sub" in
     check_name "$name"
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     pmode=${pmode:-${LVI_LIST_PAINT:-}}
-    case "$pmode" in ''|sign|extent|cur|gutter|gutter:?) ;; *) die "unknown paint policy: $pmode (sign|extent|cur|gutter[:CHAR])" ;; esac
+    # `?` would match one BYTE, and a mark is a glyph -- `│` is three of them.
+    case "$pmode" in ''|sign|extent|cur|gutter|gutter:?*) ;; *) die "unknown paint policy: $pmode (sign|extent|cur|gutter[:CHAR])" ;; esac
     mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
     setcols "$name" "$cols"; setpaint "$name" "$pmode"
     if [ -n "$atcur" ]; then
@@ -536,7 +563,11 @@ case "$sub" in
     cf=$(curfile); cl=${LVI_LINE:-$("$LVI" -w "$target" -- pos | cut -f1)}
     i=$(awk -F: -v cf="$cf" -v l="$cl" -v hdr="$HDR" "$CANON_AWK$POS_AWK"'
           BEGIN { f = canon(cf) }
-          $0 ~ hdr { n++; if (canon($1)==f && epos($0, p) && p["l"]>=(l+0)) { print n; exit } }' "$listdir/$name")
+          # The first entry ENDING at or after the cursor, so a span you are
+          # standing inside wins over the next one down.
+          $0 ~ hdr { n++
+            if (canon($1)==f && epos($0, p) && (p["el"] ? p["el"] : p["l"]) >= (l+0)) { print n; exit }
+          }' "$listdir/$name")
     [ -n "$i" ] || i=1
     setcur "$name" "$i"; jump "$(nth "$name" "$i")" "$name"; paint "$name"; show_cur "$name" ;;
 
@@ -594,7 +625,8 @@ case "$sub" in
     cols=; pmode=; for a in "$@"; do case "$a" in --cols=*) cols=${a#--cols=} ;; --paint=*) pmode=${a#--paint=} ;; esac; done
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     pmode=${pmode:-${LVI_LIST_PAINT:-}}
-    case "$pmode" in ''|sign|extent|cur|gutter|gutter:?) ;; *) die "unknown paint policy: $pmode (sign|extent|cur|gutter[:CHAR])" ;; esac
+    # `?` would match one BYTE, and a mark is a glyph -- `│` is three of them.
+    case "$pmode" in ''|sign|extent|cur|gutter|gutter:?*) ;; *) die "unknown paint policy: $pmode (sign|extent|cur|gutter[:CHAR])" ;; esac
     mkdir -p "$listdir"; cp "$src" "$listdir/$name" || true; setcur "$name" 0
     setcols "$name" "$cols"; setpaint "$name" "$pmode"
     case " $* " in *" --focus "*) focus_set "$name" ;; esac

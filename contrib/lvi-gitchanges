@@ -3,7 +3,7 @@
 #
 # Turn git changes into a `lvi-list` quickfix and jump to the first hunk; `n`/`N`
 # then step them like any other list. A git producer in the same mold as
-# lvi-search -- it turns `git diff` into `file:line:text` entries, one per hunk,
+# lvi-search -- it turns `git diff` into `file:line1-line2:text` entries, one per hunk,
 # carrying that hunk's own diff as the entry BODY, and lets lvi-list's shared
 # step/paint/status machinery do the rest.
 #
@@ -177,7 +177,8 @@ what=uncommitted
 [ -n "$ref" ] && what="'$ref'"
 diff=$(gitdiff "$@" 2>/dev/null) || die "git failed (not a repo, or bad ref '$ref'?)"
 
-# One entry per hunk -- `<abs path>:<new-start>:+A -D  <section context>` -- with
+# One entry per hunk -- `<abs path>:<new-start>-<new-end>:+A -D  <section context>`
+# (a one-line hunk drops the range half) -- with
 # the hunk's own lines indented under it as the body. @@ -a,d +s,i @@ ctx; a
 # comma-less count means 1, and +s,0 is a pure deletion (clamped to line 1).
 # Tracking `+++` is what skips deleted files and names the rest: git's own header
@@ -203,7 +204,13 @@ entries=$(printf '%s\n' "$diff" | awk '
     ctx=$0; sub(/^@@[^@]*@@ ?/,"",ctx)
     label=sprintf("+%d -%d", add, del)
     if (ctx != "") label=label "  " ctx
-    printf "%s:%s:%s\n", f, s, label
+    # A hunk is a RANGE, in the GNU spelling `file:L1-L2:`, so lvi-list can mark
+    # the whole hunk in a gutter column instead of just its first line. Every
+    # other consumer already lands a range on its start, so this is invisible to
+    # them. A pure deletion (+0) has no new-side span, so it stays a point.
+    e = (add + 0 > 0) ? s + add - 1 : s
+    if (e + 0 > s + 0) printf "%s:%s-%s:%s\n", f, s, e, label
+    else printf "%s:%s:%s\n", f, s, label
     inh=1; next }
   inh { print " " $0 }                            # indent: see BODIES -- a body
 ')                                                # line must not look like a header
