@@ -16,6 +16,7 @@
 local ex = require("ex")
 local disp = require("disp")
 local fold = require("fold")
+local gutter = require("gutter")
 
 local M = {}
 
@@ -1005,7 +1006,7 @@ local function advance_rows(ed, l, sub, rows)
     end
     return l, 0
   end
-  local W, ts = ed.cols, ed.opts.tabstop
+  local W, ts = gutter.textw(ed), ed.opts.tabstop
   if rows > 0 then
     for _ = 1, rows do
       if sub + 1 < segs_at(ed, l, W, ts) then sub = sub + 1
@@ -1051,7 +1052,7 @@ local function g_motion_move(ed, k2, count)
   -- offset but never to reduce it: a short row that clamp truncated reads back the
   -- column the truncation took, while a full row past the first keeps the cursor's
   -- own offset instead of drifting left one row per keypress.
-  local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
+  local W, ts, lb = gutter.textw(ed), ed.opts.tabstop, ed.opts.linebreak
   local N, l = ed.buf:nlines(), ed.cy
   local cur = line(ed, l)
   local sub, ccol = disp.locate(cur, W, ts, ed.cx, lb)
@@ -1354,7 +1355,7 @@ local function cursor_row_offset(ed)
     while l and l < ed.cy do n = n + 1; l = nextv(ed, l) end
     return n
   end
-  local W, ts = ed.cols, ed.opts.tabstop
+  local W, ts = gutter.textw(ed), ed.opts.tabstop
   -- A closed-fold head is a single row: its cursor sub-row is 0, not the wrapped
   -- position of ed.cx in the underlying (hidden-bodied) line.
   local csub = fold.closed_head and has_folds(ed) and fold.closed_head(ed.folds, ed.cy)
@@ -1377,7 +1378,7 @@ local function place_cursor_at_offset(ed, off)
       ed.cy = ed.top + off                     -- column (ed.cx) preserved
     end
   else
-    local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
+    local W, ts, lb = gutter.textw(ed), ed.opts.tabstop, ed.opts.linebreak
     local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx, lb)
     local cl, csub = advance_rows(ed, ed.top, ed.topsub, off)
     ed.cy = cl

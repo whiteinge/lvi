@@ -19,6 +19,7 @@ local normal = require("normal")
 local disp   = require("disp")
 local bufs   = require("bufs")
 local fold   = require("fold")
+local gutter = require("gutter")
 local config = require("config")
 
 local M = {}
@@ -93,7 +94,7 @@ function M.new_ed()
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
-             foldenable = true, fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
+             foldenable = true, gutter = "", fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
     hlpri = {},               -- :hi group -> z-order
 
@@ -106,6 +107,7 @@ function M.new_ed()
     uline = nil,              -- U (restore-line): the line the cursor last settled on
     usaved = nil,             -- U (restore-line): that line's text at settle time
     highlights = {},          -- :hl group -> ranges (transient overlay)
+    gutters = {},             -- :gutter column -> line -> {ch, group} (left-margin marks)
     folds = {},               -- { {s,e,open}, ... } view overlay (see fold.lua)
     jumps = { list = {}, idx = 1 },  -- Ctrl-O/Ctrl-I jumplist
     changes = { list = {}, idx = 1 },  -- g;/g, changelist (fed by keyboard edits)
@@ -424,7 +426,7 @@ local function refresh(ed)
   local curline = ed.buf:line(ed.cy) or ""
 
   local textrows = ed.rows - 1
-  local W = ed.cols
+  local W = gutter.textw(ed)          -- text width, not screen width (see gutter.lua)
   local ts = ed.opts.tabstop
 
   -- The viewport top must itself be a visible line; a fold closed over the old

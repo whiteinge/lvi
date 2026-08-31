@@ -188,13 +188,20 @@ local function do_set(ed, args)
   -- fmtprg. Empty (`:set opfunc=`) disarms g@ back to a no-op.
   if sname == "operatorfunc" or sname == "opfunc" then ed.opts.operatorfunc = sval; return nil, "ok" end
   for opt in args:gmatch("%S+") do
-    local name, val = opt:match("^(%a+)=(.+)$")
+    local name, val = opt:match("^(%a+)=(.*)$")
     if name then
       -- Validate, don't coerce: ts=0 would make every `col % ts` in disp NaN
       -- and render garbage with no error -- reject it here at the one surface.
       local n = tonumber(val)
       local valid = n and n >= 1 and math.floor(n) or nil
-      if name == "tabstop" or name == "ts" then
+      if name == "gutter" then
+        -- The left margin's columns, in order: `set gutter=number,git,lint`
+        -- (empty disables it). Names are free-form -- the editor knows only
+        -- `number`/`relativenumber`; every other name is a column a tool fills
+        -- with `:gutter NAME ...`. Nothing to validate: a column no producer
+        -- ever writes to just draws blank, which is the right failure.
+        ed.opts.gutter = val
+      elseif name == "tabstop" or name == "ts" then
         if not valid then return "bad tabstop: " .. val, "err" end
         ed.opts.tabstop = valid
       elseif name == "shiftwidth" or name == "sw" then
@@ -206,6 +213,7 @@ local function do_set(ed, args)
       if n == "wrap" then out[#out + 1] = ed.opts.wrap and "wrap" or "nowrap"
       elseif n == "linebreak" or n == "lbr" then out[#out + 1] = ed.opts.linebreak and "linebreak" or "nolinebreak"
       elseif n == "foldenable" or n == "fen" then out[#out + 1] = ed.opts.foldenable and "foldenable" or "nofoldenable"
+      elseif n == "gutter" then out[#out + 1] = "gutter=" .. ed.opts.gutter
       elseif n == "tabstop" or n == "ts" then out[#out + 1] = "tabstop=" .. ed.opts.tabstop
       elseif n == "shiftwidth" or n == "sw" then out[#out + 1] = "shiftwidth=" .. ed.opts.shiftwidth
       elseif n == "fmtprg" or n == "fp" then out[#out + 1] = "fmtprg=" .. ed.opts.fmtprg
@@ -278,6 +286,37 @@ local function do_hl(ed, args)
     end
   end
   ed.highlights[group] = ranges
+  return "", "ok"
+end
+
+-- :gutter NAME [L:CHAR[:GROUP] ...] -- set a gutter column's marks (replacing
+-- the column); no specs clears it. Deliberately the same shape as :hl: the
+-- producer re-states its whole world on every push, so it never has to clear
+-- first and can never leave a stale mark behind. GROUP defaults to the column's
+-- name and is looked up in the same :hi style table the overlay uses, so one
+-- column can carry a green `+` and a red `-` (`gutter git 4:+:GitAdd 9:-:GitDel`)
+-- without the editor knowing what git is. The column only appears on screen if
+-- the rc named it in `set gutter=` -- content is the tool's, placement the
+-- user's.
+local function do_gutter(ed, args)
+  local name, rest = args:match("^(%S+)%s*(.-)%s*$")
+  if not name then return "usage: gutter NAME [L:CHAR[:GROUP] ...]", "err" end
+  if name:find(",") then return "bad gutter column name: " .. name, "err" end
+  local marks = {}
+  for spec in rest:gmatch("%S+") do
+    local l, tail = spec:match("^(%d+):(.+)$")
+    if not l then return "bad gutter spec: " .. spec, "err" end
+    -- CHAR may itself be ':' (a mark is any one glyph), so a trailing group is
+    -- recognized only in its own shape -- ':' plus a name at the end. The name
+    -- admits '-' and a leading digit: lvi-list's current-entry groups are
+    -- `<name>-cur` for a list name it does not restrict, so `2fixme-cur` is a
+    -- group someone will write, and a group name is a %S+ everywhere else
+    -- (:hi never restricted it). Only the ambiguity with a ':' glyph does.
+    local ch, group = tail:match("^(.-):([%w_][%w_%-]*)$")
+    if not ch or ch == "" then ch, group = tail, name end
+    marks[tonumber(l)] = { ch = ch, group = group }
+  end
+  ed.gutters[name] = marks
   return "", "ok"
 end
 
@@ -1345,6 +1384,7 @@ def("set se", function(ed, c) return do_set(ed, c.args) end)
 def("hl", function(ed, c) return do_hl(ed, c.args) end)          -- transient ranges
 def("hi highlight", function(ed, c) return do_histyle(ed, c.args) end) -- theme
 def("nohl nohlsearch", function(ed) ed.highlights = {}; return "", "ok" end)
+def("gutter", function(ed, c) return do_gutter(ed, c.args) end)   -- left-margin marks
 
 -- :[range]fold -- create a closed fold over the address range (>= 2 lines).
 -- With no range, args may carry one or more "L1,L2" specs (space-separated), so

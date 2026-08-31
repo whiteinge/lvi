@@ -269,6 +269,16 @@ takes byte ranges and lvi-list cannot convert, since a col-bearing entry's text
 is a message rather than the line. A char or display list signs rather than
 mispaint. The `lvi-list` header lists who reads a column and who ignores it.
 
+`--paint=gutter[:CHAR]` (spike) puts the mark in a real left-margin column
+instead of the line's first cell. The first-cell sign gives every list one cell
+to fight over, so a line that is both a lint hit and a todo shows one of them,
+picked by whichever `:hl` group resolved last. A column per list removes the
+contest: turn them on in the rc with `set gutter=number,lint,todo` and both
+marks are there, side by side. It also works where an extent cannot, since a
+margin mark needs no columns at all. `$LVI_LIST_PAINT` sets the policy for any
+producer that doesn't name its own, which moves `lvi-lint` and `lvi-gitchanges`
+into the margin without editing either one.
+
 lvi knows nothing about lists: `lvi-list` owns them and drives the view over
 the socket, jumping the cursor, painting the `:hl` overlay, and setting a
 `:status` counter.
