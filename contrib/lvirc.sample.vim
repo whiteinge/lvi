@@ -118,7 +118,7 @@ map \ht :bg lvi-highlight toggle<CR>        " :syntax off / on
 " keys. Patterns are EREs (-F takes one literally, --word is grep -w, -i folds
 " case), and each gets its own color, match1..match6.
 map \hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>  " mark the word under the cursor
-map \hp :silent !lvi-match<CR>              " ...or prompt for a pattern
+map \hp :prompt match/ bg lvi-match -- "$LVI_INPUT"<CR>  " ...or a typed pattern
 map \hd :bg lvi-match del<CR>               " drop the newest mark
 map \hc :bg lvi-match clear<CR>             " drop them all
 map \hl :!lvi-match list<CR>                " what is marked
@@ -127,7 +127,7 @@ map \hl :!lvi-match list<CR>                " what is marked
 " here loses. To pick the colors here instead, blank LVI_MATCH_STYLES so it
 " pushes none. `:bg` takes a shell line, so the maps that add carry it:
 "   map \hm :bg LVI_MATCH_STYLES= lvi-match add --word -F "$LVI_CWORD"<CR>
-"   map \hp :silent !LVI_MATCH_STYLES= lvi-match<CR>
+"   map \hp :prompt match/ bg LVI_MATCH_STYLES= lvi-match -- "$LVI_INPUT"<CR>
 "   hi match1 bg=yellow fg=black pri=12
 "   hi match2 bg=cyan   fg=black pri=12
 
@@ -152,11 +152,14 @@ hi Error   fg=red bold
 "   ]x / [x     step a PINNED list x without changing focus (]e lint, ]s spell,
 "               ]c git -- see each section below; the letter is the list's initial)
 "   \l...       manage lists (switch focus, jump within, re-center, hide, preview)
-" / prompts and \lg/\ll run pickers, so they need the terminal (:silent !). The
-" rest touch no tty, so they use :bg -- a detached spawn with NO terminal
-" handover, which avoids the alt-screen flash that :! causes when you hold down n/N.
-map / :silent !lvi-search<CR>                 " prompt for a pattern, then focus it
-map ? :silent !lvi-search -b<CR>              " ...searching backward from the cursor
+" \lg/\ll run pickers, so they need the terminal (:silent !). Nothing else here
+" touches the tty, so it uses :bg -- a detached spawn with NO terminal handover,
+" which avoids the alt-screen flash that :! causes when you hold down n/N. / and
+" ? need a pattern rather than a terminal: :prompt reads the line with lvi's own
+" line editor (Esc cancels, Backspace erases a whole character) and hands it over
+" in $LVI_INPUT, which leaves the search a :bg spawn like the rest.
+map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>     " pattern, then focus it
+map ? :prompt ? bg lvi-search -b -- "$LVI_INPUT"<CR>  " ...backward from the cursor
 map * :bg lvi-search --word<CR>               " search the word under the cursor
 map # :bg lvi-search --word -b<CR>            " ...backward
 map n :bg lvi-list next<CR>                   " step the focused list...

@@ -37,6 +37,8 @@ local M = {}
 --   * reg_read, reg_write                -- command-backed register I/O (no tty)
 --   * suspend, with_tty, shell, suspend_self, complete_run  -- tty capabilities,
 --     ABSENT headless; ex feature-detects them (`if ed.shell then ...`)
+--   * read_line                          -- the keyboard capability, injected by
+--     normal.loop (the only scope it is callable from; see there)
 function M.new_ed()
   return {
     -- lifecycle
@@ -86,6 +88,7 @@ function M.new_ed()
     change_pending = false,   -- a keyboard edit awaits its debounced change hook
     event_mark = false,       -- transient: the A-Z char while a markset/markjump hook fires (-> $LVI_MARK)
     event_name = false,       -- transient: the event name while a hook fires (-> $LVI_EVENT)
+    prompt_input = false,     -- transient: the line typed at a `:prompt` while its command runs (-> $LVI_INPUT)
     source_depth = 0,         -- :source nesting, capped to break mutual includes
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
@@ -547,6 +550,12 @@ function M.run(opts)
     -- empty for every other spawn, so no child sees a stale mark. Set transiently
     -- by normal.lua right around the fire, same discipline as the range vars below.
     sys.setenv("LVI_MARK", ed.event_mark or "")
+    -- The line the user typed at a `:prompt`, for the command that prompt is
+    -- running; empty for every other spawn, the LVI_MARK discipline again. The
+    -- env is the whole handoff -- the text is never spliced into the command
+    -- line -- so a pattern holding spaces, quotes or a `$(...)` reaches the tool
+    -- as itself, quoted by the binding (`"$LVI_INPUT"`) rather than by us.
+    sys.setenv("LVI_INPUT", ed.prompt_input or "")
     -- The event behind an `:on` hook fire; empty for every other spawn (`:bg`,
     -- `:!`, g@). Set transiently by M.fire, the LVI_MARK discipline -- it lets a
     -- tool split hook-fired from asked-for behavior (contrib/lvi-lint stays

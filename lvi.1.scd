@@ -617,6 +617,29 @@ spaces and tabs included.
 	(the non-mutating counterpart to the *!* filter), so a tool can act on a
 	typed line span; without a range both are empty.
 
+*prompt* _prompt_ _cmd_
+	Read a line from the keyboard, showing _prompt_ before it, then run _cmd_
+	with the typed line in *$LVI_INPUT*. It is how a map asks the user for
+	something: the editor does the prompting, so its own line editor applies
+	(*Esc* or *Ctrl-C* cancels, Backspace erases a whole multibyte character,
+	*Ctrl-V* quotes the next key), and the prompt draws on the status line. A
+	tool prompting for itself would need the terminal handed over first.
+	Cancelling runs nothing and is not an error.
+
+	The typed line reaches _cmd_ only through the environment, never spliced
+	into the command line. Quote the expansion and a pattern holding spaces,
+	quotes or *$(...)* arrives as itself.
+
+	```
+	map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
+	```
+
+	That leaves the tool with nothing interactive to do, so it can run under
+	*bg*, with no terminal handover at all. _prompt_ is usually one character
+	but may be any run of non-blanks (*match/*). Keyboard only: a
+	*prompt* arriving over the socket or from the rc file is an error, since
+	there is no one there to type.
+
 *normal* _keys_
 	Feed _keys_ as normal-mode keystrokes -- the escape hatch that gives the
 	socket full editing power (e.g. *normal 2dw*). With an address range
@@ -1219,8 +1242,8 @@ below, with the happy-path rc lines that turn it on:
 	whichever is _focused_:
 
 	```
-	map / :silent !lvi-search<CR>
-	map ? :silent !lvi-search -b<CR>
+	map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
+	map ? :prompt ? bg lvi-search -b -- "$LVI_INPUT"<CR>
 	map * :bg lvi-search "$LVI_CWORD"<CR>
 	map # :bg lvi-search -b "$LVI_CWORD"<CR>
 	map n :bg lvi-list next<CR>
@@ -1267,7 +1290,7 @@ below, with the happy-path rc lines that turn it on:
 
 	```
 	map \\hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>
-	map \\hp :silent !lvi-match<CR>
+	map \\hp :prompt match/ bg lvi-match -- "$LVI_INPUT"<CR>
 	map \\hd :bg lvi-match del<CR>
 	map \\hc :bg lvi-match clear<CR>
 	```
@@ -1604,6 +1627,11 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	empty for every other child (*:bg*, *:!*, *g@*). Lets one tool serve both
 	surfaces: quiet about a shortfall when re-fired by a hook, loud when you
 	asked by hand.
+
+*LVI_INPUT*
+	The line typed at a *:prompt*, while the command that prompt is running
+	runs; empty for every other child. The command names it (*"$LVI_INPUT"*);
+	the text is never part of the command line lvi parsed.
 
 *LVI_COMPL_TOKEN*, *LVI_COMPL_LINE*, *LVI_COMPL_DIR*, *LVI_COMPL_KIND*
 	The completion context, set only for the *on complete* command (see

@@ -18,8 +18,8 @@
 # expands maps only for the FIRST key of a command (normal.lua's `first_key`), so
 # a bare press takes the map and an operator-pending press takes the motion.
 # `/` gives you every hit to walk; `d/` deletes to the next one. Bind both:
-#     map / :silent !lvi-search<CR>             " prompt, then walk the list
-#     map ? :silent !lvi-search -b<CR>          " ...searching backward
+#     map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>       " walk the list
+#     map ? :prompt ? bg lvi-search -b -- "$LVI_INPUT"<CR>    " ...backward
 #     map * :bg lvi-search --word<CR>           " the word under the cursor
 #     map # :bg lvi-search --word -b<CR>        " ...backward
 #     map n :bg lvi-list next<CR>               " step the focused list
@@ -43,6 +43,16 @@
 # dialect and the matcher. Split across two programs, "the last pattern" was a
 # contract two stores had to keep in step by hand, and `/foo` followed by `d/`
 # could disagree. One program owns it, so they cannot.
+#
+# WHO PROMPTS. The editor does, on both shapes: `:prompt` for the map, the
+# `prompt` keyword for the motion. It has to, because the only terminal we could
+# read a key from is the one `:!` hands over -- in cooked mode, on the primary
+# screen, with the tty's line editor deciding what the keys mean and its echo
+# landing on a screen the editor does not repaint. Prompting in the editor also
+# leaves us with nothing interactive to do, which is what lets the map run us
+# under `:bg`, with no terminal handover. The `read` below is for a hand
+# invocation from a shell, where a pattern is missing and there is a real prompt
+# to ask at.
 #
 # TWO INVOCATION STYLES, TWO SPAWN DISCIPLINES -- the one thing to know before
 # editing. The list half is a self-backgrounding socket client: reading the
@@ -114,6 +124,11 @@
 #     map / :silent !LVI_SEARCH_CASE=smart lvi-search<CR>
 # How the folding is done (sed's `I` flag where there is one, `tr` where there is
 # not) is lvi-bre-locate's business, not ours.
+#
+# A BARE `/<CR>` (an empty pattern, however it reaches us) repeats the last
+# search, as vi's does -- the same reading `--last` and the motion shape give an
+# empty argument. It stays silent when there is no last search: `/` then Enter is
+# usually a change of mind, not a request for an error message.
 #
 # `--word` keeps only whole-word matches (grep's -w) and is what makes `*`
 # behave. Where the word comes from differs by shape, because the `$LVI_*` env is
@@ -265,12 +280,21 @@ if [ -z "$worker" ]; then
   elif [ -n "$last" ]; then
     store_get || { notify "msge no previous search"; exit 0; }
   else
-    if [ -z "$pat" ]; then
+    # A pattern typed at a shell (or under the older `:silent !` binding, where
+    # `:!` hands over the terminal). The test is stderr, NOT stdin: `:bg`
+    # redirects only the output, so the editor's raw-mode tty is still on stdin
+    # and a `read` here would eat the keys being typed AT the editor. With no
+    # terminal to ask on there is nothing to ask -- the map's `:prompt` already
+    # did, and its answer is what we were handed.
+    if [ -z "$pat" ] && [ -t 2 ] && [ -t 0 ]; then
       printf '%s' "$dir" >&2                      # prompt with the key you pressed
       IFS= read -r pat || exit 0
-      [ -n "$pat" ] || exit 0
     fi
-    resolve_case "$pat"
+    if [ -z "$pat" ]; then
+      store_get || exit 0                         # bare `/<CR>`: vi repeats the
+    else                                          # last search, and so do we
+      resolve_case "$pat"
+    fi
   fi
   # Before the fork: a `d/` pressed the instant this returns must not race the
   # worker for the store (see THE LAST PATTERN).

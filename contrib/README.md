@@ -46,8 +46,9 @@ the line, never behind an fzf-only `--with-nth`.
 **Three spawn disciplines** — the reason the bindings differ:
 
 - `:silent !CMD` hands over the terminal (drops to and back from the alt screen).
-  Use it only for tools that **prompt** or are otherwise interactive — `/`,
-  `lvi-open`'s picker.
+  Use it only for tools that draw or read on their own — `lvi-open`'s picker,
+  `lvi-buf`. A tool that only needs a *line* from the user doesn't need this:
+  `:prompt / bg CMD` has the editor read it and pass it in `$LVI_INPUT`.
 - `:bg CMD` runs detached with **no** terminal handover — no alt-screen flash. Use
   it for non-interactive tools fired by a map that may repeat (`map n :bg lvi-list
   next<CR>`). It's the same spawn `:on` hooks use. A leading address range
@@ -285,6 +286,18 @@ it searches the *live* buffer (so it finds unsaved text), builds the `search`
 list, focuses it, and jumps to the first match past the cursor. Search is
 simply a degenerate quickfix. Bind `/` and `?` to prompt, `*` and `#` to hunt
 the word under the cursor; `n`/`N` do the rest.
+
+```
+map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
+map ? :prompt ? bg lvi-search -b -- "$LVI_INPUT"<CR>
+```
+
+The editor reads the pattern (`:prompt`), so the tool never needs a terminal.
+The only one it could prompt on is the one `:!` hands over — cooked mode,
+primary screen — where the tty's line editor decides what the keys mean.
+`:prompt` keeps them lvi's: Esc cancels, Backspace erases a whole character. And
+with nothing interactive left to do, the search runs under `:bg`. The pattern
+travels in the environment, so a space or a `$(...)` in it is text, not syntax.
 
 Patterns are POSIX BREs, vi's own dialect, and every entry carries the match's
 extent, so `n` steps occurrence by occurrence and the match itself lights up
