@@ -798,7 +798,8 @@ cat >> '%s/sent'
       run(env, "contrib/lvi-search --worker -- foo")
       expect(read(d .. "/sock.lists/search")).to.equal(
         "x.txt:1.5-7: aaa foo(bar) foo\nx.txt:1.14-16: aaa foo(bar) foo\n")
-      -- the match is what you are looking at, so it lights rather than signs
+      -- the match is what you are looking at, so it lights in place rather
+      -- than marking the margin beside it
       expect(read(d .. "/sock.lists/search.paint")).to.equal("extent\n")
       expect(read(d .. "/log"):find("\nhl search 1:5%-7 1:14%-16")).to.exist()
       -- with every match lit, the one you are on needs its own look
@@ -1242,22 +1243,24 @@ cat >> '%s/sent'
     end)
 
     -- PAINT POLICY: what an entry looks like is the producer's declaration, not
-    -- a property of the paint call. `sign` is the default for everyone, so a
-    -- range entry marks its first cell (and, before the policy existed, mangled
-    -- the :hl range doing it -- `12.5-20` reached :hl as a line number).
-    it("lvi-list signs a range entry's first cell by default", function()
+    -- a property of the paint call, and `gutter` is what a producer that
+    -- declares nothing gets. A col-bearing entry must not reach :gutter as a
+    -- position: the margin is per LINE, and `12.5-20` once leaked its column
+    -- into the mark.
+    it("lvi-list marks the margin by default, by line", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf '/cur/f.c:12.5-20: boom\n' | contrib/lvi-list put qq --focus]])
       local log = read(d .. "/log")
-      expect(log:find("hl qq 12:1%-1")).to.exist()
+      expect(log:find("gutter qq 12:>")).to.exist()
       expect(log:find("12%.5")).to_not.exist()
+      expect(log:find("\nhl qq\n")).to.exist()          -- and no overlay left behind
       cleanup(d)
     end)
 
-    it("lvi-list --paint=extent lights each entry's range, signing the rest", function()
+    it("lvi-list --paint=extent lights the ranges and nothing else", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
@@ -1265,8 +1268,10 @@ cat >> '%s/sent'
       run(env, [[printf '/cur/f.c:12.5-20: match\n]] ..
                [[/cur/f.c:30:7: col only\n]] ..
                [[/cur/f.c:44: line only\n' | contrib/lvi-list put s --focus --paint=extent]])
-      -- the range lights; a bare column and a bare line have no extent to light
-      expect(read(d .. "/log"):find("hl s 12:5%-20 30:1%-1 44:1%-1")).to.exist()
+      -- the range lights; a bare column and a bare line have no extent to light,
+      -- and there is no marking-in-place left that is not a range
+      expect(read(d .. "/log"):find("hl s 12:5%-20 ")).to.exist()
+      expect(read(d .. "/log"):find("30:1%-1")).to_not.exist()
       -- the sidecar is not a list
       expect(run(env, "contrib/lvi-list ls"):find("s%.paint")).to_not.exist()
       cleanup(d)
@@ -1281,15 +1286,15 @@ cat >> '%s/sent'
                [[/cur/f.c:30.3-8: two\n' | contrib/lvi-list put s --focus --paint=cur]])
       run(env, "contrib/lvi-list next")
       local log = read(d .. "/log")
-      expect(log:find("\nhl s 12:1%-1 30:1%-1")).to.exist()   -- every entry still a sign
-      expect(log:find("\nhl s%-cur 12:5%-20\n")).to.exist()  -- ...except the one you are on
+      expect(log:find("\nhl s\n")).to.exist()                 -- nothing lit but...
+      expect(log:find("\nhl s%-cur 12:5%-20\n")).to.exist()  -- ...the one you are on
       cleanup(d)
     end)
 
     -- :hl takes byte ranges and never learned units, and lvi-list has no way to
-    -- convert (a col-bearing entry's text is a message, not the line). Signing
-    -- is the honest degradation; a mispainted extent would be silent.
-    it("lvi-list --paint=gutter marks the margin, sparing the first cell", function()
+    -- convert (a col-bearing entry's text is a message, not the line). Marking
+    -- the margin is the honest degradation; a mispainted extent would be silent.
+    it("lvi-list --paint=gutter marks the margin, one glyph per entry", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
@@ -1452,14 +1457,14 @@ cat >> '%s/sent'
       cleanup(d)
     end)
 
-    it("lvi-list falls back to signs when an extent list is not in bytes", function()
+    it("lvi-list marks the margin when an extent list is not in bytes", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf '/cur/f.c:12.5-20: match\n' ]] ..
                [[| contrib/lvi-list put s --focus --paint=extent --cols=char]])
-      expect(read(d .. "/log"):find("hl s 12:1%-1")).to.exist()
+      expect(read(d .. "/log"):find("gutter s 12:>")).to.exist()
       expect(select(2, run(env, [[: | contrib/lvi-list put s --paint=blink]]))).to.equal(false)
       cleanup(d)
     end)
@@ -1473,7 +1478,7 @@ cat >> '%s/sent'
                     LVI_SOCK = d .. "/sock", LVI_FILE = pwd .. "/./sub/f.txt",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf 'sub/f.txt:4:1: boom\n' | contrib/lvi-list put qq --focus]])
-      expect(read(d .. "/log"):find("^hl qq 4:1%-1 \n")).to.exist()    -- painted, not skipped
+      expect(read(d .. "/log"):find("^gutter qq 4:> \n")).to.exist()   -- painted, not skipped
       run(env, "contrib/lvi-list next")
       local log = read(d .. "/log")
       expect(log:find("\npos 4 1 byte jump\n")).to.exist()
@@ -1487,7 +1492,7 @@ cat >> '%s/sent'
                     LVI_SOCK = d .. "/sock", LVI_FILE = pwd .. "/sub/f.txt",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf 'sub/../other/g.txt:2:1: boom\n' | contrib/lvi-list put qq --focus]])
-      expect(read(d .. "/log"):find("^hl qq\n")).to.exist()           -- nothing to paint here
+      expect(read(d .. "/log"):find("^gutter qq %\n")).to.exist()      -- nothing to paint here
       run(env, "contrib/lvi-list next")
       expect(read(d .. "/log"):find("\ne %-%- sub/%.%./other/g%.txt\n")).to.exist()
       cleanup(d)

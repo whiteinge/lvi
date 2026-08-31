@@ -357,21 +357,13 @@ map \gr :bg lvi-gitchanges --focus --jump --repo<CR>       " ...the whole repo, 
 " Or give the list its own step keys so it never steals focus from search:
 map ]c :bg lvi-list next gitchanges<CR>
 map [c :bg lvi-list prev gitchanges<CR>
-" A group with no style is invisible; lvi-search styles `search` itself, but you
-" can theme any list's group (and its -cur current-entry group), e.g.:
-"   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
-" Each mode has its own list, so give them distinct colors and the three read
-" apart at a glance:
-"   hi gitunstaged bg=94 pri=10
-"   hi gitstaged   bg=28 pri=10
-"
-" Or mark the hunks in the margin -- +/-/~ per line, a change bar down each hunk.
-" Needs a `gitchanges` column in `set gutter=`:
-"   on ready lvi-list policy gitchanges gutter
-"   hi GitAdd    fg=green          " added lines
-"   hi GitChange fg=yellow         " lines that replaced something
-"   hi GitDel    fg=red            " where lines were removed
-"   hi gitchanges-cur fg=black bg=green   " the hunk you are standing in
+" Hunks mark the margin: +/-/~ per line, a change bar down each hunk. The margin
+" section names the `gitchanges` column that draws it (add gitunstaged/gitstaged
+" if you want \gu and \gs marked too).
+hi GitAdd    fg=green                          " added lines
+hi GitChange fg=yellow                         " lines that replaced something
+hi GitDel    fg=red                            " where lines were removed
+hi gitchanges-cur fg=black bg=green            " the hunk you are standing in
 " Those group names are lvi-diff's too, so one theme serves both git tools.
 "
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
@@ -394,7 +386,8 @@ map [c :bg lvi-list prev gitchanges<CR>
 " nothing, whatever is pushed to it. Its glyphs are the producer's, per line
 " (lvi-lint sends E and W; lvi-gitchanges sends + - and ~), each naming the `hi`
 " group that themes it.
-" set gutter=gitchanges,lint,number
+set gutter=gitchanges,lint              " the columns the sections below theme
+" set gutter=gitunstaged,gitstaged,gitchanges,lint,number   " ...the full spread
 " set number                            " ...or just vi's own option, on its own
 
 hi LineNr       fg=240                 " the numbers (un-themed = plain)
@@ -420,14 +413,11 @@ on write lvi-lint                      " re-lint on every save...
 map \e :bg lvi-lint --focus --jump<CR> " lint now, aim n/N, go to a finding
 map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
 map [e :bg lvi-list prev lint<CR>
-hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
-hi lint-cur bg=124 pri=11
-" Or mark the findings in the margin, which needs a `lint` column in `set gutter=`
-" above. lvi-lint sends E and W per line, most severe first, under its own groups:
-"   on ready lvi-list policy lint gutter
-"   hi LintError fg=red bold
-"   hi LintWarn  fg=yellow
-"   hi lint-cur  fg=black bg=red     " the finding n/N is parked on
+" Findings mark the margin, E and W per line (most severe wins), under lvi-lint's
+" own groups; the margin section names the `lint` column that draws them.
+hi LintError fg=red bold
+hi LintWarn  fg=yellow
+hi lint-cur  fg=black bg=red           " the finding n/N is parked on
 
 " }}}
 " ---- spell check ------------------------------------------------------- {{{

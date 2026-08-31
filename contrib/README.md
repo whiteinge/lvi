@@ -288,25 +288,25 @@ since only the editor has the line's bytes to convert with.
 
 A second declaration, `--paint=`, says what the mark *looks* like. A list is
 either something you read or something you see, and only the producer knows
-which. The default is a **sign** — the entry's first cell, a mark in the left
-margin scanned down the edge of the screen. That is right for a linter, whose
-lines you read, and wrong for a search, where the match is what you are looking
-at, so `--paint=extent` lights each entry's own range instead and `--paint=cur`
-lights only the one you are standing on. An extent needs byte columns: `:hl`
-takes byte ranges and lvi-list cannot convert, since a col-bearing entry's text
-is a message rather than the line. A char or display list signs rather than
-mispaint. The `lvi-list` header lists who reads a column and who ignores it.
+which. The default is `gutter` — a glyph in the left-margin column named after
+the list, scanned down the edge of the screen. That is right for a linter, whose
+lines you read: lighting the offending token would bury the very text you are
+scanning. It is wrong for a search, where the match *is* what you are looking at,
+so `--paint=extent` lights each entry's own range in place and `--paint=cur`
+lights only the one you are standing on.
 
-`--paint=gutter[:CHAR]` puts the mark in a real left-margin column
-instead of the line's first cell. The first-cell sign gives every list one cell
-to fight over, so a line that is both a lint hit and a todo shows one of them,
-picked by whichever `:hl` group resolved last. A column per list removes the
-contest: turn them on in the rc with `set gutter=number,lint,todo` and both
-marks are there, side by side. It also works where an extent cannot, since a
-margin mark needs no columns at all. `lvi-list policy NAME POLICY` is the user's
-say — `put` leaves a stored policy alone unless the run named one — so one rc
-line moves `lvi-lint` or `lvi-gitchanges` into the margin without editing either
-one.
+A margin column costs a screen column, so it needs turning on: `set
+gutter=number,lint,todo`, and a column no rc line names draws nothing. In
+exchange, a line that is both a lint hit and a todo shows both, each in its own
+column — one cell per list rather than one cell shared. It also works where an
+extent cannot: an extent needs byte columns, since `:hl` takes byte ranges and
+lvi-list cannot convert (a col-bearing entry's text is a message rather than the
+line), so a char or display list marks the margin instead of mispainting. The
+`lvi-list` header lists who reads a column and who ignores it.
+
+`lvi-list policy NAME POLICY` is the user's say — `put` leaves a stored policy
+alone unless the run named one — so one rc line changes how `lvi-lint` or
+`lvi-gitchanges` paints without editing either.
 
 **The glyph is the producer's, per line.** `lvi-list marks NAME` takes a second
 stream — `FILE:LINE<TAB>GLYPH[<TAB>GROUP]` — stored beside the entries and
@@ -785,7 +785,8 @@ and columns in **UTF-16 code units**; lvi counts lines from 1 and columns in
 bytes. Both conversions here walk the actual bytes of the line in question, so
 they are exact rather than only right on ASCII: a hit on a line with multibyte
 text before it still lands on its symbol, and the entries carry byte columns,
-which is what lets a list paint the extent instead of degrading to a sign.
+which is what lets a list light the extent instead of falling back to a margin
+mark.
 
 It is written in LuaJIT — lvi's own runtime, so no new dependency — with two
 FIFOs carrying JSON-RPC and a small JSON reader inline. `$LVI_LSP_DEBUG` names a

@@ -282,7 +282,7 @@ describe("a gutter of width g == a screen g columns narrower", function()
     return plain, gut
   end
 
-  local function same(plain, gut, label)
+  local function same(plain, gut)
     expect(gut.cy).to.equal(plain.cy)
     expect(gut.cx).to.equal(plain.cx)
     expect(gut.top).to.equal(plain.top)

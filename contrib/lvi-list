@@ -42,7 +42,7 @@
 #   $LVI_SOCK.lists/<name>        the entries (raw; multi-line bodies kept)  (per view)
 #   $LVI_SOCK.lists/<name>.cur    the current index  (1-based; 0 = before first)
 #   $LVI_SOCK.lists/<name>.cols   what its columns count (absent = byte)
-#   $LVI_SOCK.lists/<name>.paint  how its entries paint (absent = sign)
+#   $LVI_SOCK.lists/<name>.paint  how its entries paint (absent = gutter)
 #   $LVI_SOCK.lists/<name>.marks  the producer glyphs (see MARKS; cleared by a new put)
 #   $LVI_SOCK.focus               the focused list name
 # A name may not end in `-cur`: a list paints the `:hl` groups <name> and
@@ -127,36 +127,28 @@
 # PAINT POLICY (`put --paint=`) is what an entry LOOKS LIKE on screen. A list is
 # either something you read or something you see, and only its producer knows
 # which:
-#   sign    (default) mark the entry's first cell, `L:1-1`. A colored leading
-#           cell reads as a poor-man's sign down the edge of the screen, where
-#           lighting the offending token would bury the very text you are
-#           scanning -- right for a linter, whose entries you READ.
-#   extent  light the entry's RANGE (`L:C1-C2`) where it has one, falling back
-#           to the sign where it does not -- right for a search, where the match
-#           IS the thing you are looking at.
-#   cur     sign every entry but light the CURRENT one's range: vi with
-#           `hlsearch` off.
 #   gutter[:CHAR]
-#           Put CHAR (default `>`) in the left-margin column named after
-#           the list, via `:gutter`, instead of recoloring the line's first
-#           cell. The mark is beside the text rather than on it, and two lists
-#           can mark the SAME line at once -- lint and todo each get their own
-#           column, where the first-cell sign gives them one cell to fight over.
-#           Needs the column switched on in the rc (`set gutter=number,lint`);
-#           without that the marks are stored and simply not drawn. The current
-#           entry rides in the same column under the `<name>-cur` group, so a
-#           whole list is one push. Unlike an extent, it needs no columns: a
-#           char/display list signs the margin just as well as a byte one.
-#           CHAR may be multibyte (`gutter:│` draws a change bar); the editor
-#           slices it to the column's one cell.
+#           (default) A glyph in the left-margin column named after the list,
+#           via `:gutter`: beside the text rather than on it, so two lists can
+#           mark the SAME line at once, each in its own column. Right for a
+#           linter, whose entries you READ -- lighting the offending token would
+#           bury the very text you are scanning. Needs the column switched on in
+#           the rc (`set gutter=number,lint`); without that the marks are stored
+#           and simply not drawn. CHAR (default `>`) is the fallback for a list
+#           that sends no glyphs of its own, and may be multibyte (`gutter:│`
+#           draws a change bar); the editor slices it to the column's one cell.
+#           The current entry rides in the same column under the `<name>-cur`
+#           group, so a whole list is one push.
 #
-#           This is also the only policy that can show a MULTI-LINE extent. An
-#           entry spelled as a GNU line range (`file:4-9:`) marks every line it
-#           covers, same glyph throughout -- a git hunk as a bar down the margin.
+#           It needs no columns, and it is the only policy that can show a
+#           MULTI-LINE extent: an entry spelled as a GNU line range (`file:4-9:`)
+#           marks every line it covers, a git hunk as a bar down the margin.
 #           `:hl` cannot express that at all, since one range covers one line,
 #           which is why the end line went unread until there was a margin to
-#           draw it in. Nothing is asked of the producer but the range spelling
-#           GNU already defines.
+#           draw it in.
+#   extent  light the entry's RANGE (`L:C1-C2`) in place -- right for a search,
+#           where the match IS the thing you are looking at.
+#   cur     light only the CURRENT entry's range: vi with `hlsearch` off.
 # Recorded beside the entries (`<name>.paint`) rather than taken as a flag on the
 # `paint` subcommand, because paint runs from a dozen places in here -- every
 # step, every jump, `:on bufenter` -- and a subcommand flag would reach only the
@@ -174,9 +166,9 @@
 # An extent needs BYTE columns, because `:hl` takes byte ranges and never learned
 # units the way `:pos` did. lvi-list cannot convert: that needs the line's bytes,
 # which only the editor has -- a col-bearing entry's TEXT is a diagnostic
-# message, not the line it points at. So a char/display list degrades to signs
-# rather than mispaint, and so does a multi-line range (`L1.C1-L2.C2`), since one
-# `:hl` range covers one line.
+# message, not the line it points at. So a char/display list marks the margin
+# instead rather than mispaint, and so does a multi-line range
+# (`L1.C1-L2.C2`), since one `:hl` range covers one line.
 #
 # One ambiguity is inherent to the format rather than to any parser here: a
 # col-less entry whose TEXT opens with digits and a colon (`f.c:7:42: foo`) is
@@ -266,16 +258,15 @@ names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|
 # `byte`, which is what every producer meant before there was anywhere to say.
 colunit()   { u=$(cat "$listdir/$1.cols" 2>/dev/null); case "$u" in char|display) echo "$u";; *) echo byte;; esac; }
 setcols()   { if [ -n "$2" ]; then printf '%s\n' "$2" > "$listdir/$1.cols"; else rm -f "$listdir/$1.cols"; fi; }
-# How this list paints (see PAINT POLICY). Unset reads as `sign`, which is what
-# every producer got before there was anywhere to ask for anything else.
-paintmode() { m=$(cat "$listdir/$1.paint" 2>/dev/null); case "$m" in extent|cur) echo "$m";; gutter*) echo gutter;; *) echo sign;; esac; }
+# How this list paints (see PAINT POLICY). Unset reads as `gutter`.
+paintmode() { m=$(cat "$listdir/$1.paint" 2>/dev/null); case "$m" in extent|cur) echo "$m";; *) echo gutter;; esac; }
 # `gutter` may carry the mark it draws with (`--paint=gutter:E`); default `>`.
 paintmark() { m=$(cat "$listdir/$1.paint" 2>/dev/null); case "$m" in gutter:?*) printf '%s\n' "${m#gutter:}";; *) printf '>\n';; esac; }
 setpaint()  { mkdir -p "$listdir"; printf '%s\n' "$2" > "$listdir/$1.paint"; }
 # `?` would match one BYTE, and a mark is a glyph -- `â` is three of them.
 check_paint() {
-  case "$1" in ''|sign|extent|cur|gutter|gutter:?*) ;;
-    *) die "unknown paint policy: $1 (sign|extent|cur|gutter[:CHAR])" ;; esac
+  case "$1" in ''|extent|cur|gutter|gutter:?*) ;;
+    *) die "unknown paint policy: $1 (gutter[:CHAR]|extent|cur)" ;; esac
 }
 
 # Entry boundaries in vim's MULTI-LINE quickfix format: a `file:line[:col]:text`
@@ -408,19 +399,19 @@ jump() {
 
 # Repaint NAME's entries for the CURRENT buffer, mark the current entry, and set
 # the status counter. Bound to :on bufenter for cross-file lists. What a mark
-# LOOKS like -- the first-cell sign, or the entry's own range -- is the list's
-# recorded paint policy; see PAINT POLICY, and note that an extent needs byte
-# columns, so anything else falls back to the sign here rather than mispaint.
-# Un-themed groups stay invisible (opt in via :hi).
+# LOOKS like -- a glyph in the margin, or the entry's own range lit in place --
+# is the list's recorded paint policy; see PAINT POLICY, and note that an extent
+# needs byte columns, so anything else marks the margin rather than mispaint.
+# Un-themed groups stay invisible (opt in via :hi); so does a column no
+# `set gutter=` line names.
 paint() {
   name=$1; [ -f "$listdir/$name" ] || return 0
   cf=$(curfile)
-  mode=$(paintmode "$name"); [ "$(colunit "$name")" = byte ] || [ "$mode" = gutter ] || mode=sign
-  # The `gutter` policy puts the mark in the left margin instead of
-  # recoloring the line's first cell, so several lists can mark the same line at
-  # once (each in its own column) instead of fighting over one cell. The current
-  # entry rides in the same column under the `<name>-cur` group -- exactly what
-  # the per-mark group suffix is for -- so the whole list is ONE push.
+  mode=$(paintmode "$name"); [ "$(colunit "$name")" = byte ] || mode=gutter
+  # The `gutter` policy marks the left margin: a column per list, so several can
+  # mark the same line at once. The current entry rides in the same column under
+  # the `<name>-cur` group -- what the per-mark group suffix is for -- so the
+  # whole list is ONE push.
   if [ "$mode" = gutter ]; then
     mk=$(paintmark "$name")
     cur=$(getcur "$name"); total=$(count "$name"); ce=$(nth "$name" "$cur")
@@ -468,24 +459,22 @@ paint() {
     send "status $name [$cur/$total] $name"
     return 0
   fi
-  lines=$(awk -F: -v cf="$cf" -v hdr="$HDR" -v mode="$mode" "$CANON_AWK$POS_AWK"'
+  # extent and cur both light RANGES, so an entry with no range to light shows
+  # nothing: there is no marking-in-place left that is not a range. Under `cur`
+  # only the current entry is lit, which is the loop below doing nothing.
+  lines=
+  [ "$mode" = extent ] && lines=$(awk -F: -v cf="$cf" -v hdr="$HDR" \
+            "$CANON_AWK$POS_AWK"'
             BEGIN { f = canon(cf) }
-            $0 ~ hdr && canon($1)==f && epos($0, p) {
-              if (mode == "extent" && p["e"]) printf "%s:%s-%s ", p["l"], p["c"], p["e"]
-              else printf "%s:1-1 ", p["l"]
+            $0 ~ hdr && canon($1)==f && epos($0, p) && p["e"] {
+              printf "%s:%s-%s ", p["l"], p["c"], p["e"]
             }' "$listdir/$name")
   [ -n "$lines" ] && send "hl $name $lines" || send "hl $name"
   cur=$(getcur "$name"); total=$(count "$name")
   ce=$(nth "$name" "$cur")
   if [ -n "$ce" ] && [ "$(canonpath "${ce%%:*}")" = "$(canonpath "$cf")" ]; then
-    # `cur` lights the current entry's range while the rest stay signs, which is
-    # why this reads the mode separately: under `extent` it agrees with the loop
-    # above, under `cur` it is the only range on screen.
-    send "hl $name-cur $(printf '%s\n' "$ce" | awk -v mode="$mode" "$POS_AWK"'
-            epos($0, p) {
-              if (mode != "sign" && p["e"]) print p["l"] ":" p["c"] "-" p["e"]
-              else print p["l"] ":1-1"
-            }')"
+    send "hl $name-cur $(printf '%s\n' "$ce" | awk "$POS_AWK"'
+            epos($0, p) && p["e"] { print p["l"] ":" p["c"] "-" p["e"] }')"
   else send "hl $name-cur"; fi
   send "gutter $name"                          # drop the margin marks this policy replaces
   send "status $name [$cur/$total] $name"

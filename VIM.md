@@ -165,7 +165,7 @@ same few spellings recur, and most have no vim equivalent:
 | Vim | lvi | Comes from |
 | --- | --- | --- |
 | `number`, `relativenumber` | same names, and `set gutter=number` says it the long way | core |
-| `signcolumn` | `set gutter=git,lint` — a named column per tool, no priorities to lose a fight over | core |
+| `signcolumn` | `set gutter=gitchanges,lint` — a named column per tool (named after the list that fills it), no priorities to lose a fight over | core |
 | `syntax on` | `on change lvi-highlight` | `lvi-highlight` |
 | `colorscheme` | `hi` lines in the rc, or `lvi-highlight --theme` from a Pygments style | core |
 | `spell` | `\s` toggles; `]s`/`[s` step, `z=` fixes, `zg` adds | `lvi-spell` |
@@ -210,7 +210,7 @@ env knob.
 
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
-| gitgutter, vim-signify | `lvi-gitchanges` — hunks as a steppable list, and per-line `+`/`-`/`~` in the margin with `lvi-list policy gitchanges gutter` | `on write lvi-gitchanges` + `map \gg :bg lvi-gitchanges --focus --jump<CR>` |
+| gitgutter, vim-signify | `lvi-gitchanges` — hunks as a steppable list, and per-line `+`/`-`/`~` in the margin | `set gutter=gitchanges` + `on write lvi-gitchanges` + `map \gg :bg lvi-gitchanges --focus --jump<CR>` |
 | fugitive `:Gdiff` | `lvi-diff`, two panes | `lvi-diff old new` |
 | fugitive `:Gstatus` staging | `lvi-stagediff` — `git add -p` as a diff you edit, `:w` stages | `lvi-stagediff file` |
 | `git mergetool` | `lvi-diff` as git's mergetool: with `hideResolved`, only the real conflicts differ; `\do` takes theirs, `:x` accepts | `cmd = lvi-diff "$LOCAL" "$REMOTE" "$MERGED"` |
