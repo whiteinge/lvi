@@ -393,7 +393,7 @@ paint() {
   name=$1; [ -f "$listdir/$name" ] || return 0
   cf=$(curfile)
   mode=$(paintmode "$name"); [ "$(colunit "$name")" = byte ] || [ "$mode" = gutter ] || mode=sign
-  # SPIKE: the `gutter` policy puts the mark in the left margin instead of
+  # The `gutter` policy puts the mark in the left margin instead of
   # recoloring the line's first cell, so several lists can mark the same line at
   # once (each in its own column) instead of fighting over one cell. The current
   # entry rides in the same column under the `<name>-cur` group -- exactly what

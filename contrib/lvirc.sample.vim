@@ -31,6 +31,7 @@
 "                     \ho column-limit marks (lvi-hl-col)
 "       \y  yankring  \yy pick      \yp older  \yn newer
 "       \i  invis     \ii toggle    \ip page (exact bytes in less)
+"       \n  numbers   \nn absolute  \nr relative        (the left margin)
 "       \x  execute   \xx run again  \xp pick pane  \xw watch  \xq unwatch
 "       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
 "
@@ -360,10 +361,47 @@ map [c :bg lvi-list prev gitchanges<CR>
 "   hi gitunstaged bg=94 pri=10
 "   hi gitstaged   bg=28 pri=10
 "
+" A hunk is a line RANGE, and the margin is the only place that can show one as
+" an extent, so painting there gives you a change bar down the whole hunk rather
+" than a mark on its first line (gitgutter's look, from plain `git diff`). Needs
+" a `gitchanges` column in `set gutter=`:
+"   map \gg :bg LVI_LIST_PAINT=gutter:│ lvi-gitchanges<CR>
+"   hi gitchanges     fg=green
+"   hi gitchanges-cur fg=black bg=green   " the hunk you are standing in
+"
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
 " lvi-diff and is launched, not a rc default; run it by hand or from a key. It
 " opens its panes in a tmux split and never wants the terminal, so :bg:
 "   map \gp :bg lvi-stagediff<CR>               " "git add -p" the current file
+
+" }}}
+" ---- the left margin --------------------------------------------------- {{{
+
+" `set gutter=` names the margin's columns in order, innermost (next to the
+" text) last; empty, the default, means no margin at all. Two names are the
+" editor's own -- `number` and `relativenumber` -- and every other name is a
+" one-cell column that a tool marks lines in. Nothing validates a name: a column
+" no producer ever writes to just draws blank, so listing one costs a column of
+" width and nothing else.
+"
+" A column is named after the LIST that fills it, which is why the line below
+" says `gitchanges` and not `git` (and wants `gitunstaged`/`gitstaged` too if you
+" use \gu and \gs). Marks pushed to a column this line never named are stored
+" and simply not drawn -- which is the failure you will hit first, and it is
+" silent, so start by uncommenting exactly this:
+" set gutter=gitchanges,lint,number
+" set number                            " ...or just vi's own option, on its own
+
+hi LineNr       fg=240                 " the numbers (un-themed = plain)
+hi CursorLineNr fg=yellow bold         " ...and the line you are on
+map \nn :set number!<CR>               " numbers off/on -- off to copy with the mouse
+map \nr :set rnu!<CR>                  " relative off/on (the cursor's line stays absolute)
+
+" WHAT a list paints is $LVI_LIST_PAINT, and the rc's way to set it is on the
+" command in the map or hook -- `:bg` runs a shell, so a var prefix works. Any
+" producer that names its own policy keeps it (search and spell need `extent`,
+" which is a fact about their entries, not a preference), so this reaches exactly
+" the ones that don't: lvi-lint and lvi-gitchanges. See both sections below.
 
 " }}}
 " ---- linting ----------------------------------------------------------- {{{
@@ -381,6 +419,14 @@ map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
 map [e :bg lvi-list prev lint<CR>
 hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
 hi lint-cur bg=124 pri=11
+" Or put the findings in the margin instead of recoloring each line's first cell,
+" which leaves the text alone and lets a lint hit and a git hunk mark the same
+" line. Needs a `lint` column in `set gutter=` above, and its own theme, since a
+" margin mark has no text under it to stay legible against:
+"   map \e :bg LVI_LIST_PAINT=gutter:E lvi-lint --focus<CR>
+"   on write LVI_LIST_PAINT=gutter:E lvi-lint
+"   hi lint fg=magenta bold
+"   hi lint-cur fg=black bg=magenta"
 
 " }}}
 " ---- spell check ------------------------------------------------------- {{{

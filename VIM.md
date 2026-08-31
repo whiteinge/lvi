@@ -68,9 +68,6 @@ go through the shell, so the current file is `$LVI_FILE` and
   escape sequences. `hjkl`, in every mode.
 - **No visual mode.** An edit is an operator plus a range stated in one gesture.
   The manpage's *Without visual mode* section is the full translation table.
-- **No gutter.** No line numbers, sign column, or fold margin: every screen
-  column is buffer text. `Ctrl-G` (or `:.=`) reports the line; the ruler carries
-  line:column.
 - **Patterns are POSIX BRE.** `\(foo\)`, not `(foo)`. `:s` and `:g` are handed
   to the system `ex`, so on that side you get whatever dialect it speaks (on
   Linux that is usually vim's).
@@ -167,7 +164,8 @@ same few spellings recur, and most have no vim equivalent:
 
 | Vim | lvi | Comes from |
 | --- | --- | --- |
-| `number`, `signcolumn` | absent by design; `Ctrl-G` and the ruler | core |
+| `number`, `relativenumber` | same names, and `set gutter=number` says it the long way | core |
+| `signcolumn` | `set gutter=git,lint` — a named column per tool, no priorities to lose a fight over | core |
 | `syntax on` | `on change lvi-highlight` | `lvi-highlight` |
 | `colorscheme` | `hi` lines in the rc, or `lvi-highlight --theme` from a Pygments style | core |
 | `spell` | `\s` toggles; `]s`/`[s` step, `z=` fixes, `zg` adds | `lvi-spell` |
@@ -212,7 +210,7 @@ env knob.
 
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
-| gitgutter, vim-signify | `lvi-gitchanges` — hunks as a steppable list, no gutter needed | `map \gg :bg lvi-gitchanges<CR>` |
+| gitgutter, vim-signify | `lvi-gitchanges` — hunks as a steppable list, and a change bar with `LVI_LIST_PAINT=gutter:│` | `map \gg :bg lvi-gitchanges<CR>` |
 | fugitive `:Gdiff` | `lvi-diff`, two panes | `lvi-diff old new` |
 | fugitive `:Gstatus` staging | `lvi-stagediff` — `git add -p` as a diff you edit, `:w` stages | `lvi-stagediff file` |
 | `git mergetool` | `lvi-diff` as git's mergetool: with `hideResolved`, only the real conflicts differ; `\do` takes theirs, `:x` accepts | `cmd = lvi-diff "$LOCAL" "$REMOTE" "$MERGED"` |
@@ -259,10 +257,6 @@ Diagnostics come from `lvi-lint` and need no server at all, formatting from
 `lvi-fmt`, completion from buffer words and paths. Hover, project-wide rename,
 and call hierarchy are not written. Nothing structural is in the way: a client
 is just a program driving the socket.
-
-**`:set number` and the sign column.** The renderer draws buffer text from the
-left edge, so every column is content and the highlight overlay stays a recolor
-rather than a layout. `Ctrl-G`, `:.=`, and the ruler carry the line number.
 
 **A faithful reimplementation of ex.** `:s`, `:g`, `:m`, `:t` and the full
 address grammar are handed to the system `ex`, which ships on every UNIX lvi

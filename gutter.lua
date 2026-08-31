@@ -1,9 +1,25 @@
 --- gutter.lua -- the left margin: an ordered strip of named columns.
 ---
---- SPIKE. lvi's standing rule is that every screen column is real content and
---- the highlight overlay is a recolor, never a layout (README non-goals). This
---- module tests what that rule costs by breaking it in one place: the row's
---- buffer text no longer starts at screen column 1.
+--- This module reverses a published ruling. lvi held for a long time that every
+--- screen column is real content and the highlight overlay is a recolor, never a
+--- layout; the margin breaks that in one place, since a row's buffer text now
+--- starts at screen column gw+1. A spike measured the price before the reversal:
+--- the offset is confined to M.width/M.textw below, no existing test needed
+--- changing, and the invariance property in test/gutter_test.lua pins the whole
+--- claim down -- a margin g columns wide must behave exactly as a screen g
+--- columns narrower. Two things paid for it:
+---
+---   * MARKING A LINE STOPPED MEANING RECOLORING IT. The `:hl` first-cell sign
+---     gave every producer one cell to fight over, decided by an unstable
+---     equal-priority tie, so a line that was both a lint hit and a git hunk
+---     showed one of them. A column per producer removes the contest, and the
+---     marks stop competing with syntax highlighting for the same cells.
+---
+---   * THE OFFSET COSTS NOTHING DOWNSTREAM, because nothing maps a screen
+---     position back to a buffer position. That would be mouse support, which is
+---     permanently out of scope (the clipboard is the answer instead) -- so the
+---     tax the old ruling was avoiding is priced at zero. Keep it that way: a
+---     future feature that needs the reverse mapping is the one to argue about.
 ---
 --- The design follows :status, not vim's 'signcolumn'. A gutter is an ORDERED
 --- LIST OF NAMED COLUMNS named in the rc -- `set gutter=number,git,lint` -- and
@@ -30,6 +46,11 @@
 --- Marks carry an optional per-mark group (`4:+:GitAdd`) because one producer
 --- legitimately wants two colors in its column -- a green `+` and a red `-` --
 --- and the column name alone cannot say which.
+---
+--- `:nohl` deliberately does NOT clear these. The two are separate channels on
+--- purpose: the point of a margin is a marker that does not clutter the text, so
+--- margin-on with the overlay off is a state worth being able to reach. `set
+--- gutter=` is how you silence the margin.
 
 local disp = require("disp")
 
