@@ -1012,6 +1012,37 @@ cat >> '%s/sent'
       cleanup(d); cleanup(bin)
     end)
 
+    -- The same standing rule as lvi-gitchanges: --focus aims n/N, --jump moves
+    -- the cursor, neither implies the other, and a bare hook run does neither.
+    it("lvi-lint keeps --focus and --jump independent", function()
+      local bin = tmpdir()
+      assert(os.execute(("cp '%s/contrib/lvi-lint' '%s/'"):format(pwd, bin)))
+      write(bin .. "/lvi-lint-fake", table.concat({
+        "#!/bin/sh", 'echo "$1:3: E: boom"', "",
+      }, "\n"))
+      assert(os.execute("chmod +x '" .. bin .. "/lvi-lint-fake'"))
+      local function attempt(flags)
+        local d = stub({ buffer = "a\nb\nc\nd\n", path = "/cur/x.zz\n" })
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+              LVI_FILE = "/cur/x.zz", LVI_LINE = "1", LVI_COL = "1",
+              LVI_LINT_BACKEND = "fake", PATH = bin },
+          bin .. "/lvi-lint --worker " .. flags)
+        local log = read(d .. "/log")
+        local res = { jumped = log:find("pos ") ~= nil,
+                      focused = read(d .. "/sock.focus") ~= "" }
+        cleanup(d)
+        return res
+      end
+      local bare = attempt("")
+      expect(bare.jumped).to_not.be.truthy()
+      expect(bare.focused).to_not.be.truthy()
+      local f = attempt("--focus")
+      expect(f.focused).to.be.truthy(); expect(f.jumped).to_not.be.truthy()
+      local j = attempt("--jump")
+      expect(j.jumped).to.be.truthy(); expect(j.focused).to_not.be.truthy()
+      cleanup(bin)
+    end)
+
     it("lvi-lint --worker reports a missing backend, never a clean [0/0]", function()
       local d = stub({ buffer = "x\n", path = "x.zz\n" })
       local _, ok = run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
@@ -1587,11 +1618,45 @@ cat >> '%s/sent'
       expect(out:find("/sub/f%.txt:2:")).to.exist()
       expect(read(d .. "/log")).to.equal("")
       env.LVI_WID = "w1"                                   -- now there is a view
-      run(env, ("cd '%s' && %s"):format(r, GC))
+      run(env, ("cd '%s' && %s --focus --jump"):format(r, GC))
       local log = read(d .. "/log")
       expect(log:find("\npos 2 1 byte jump\n")).to.exist()
       expect(log:find("e %-%-")).to_not.exist()   -- absolute entry IS the buffer: no :e
       cleanup(d); cleanup(r)
+    end)
+
+    -- --focus and --jump are SEPARATE and both opt-in: a flag named for one
+    -- thing must not do two, and a hook has to be able to refresh the list
+    -- while touching neither. All four combinations mean something.
+    it("lvi-gitchanges keeps --focus and --jump independent", function()
+      local r = gitrepo()
+      local function attempt(flags)
+        local d = stub({ path = r .. "/sub/f.txt\n" })
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+              LVI_FILE = r .. "/sub/f.txt", LVI_LINE = "1", LVI_COL = "1",
+              PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+          ("cd '%s' && %s %s"):format(r, GC, flags))
+        local log = read(d .. "/log")
+        local res = { painted = log:find("gutter gitchanges") ~= nil,
+                      jumped  = log:find("pos ") ~= nil,
+                      focused = read(d .. "/sock.focus") ~= "" }
+        cleanup(d)
+        return res
+      end
+      local bare = attempt("")
+      expect(bare.painted).to.be.truthy()          -- the hook form still paints
+      expect(bare.jumped).to_not.be.truthy()
+      expect(bare.focused).to_not.be.truthy()
+      local f = attempt("--focus")
+      expect(f.focused).to.be.truthy()
+      expect(f.jumped).to_not.be.truthy()          -- focus alone never moves you
+      local j = attempt("--jump")
+      expect(j.jumped).to.be.truthy()
+      expect(j.focused).to_not.be.truthy()         -- jump alone never steals n/N
+      local both = attempt("--focus --jump")
+      expect(both.focused).to.be.truthy()
+      expect(both.jumped).to.be.truthy()
+      cleanup(r)
     end)
 
     -- lvi-ftype's two entry points: the name (a commit message classifies on

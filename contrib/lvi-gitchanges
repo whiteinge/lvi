@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-gitchanges [-w auto|WID] [--print] [--repo] [--staged|--unstaged] [REF | REF..REF] [-- PATHSPEC...]
+# lvi-gitchanges [-w auto|WID] [--focus] [--jump] [--print] [--repo] [--staged|--unstaged] [REF | REF..REF] [-- PATHSPEC...]
 #
 # Turn git changes into a `lvi-list` quickfix and jump to the first hunk; `n`/`N`
 # then step them like any other list. A git producer in the same mold as
@@ -93,10 +93,11 @@
 #
 # Bind it with :bg -- git is non-interactive so it needs no tty, and :bg avoids
 # the alt-screen flash that :silent ! causes:
-#     map \gg :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
-#     map \gu :bg lvi-gitchanges --unstaged<CR>  " ...only what is NOT staged yet
-#     map \gs :bg lvi-gitchanges --staged<CR>    " ...only what IS staged
-#     map \gr :bg lvi-gitchanges --repo<CR>      " ...the whole repo instead
+#     on write lvi-gitchanges                    " keep the margin current
+#     map \gg :bg lvi-gitchanges --focus --jump<CR>      " walk this file's hunks
+#     map \gu :bg lvi-gitchanges --focus --jump --unstaged<CR>  " ...only unstaged
+#     map \gs :bg lvi-gitchanges --focus --jump --staged<CR>    " ...only staged
+#     map \gr :bg lvi-gitchanges --focus --jump --repo<CR>      " ...the whole repo
 #     map ]c :bg lvi-list next gitchanges<CR>    " or step it without stealing focus
 #     map [c :bg lvi-list prev gitchanges<CR>
 # Theme the marks in your rc (un-themed = invisible; see lvi-list); give the three
@@ -104,6 +105,27 @@
 #     hi gitchanges  bg=22 pri=10
 #     hi gitunstaged bg=94 pri=10
 #     hi gitstaged   bg=28 pri=10
+#
+# --focus AND --jump ARE SEPARATE, AND BOTH OPT-IN. `--focus` only aims n/N at
+# this list; `--jump` only moves the cursor onto an entry. Neither implies the
+# other, here or in any other contrib producer -- a flag named for one thing
+# doing two is how a vocabulary rots. So all four combinations mean something:
+#
+#   (bare)          put, paint, count. Touches nothing you were doing.
+#   --focus         aim n/N at the hunks, leave the cursor alone.
+#   --jump          go to a hunk without stealing what n/N point at.
+#   --focus --jump  the walk: what you want on a key.
+#
+# Both are opt-in because this runs from two places with opposite needs. From a
+# key, aiming and landing IS the gesture. From `on write` it must do neither:
+# yanking the focused list away from your search and teleporting the cursor on
+# every save is not a margin, it is an ambush. The invocation that fires
+# unattended is the SAFE one, so a rc that forgets a flag costs you a jump
+# instead of your place in a file.
+#
+# `on write` and not `on change`: the diff is read from the file on DISK, so the
+# write is the one moment its snapshot is guaranteed to match the buffer. On
+# change it would show you the last-saved state while you type.
 #
 # Config: LVI (client, default `lvi`). Needs git on PATH, and lvi-list when
 # pushing to a view.
@@ -115,11 +137,13 @@ LVI=${LVI:-lvi}
 die() { echo "lvi-gitchanges: $*" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || die "git not found on PATH"
 
-want_wid=; doprint=; repo=; staged=; unstaged=
+want_wid=; doprint=; repo=; staged=; unstaged=; focus=; jump=
 while :; do
   case ${1:-} in
     -w)                   want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
     --print)              doprint=1; shift ;;
+    --focus)              focus=1; shift ;;
+    --jump)               jump=1; shift ;;
     --repo|--all)         repo=1; shift ;;
     --staged|--cached)    staged=1; shift ;;
     --unstaged|--modified) unstaged=1; shift ;;
@@ -236,7 +260,11 @@ if [ -z "$entries" ]; then
   exit 0
 fi
 
-printf '%s\n' "$entries" | lvi-list $wflag put "$name" --focus
+# --at-cursor: a refresh mid-walk keeps your place instead of resetting the index
+# to the top -- which is what makes `on write` usable, and is the same reason
+# lvi-lint seeds this way. --focus and --jump are separate and both opt-in, so a
+# hook moves neither the cursor nor what n/N point at (see the header).
+printf '%s\n' "$entries" | lvi-list $wflag put "$name" --at-cursor ${focus:+--focus}
 
 # MARGIN GLYPHS, per LINE rather than per hunk -- which is the whole reason the
 # marks channel is keyed by line: one hunk carries `+` on the lines that were
@@ -291,7 +319,9 @@ printf '%s\n' "$diff" | awk '
   END { if (inh) flush() }
 ' | lvi-list $wflag marks "$name"
 
-lvi-list $wflag next
+# `next "$name"`, not a bare `next`: --jump must work without --focus, and a
+# bare step acts on the FOCUSED list -- which may be someone else's, or none.
+[ -n "$jump" ] && lvi-list $wflag next "$name"
 # After `next`, so it lands on top of the entry text lvi-list just echoed: when
 # there is a deletion to report it outranks a line you are already looking at,
 # and when there is none (the usual case) the echo stands untouched.

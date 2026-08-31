@@ -346,10 +346,16 @@ hi refs-cur bg=28 pri=13
 " in two -- what is still to stage, and what is already staged -- which are the
 " questions you have mid-commit. \gr widens to the whole repo, which is what you
 " get by default when you run it from a shell instead.
-map \gg :bg lvi-gitchanges<CR>                 " everything uncommitted + focus
-map \gu :bg lvi-gitchanges --unstaged<CR>      " ...only what is NOT staged yet
-map \gs :bg lvi-gitchanges --staged<CR>        " ...only what IS staged
-map \gr :bg lvi-gitchanges --repo<CR>          " ...the whole repo, not this file
+" on write lvi-gitchanges                      " keep the margin current, hands off
+map \gg :bg lvi-gitchanges --focus --jump<CR>              " walk what is uncommitted
+map \gu :bg lvi-gitchanges --focus --jump --unstaged<CR>   " ...only what is NOT staged
+map \gs :bg lvi-gitchanges --focus --jump --staged<CR>     " ...only what IS staged
+map \gr :bg lvi-gitchanges --focus --jump --repo<CR>       " ...the whole repo, not this file
+" --focus aims n/N at the hunks; --jump moves the cursor onto one. Separate flags
+" everywhere in contrib, and both opt-in -- which is what lets the hook above
+" only paint and count. A hook that focused and jumped would ambush you on every
+" :w. `on write` and not `on change`: the diff is read off DISK, so the write is
+" when its snapshot matches what you see.
 " Or give the list its own step keys so it never steals focus from search:
 map ]c :bg lvi-list next gitchanges<CR>
 map [c :bg lvi-list prev gitchanges<CR>
@@ -417,7 +423,7 @@ map \nr :set rnu!<CR>                  " relative off/on (the cursor's line stay
 " glance: [0/0] after a run means clean.
 on write lvi-lint                      " re-lint on every save...
 " on change lvi-lint                   " ...or as you type
-map \e :bg lvi-lint --focus<CR>        " lint now and aim n/N at the findings
+map \e :bg lvi-lint --focus --jump<CR> " lint now, aim n/N, go to a finding
 map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
 map [e :bg lvi-list prev lint<CR>
 hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)

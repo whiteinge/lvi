@@ -43,6 +43,34 @@ words — so `LVI_PICKER='fzf --height 10'` in your rc reaches all of them. Rows
 are built so any of them work: the column a tool reads back sits at the front of
 the line, never behind an fzf-only `--with-nth`.
 
+**`--focus` and `--jump` are separate flags, and both are opt-in.** A standing
+rule for every producer that takes them. `--focus` aims `n`/`N` at the list.
+`--jump` moves the cursor onto an entry. Neither implies the other — a flag named
+for one thing doing two is how a vocabulary rots — so all four combinations mean
+something, and a bare run only puts the entries, paints, and sets the counter.
+
+That last part is what makes a producer hookable at all. Forgetting a flag on a
+key costs you a jump; a hook that focused would yank `n`/`N` away from your
+search and move the cursor on every save. So the invocation that fires
+unattended, hundreds of times a day, is the safe one, and the rc says out loud
+when it wants more. The rc lines in the tool sections below are prescriptive —
+they carry the combination you actually want, rather than the minimum that runs:
+
+```
+on write lvi-gitchanges                            " keep the margin current
+map \gg :bg lvi-gitchanges --focus --jump<CR>       " walk the hunks
+map \e  :bg lvi-lint --focus --jump<CR>             " lint, then go to a finding
+```
+
+A producer reached *only* by a keypress has nothing to gate and takes no such
+flags: `lvi-search` and `lvi-lsp` focus and land as one gesture, because that is
+the gesture. The flags exist where a hook can call the same script.
+
+Producers that refresh also seed from the cursor (`put --at-cursor`), so a re-run
+mid-walk keeps your place rather than resetting the index to the top — and it is
+what makes `--jump` land on the next entry past the cursor rather than always the
+first.
+
 **Three spawn disciplines** — the reason the bindings differ:
 
 - `:silent !CMD` hands over the terminal (drops to and back from the alt screen).
@@ -429,11 +457,16 @@ want the built-in palette, your own `hi match1`… lines.
 
 The second `lvi-list` producer, and a one-line proof that "any tool that speaks
 `file:line:text` is a quickfix": it turns `git diff` into a `gitchanges` list —
-one entry per hunk, each carrying that hunk's own diff as its body — and jumps to
-the first, so `n`/`N` walk your uncommitted changes and `lvi-list preview` shows
-you the diff behind the one you're on. Unlike `lvi-search` it reads the file on
-**disk** (or the index), not the live buffer, so it shows changes since your last
-`:w` / `git add`.
+one entry per hunk, each carrying that hunk's own diff as its body — so `n`/`N`
+walk your uncommitted changes and `lvi-list preview` shows you the diff behind the
+one you're on. Unlike `lvi-search` it reads the file on **disk** (or the index),
+not the live buffer, so it shows changes since your last `:w` / `git add`.
+
+`--focus` aims `n`/`N` at the hunks and `--jump` lands you on one; bare, it only
+puts the entries and paints, which is what makes it usable from `on write` (see
+the flag rule above). Painting into a gutter column gives you `+`/`-`/`~`
+per line rather than one mark per hunk — gitgutter's rendering, out of the same
+`git diff`.
 
 Three flags answer the three questions you have while building a commit, and
 they're git's own three diffs:

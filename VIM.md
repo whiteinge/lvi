@@ -210,7 +210,7 @@ env knob.
 
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
-| gitgutter, vim-signify | `lvi-gitchanges` — hunks as a steppable list, and per-line `+`/`-`/`~` in the margin with `lvi-list policy gitchanges gutter` | `map \gg :bg lvi-gitchanges<CR>` |
+| gitgutter, vim-signify | `lvi-gitchanges` — hunks as a steppable list, and per-line `+`/`-`/`~` in the margin with `lvi-list policy gitchanges gutter` | `on write lvi-gitchanges` + `map \gg :bg lvi-gitchanges --focus --jump<CR>` |
 | fugitive `:Gdiff` | `lvi-diff`, two panes | `lvi-diff old new` |
 | fugitive `:Gstatus` staging | `lvi-stagediff` — `git add -p` as a diff you edit, `:w` stages | `lvi-stagediff file` |
 | `git mergetool` | `lvi-diff` as git's mergetool: with `hideResolved`, only the real conflicts differ; `\do` takes theirs, `:x` accepts | `cmd = lvi-diff "$LOCAL" "$REMOTE" "$MERGED"` |
