@@ -280,7 +280,24 @@ say — `put` leaves a stored policy alone unless the run named one — so one r
 line moves `lvi-lint` or `lvi-gitchanges` into the margin without editing either
 one.
 
-It is also the only policy that can draw a **multi-line** extent. An entry
+**The glyph is the producer's, per line.** `lvi-list marks NAME` takes a second
+stream — `FILE:LINE<TAB>GLYPH[<TAB>GROUP]` — stored beside the entries and
+replayed on every repaint. `lvi-list` never learns what a glyph *means*, which is
+the point: `lvi-lint` sends `E`/`W`, `lvi-gitchanges` sends `+`/`-`/`~`, and no
+table inside `lvi-list` could hold both without growing with every producer that
+arrives. Each mark also names its own `hi` group, so the rc themes the producer's
+vocabulary (`LintError`, `GitAdd`) rather than a list. A producer that sends no
+marks gets the single glyph its policy names.
+
+Keyed by line, not by entry, and that buys the interesting case: one git hunk
+carries `+` on the lines that were added and `~` on the ones that replaced
+something — gitgutter's rendering, out of a plain `git diff`. One mark per line,
+so a line bearing both an error and a warning is the *producer's* call to
+resolve; `lvi-lint` folds it to the more severe. Entries stay 1:1 with findings
+either way, so `n` still steps both and shows both messages. A mark is a per-line
+summary of a list, not a rendering of it.
+
+Painting there is also the only way to draw a **multi-line** extent. An entry
 spelled as a GNU line range — `f.c:4-9: text` — marks every line it covers,
 which is a git hunk as a bar down the margin rather than a mark on its first
 line. `:hl` can't express that: one range covers one line, which is why

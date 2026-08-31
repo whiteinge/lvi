@@ -237,6 +237,60 @@ if [ -z "$entries" ]; then
 fi
 
 printf '%s\n' "$entries" | lvi-list $wflag put "$name" --focus
+
+# MARGIN GLYPHS, per LINE rather than per hunk -- which is the whole reason the
+# marks channel is keyed by line: one hunk carries `+` on the lines that were
+# added and `~` on the ones that replaced something. Runs, not whole hunks: a
+# hunk that adds a paragraph and edits a word elsewhere reports both truthfully.
+# A run of removals with nothing added is a `-` on the line ABOVE the gap, which
+# is where git's own `@@ -13,2 +14,0 @@` points and where gitgutter draws it: one
+# cell cannot show a gap between two lines, so it marks an edge of it.
+# The group names are lvi-diff's (GitAdd/GitDel/GitChange), so the two git tools
+# share one vocabulary and one `hi` line themes both.
+#
+# gitdiff runs -U0, so a hunk body is only -/+ lines and each hunk is one run.
+# The context-line branch below is what makes the pass right for a diff that has
+# context anyway, rather than a rule that quietly depends on the flag.
+printf '%s\n' "$diff" | awk '
+  function flush() {
+    if (na > 0) {
+      g   = (ndel > 0) ? "~" : "+"
+      grp = (ndel > 0) ? "GitChange" : "GitAdd"
+      for (i = 1; i <= na; i++) printf "%s:%s\t%s\t%s\n", f, add[i], g, grp
+    } else if (ndel > 0 && nl >= 1) {
+      # The line ABOVE the gap: nl is the next new-side line, which is below it
+      # once any new-side line has been emitted in this hunk. At the hunk start
+      # nl is still the +s,0 line git itself named, and a deletion from line 1
+      # has no line above to mark: both fall out of the same comparison.
+      # (No apostrophes or backticks in here -- the awk program is one
+      # single-quoted shell word, and either one ends it.)
+      printf "%s:%s\t-\tGitDel\n", f, (nl > hs) ? nl - 1 : nl
+    }
+    na = 0; ndel = 0
+  }
+  /^diff / { if (inh) flush(); inh = 0; next }
+  /^--- /  { if (inh) flush(); inh = 0; next }
+  /^\+\+\+ / {
+    if (inh) flush()
+    inh = 0; p = substr($0, 5)
+    if (p == "/dev/null") { skip = 1; next }
+    skip = 0; sub(/^b\//, "", p)
+    f = (substr(p, 1, 1) == "/") ? p : ENVIRON["LVI_GC_TOP"] p
+    next }
+  /^@@ / {
+    if (inh) flush()
+    inh = 0
+    if (skip) next
+    s = $3; sub(/^\+/, "", s); sub(/,.*/, "", s)
+    if (s + 0 < 1) s = 1
+    nl = s + 0; hs = nl; inh = 1; next }
+  inh && /^\\/ { next }                          # "\ No newline at end of file"
+  inh && /^-/   { ndel++; next }
+  inh && /^\+/  { add[++na] = nl; nl++; next }
+  inh          { flush(); nl++ }                 # context line: the run ends
+  END { if (inh) flush() }
+' | lvi-list $wflag marks "$name"
+
 lvi-list $wflag next
 # After `next`, so it lands on top of the entry text lvi-list just echoed: when
 # there is a deletion to report it outranks a line you are already looking at,

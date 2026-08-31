@@ -32,6 +32,7 @@
 #                                              bind it to a tmux popup -- see PREVIEW below)
 #   lvi-list goto|switch                       fzf over entries / over list names
 #   lvi-list focus [NAME] | ls | paint [NAME] | policy NAME [POLICY]
+#   lvi-list marks NAME                        producer glyphs on stdin (see MARKS)
 #   lvi-list hide [NAME]                       stop showing a list (keep it; n/N re-show)
 #   lvi-list save NAME PATH | load PATH [NAME] [--focus] [--cols=UNIT]
 #   lvi-list drop NAME | clear NAME | path NAME
@@ -42,6 +43,7 @@
 #   $LVI_SOCK.lists/<name>.cur    the current index  (1-based; 0 = before first)
 #   $LVI_SOCK.lists/<name>.cols   what its columns count (absent = byte)
 #   $LVI_SOCK.lists/<name>.paint  how its entries paint (absent = sign)
+#   $LVI_SOCK.lists/<name>.marks  the producer glyphs (see MARKS; cleared by a new put)
 #   $LVI_SOCK.focus               the focused list name
 # A name may not end in `-cur`: a list paints the `:hl` groups <name> and
 # <name>-cur, so `x-cur` would be a second writer on `x`'s current-entry group
@@ -109,6 +111,18 @@
 # to convert with. The seed still compares against a BYTE cursor column, so a
 # non-byte list can seed one entry off within a single line; the walk itself is
 # unaffected, being arithmetic on the index.
+#
+# MARKS (`marks NAME`) are the producer's glyphs for a gutter column: a second
+# stream of `FILE:LINE<TAB>GLYPH[<TAB>GROUP]`, stored beside the entries and
+# replayed on every repaint. Nothing in here learns what a glyph MEANS -- lint
+# sends E/W, git hunks send + - ~, and a table holding both would grow with every
+# producer. Each mark names its own `hi` group too, so the rc themes the
+# producer's vocabulary. Keyed by LINE, so one hunk can mark added lines apart
+# from changed ones; one mark per line, and which of two findings on a line wins
+# is the producer's call. When marks exist they ARE the column (no entry or span
+# expansion); without them the column falls back to the policy's single glyph. A
+# `put` clears them, so they never outlive the entries they summarize -- a
+# producer sends them right after its put.
 #
 # PAINT POLICY (`put --paint=`) is what an entry LOOKS LIKE on screen. A list is
 # either something you read or something you see, and only its producer knows
@@ -247,7 +261,7 @@ focus_get() { cat "$focusfile" 2>/dev/null; }
 focus_set() { printf '%s\n' "$1" > "$focusfile"; }
 last_set()  { printf '%s\n' "$1" > "$lastfile"; }                 # a step -> "the list you care about"
 last_get()  { l=$(cat "$lastfile" 2>/dev/null); [ -n "$l" ] && [ -f "$listdir/$l" ] && printf '%s\n' "$l"; }
-names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|*.cols|*.paint|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
+names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|*.cols|*.paint|*.marks|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
 # What this list's columns COUNT (see THE COLUMN FIELD). Unset/unknown reads as
 # `byte`, which is what every producer meant before there was anywhere to say.
 colunit()   { u=$(cat "$listdir/$1.cols" 2>/dev/null); case "$u" in char|display) echo "$u";; *) echo byte;; esac; }
@@ -410,22 +424,45 @@ paint() {
   if [ "$mode" = gutter ]; then
     mk=$(paintmark "$name")
     cur=$(getcur "$name"); total=$(count "$name"); ce=$(nth "$name" "$cur")
-    cl=; [ -n "$ce" ] && [ "$(canonpath "${ce%%:*}")" = "$(canonpath "$cf")" ] &&
-      cl=$(printf '%s\n' "$ce" | awk "$POS_AWK"'epos($0, p) { print p["l"] }')
-    marks=$(awk -F: -v cf="$cf" -v hdr="$HDR" -v mk="$mk" -v cl="$cl" -v nm="$name" \
-              "$CANON_AWK$POS_AWK"'
-              BEGIN { f = canon(cf) }
-              $0 ~ hdr && canon($1)==f && epos($0, p) {
-                # A span marks every line it covers, same glyph throughout: the
-                # margin is the one channel that can show a multi-line extent at
-                # all, which is why the end line is worth reading here.
-                e = p["el"] ? p["el"] : p["l"]
-                cur = (cl != "" && p["l"] <= cl+0 && e >= cl+0)
-                for (i = p["l"]; i <= e; i++) {
-                  if (cur) printf "%s:%s:%s-cur ", i, mk, nm
-                  else printf "%s:%s ", i, mk
-                }
-              }' "$listdir/$name")
+    # The current entry's SPAN, so `-cur` covers the whole hunk you are in and
+    # not just its first line. Empty when the current entry is in another file.
+    cs=; cend=
+    if [ -n "$ce" ] && [ "$(canonpath "${ce%%:*}")" = "$(canonpath "$cf")" ]; then
+      cspan=$(printf '%s\n' "$ce" | awk "$POS_AWK"'
+                epos($0, p) { print p["l"] " " (p["el"] ? p["el"] : p["l"]) }')
+      cs=${cspan%% *}; cend=${cspan##* }
+    fi
+    if [ -s "$listdir/$name.marks" ]; then
+      # The producer said what each line gets (see the `marks` subcommand): its
+      # glyphs and its group names, replayed verbatim. When marks are present
+      # they ARE the column -- no entry or span expansion -- so a producer that
+      # wants a line marked marks it.
+      marks=$(awk -F'\t' -v cf="$cf" -v cs="$cs" -v cend="$cend" -v nm="$name" \
+                "$CANON_AWK"'
+                BEGIN { f = canon(cf) }
+                $2 != "" && match($1, /:[0-9]+$/) {
+                  if (canon(substr($1, 1, RSTART - 1)) != f) next
+                  ln = substr($1, RSTART + 1) + 0
+                  g = ($3 != "") ? $3 : nm
+                  if (cs != "" && ln >= cs + 0 && ln <= cend + 0) g = nm "-cur"
+                  printf "%s:%s:%s ", ln, $2, g
+                }' "$listdir/$name.marks")
+    else
+      marks=$(awk -F: -v cf="$cf" -v hdr="$HDR" -v mk="$mk" -v cs="$cs" -v cend="$cend" \
+                -v nm="$name" "$CANON_AWK$POS_AWK"'
+                BEGIN { f = canon(cf) }
+                $0 ~ hdr && canon($1)==f && epos($0, p) {
+                  # No marks: one glyph, and a span marks every line it covers.
+                  # The margin is the only channel that can show a multi-line
+                  # extent at all, which is why the end line is worth reading.
+                  e = p["el"] ? p["el"] : p["l"]
+                  iscur = (cs != "" && p["l"] <= cs + 0 && e >= cs + 0)
+                  for (i = p["l"]; i <= e; i++) {
+                    if (iscur) printf "%s:%s:%s-cur ", i, mk, nm
+                    else printf "%s:%s ", i, mk
+                  }
+                }' "$listdir/$name")
+    fi
     send "gutter $name $marks"
     send "hl $name"; send "hl $name-cur"      # drop the overlay this policy replaces
     send "status $name [$cur/$total] $name"
@@ -480,6 +517,10 @@ case "$sub" in
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     check_paint "$pmode"
     mkdir -p "$listdir"; cat > "$listdir/$name" || true       # store raw; hdrs finds the entries
+    # Marks summarize the ENTRIES, so new entries invalidate the old ones: a
+    # producer pushes `marks` right after its `put`, and one that pushes none
+    # falls back to its policy glyph instead of replaying the last run.
+    rm -f "$listdir/$name.marks"
     # A column UNIT is a fact about the entries, so a producer that names none
     # means `byte` and overwriting is right. A paint POLICY is a preference the
     # user may have set once with `policy`, so leave it alone unless this run
@@ -632,6 +673,24 @@ case "$sub" in
     if [ -n "${2:-}" ]; then check_paint "$2"; setpaint "$name" "$2"
     else paintmode "$name"; fi ;;
 
+  marks)
+    # THE PRODUCER'S GLYPHS. stdin is one line per marked line,
+    # `FILE:LINE<TAB>GLYPH[<TAB>GROUP]`, and lvi-list stores it verbatim and
+    # replays it every time it paints -- it never learns what a glyph MEANS.
+    # Tab-separated because a path may hold spaces (it may not hold a colon or a
+    # tab, the same limit the entry format has always had).
+    #
+    # Keyed by LINE, not by entry, which is what lets one hunk carry `+` on the
+    # lines that were added and `~` on the ones that changed. One mark per line:
+    # two findings on a line is one cell and two facts, and which one wins is
+    # the producer's call, not something to arbitrate here. Entries stay 1:1
+    # with findings either way -- `n` still steps both and shows both messages.
+    # Marks are a per-line summary of a list, not a rendering of it.
+    name=${1:?usage: marks NAME   (stdin: FILE:LINE<TAB>GLYPH[<TAB>GROUP])}
+    check_name "$name"; mkdir -p "$listdir"
+    cat > "$listdir/$name.marks" || true
+    [ -f "$listdir/$name" ] && paint "$name" ;;   # show them without a third call
+
   paint)                                     # :on bufenter -> repaint all lists
     if [ -n "${1:-}" ]; then paint "$1"; else names | while IFS= read -r nm; do paint "$nm"; done; fi ;;
 
@@ -654,6 +713,7 @@ case "$sub" in
     case "$cols" in ''|byte|char|display) ;; *) die "unknown column unit: $cols (byte|char|display)" ;; esac
     check_paint "$pmode"
     mkdir -p "$listdir"; cp "$src" "$listdir/$name" || true; setcur "$name" 0
+    rm -f "$listdir/$name.marks"           # new entries, so not the old marks (see put)
     # A column UNIT is a fact about the entries, so a producer that names none
     # means `byte` and overwriting is right. A paint POLICY is a preference the
     # user may have set once with `policy`, so leave it alone unless this run
@@ -668,8 +728,9 @@ case "$sub" in
     # whole (cursor + focus intact) so `n`/`N` re-show it -- a per-list :nohl.
     name=$(need_name "${1:-}") || exit 1
     case "$sub" in
-      drop)  rm -f "$listdir/$name" "$listdir/$name.cur" "$listdir/$name.cols" "$listdir/$name.paint" ;;
-      clear) : > "$listdir/$name"; setcur "$name" 0 ;;
+      drop)  rm -f "$listdir/$name" "$listdir/$name.cur" "$listdir/$name.cols" \
+                    "$listdir/$name.paint" "$listdir/$name.marks" ;;
+      clear) : > "$listdir/$name"; rm -f "$listdir/$name.marks"; setcur "$name" 0 ;;
       hide)  : ;;
     esac
     send "hl $name"; send "hl $name-cur"; send "gutter $name"; send "status $name" ;;

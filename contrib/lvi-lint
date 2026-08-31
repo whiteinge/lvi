@@ -18,8 +18,11 @@
 # buffer's real filename as $1, and emits `FILE:LINE[:COL]: text` on stdout.
 #   * FILE is $1 VERBATIM (not `-`, not a temp name), so entries match what
 #     lvi calls the buffer and jump/paint work in place (the lvi-search trick).
-#   * Severity folds into the text as an `E: `/`W: ` prefix (one list, one
-#     style; splitting severities into separate lists is a possible follow-up).
+#   * Severity folds into the text as an `E: `/`W: ` prefix. One list, so n
+#     steps every finding -- but the prefix is also what picks the MARGIN GLYPH
+#     (`E` vs `W`, groups LintError/LintWarn) when the lint list paints into a
+#     gutter column, resolved to the most severe per line. See MARGIN GLYPHS
+#     below. A backend that emits neither letter just gets no marks.
 #   * COL, if the tool reports one, is passed through as the tool spells it.
 #     Tools disagree about what a column counts -- bytes, characters, or display
 #     cells with tabs expanded (what the GNU Coding Standards prescribe and gcc
@@ -168,3 +171,33 @@ if [ -n "$entries" ]; then
 else
   : | lvi-list $wflag put lint --at-cursor ${focus:+--focus} $cols
 fi
+
+# MARGIN GLYPHS. One mark per LINE, so severity has to be resolved here: a line
+# with both an error and a warning is one cell, and only this script knows that E
+# outranks W. The list keeps both findings either way -- n steps both and shows
+# both messages; the mark is a per-line summary. lvi-list stores what it is given
+# and never learns what E means, which is what keeps a vocabulary out of it (git
+# hunks want +/-/~, and no table in lvi-list could hold both).
+#
+# Severity is the message's `E: `/`W: ` prefix, per THE ADAPTER CONTRACT above.
+# Its field index depends on whether the adapter reported a column, the same fork
+# lvi-list's own parser makes. A backend that emits neither letter simply yields
+# no marks, and the list falls back to the single glyph its paint policy names.
+printf '%s\n' "$entries" | awk -F: '
+  /^[^ \t]/ && $2 ~ /^[0-9]/ {
+    ln = $2; sub(/[.].*/, "", ln)                  # GNU also spells it line.col
+    sev = ($3 ~ /^[0-9]+$/) ? $4 : $3              # the col-bearing form shifts it
+    gsub(/^[ \t]+|[ \t]+$/, "", sev)
+    rank = (sev == "E") ? 2 : (sev == "W") ? 1 : 0
+    if (rank == 0) next                            # a letter we do not know: no mark
+    key = $1 ":" ln
+    if (!(key in best) || rank > best[key]) best[key] = rank
+  }
+  END {
+    for (k in best) {
+      g = (best[k] == 2) ? "E" : "W"
+      grp = (best[k] == 2) ? "LintError" : "LintWarn"
+      printf "%s\t%s\t%s\n", k, g, grp
+    }
+  }
+' | lvi-list $wflag marks lint

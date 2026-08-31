@@ -365,9 +365,12 @@ map [c :bg lvi-list prev gitchanges<CR>
 " an extent, so painting there gives you a change bar down the whole hunk rather
 " than a mark on its first line (gitgutter's look, from plain `git diff`). Needs
 " a `gitchanges` column in `set gutter=`:
-"   on ready lvi-list policy gitchanges gutter:│
-"   hi gitchanges     fg=green
+"   on ready lvi-list policy gitchanges gutter
+"   hi GitAdd    fg=green          " added lines
+"   hi GitChange fg=yellow         " lines that replaced something
+"   hi GitDel    fg=red            " where lines were removed
 "   hi gitchanges-cur fg=black bg=green   " the hunk you are standing in
+" Those three group names are lvi-diff's, so one theme serves both git tools.
 "
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
 " lvi-diff and is launched, not a rc default; run it by hand or from a key. It
@@ -421,11 +424,14 @@ hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
 hi lint-cur bg=124 pri=11
 " Or put the findings in the margin instead of recoloring each line's first cell,
 " which leaves the text alone and lets a lint hit and a git hunk mark the same
-" line. Needs a `lint` column in `set gutter=` above, and its own theme, since a
-" margin mark has no text under it to stay legible against:
-"   on ready lvi-list policy lint gutter:E
-"   hi lint fg=magenta bold
-"   hi lint-cur fg=black bg=magenta"
+" line. Needs a `lint` column in `set gutter=` above. lvi-lint marks E and W
+" apart per line (an error outranks a warning on one line), and names its own
+" groups -- so theme THOSE, not `lint`, which is only the fallback for a list
+" that sends no glyphs of its own:
+"   on ready lvi-list policy lint gutter
+"   hi LintError fg=red bold
+"   hi LintWarn  fg=yellow
+"   hi lint-cur  fg=black bg=red     " ...and the finding n/N is parked on
 
 " }}}
 " ---- spell check ------------------------------------------------------- {{{
