@@ -55,11 +55,12 @@ exit
 ```
 
 The `-d` (detach) matters — the editor is parked while the shell runs, so a
-synchronous `lvi -w` would wait on it forever. [`contrib/lvi-shell.sh`](contrib/lvi-shell.sh)
-wraps the pattern in `lvi-saveas`, `lvi-mv`, `lvi-sudow` and friends (source it
-from your *shell* rc; `lvi-help` lists them). There is no `%` or `#`
-in ex file arguments either: those arguments go through the shell, so the
-current file is `$LVI_FILE` and `:w ${LVI_FILE%.md}.html` works.
+synchronous `lvi -w` would wait on it forever.
+[`contrib/lvi-shell.sh`](contrib/lvi-shell.sh) wraps the pattern in
+`lvi-saveas`, `lvi-mv` and friends (source it from your *shell* rc; `lvi-help`
+lists them). There is no `%` or `#` in ex file arguments either: those arguments
+go through the shell, so the current file is `$LVI_FILE` and
+`:w ${LVI_FILE%.md}.html` works.
 
 ## Surprises worth knowing up front
 
@@ -75,9 +76,9 @@ current file is `$LVI_FILE` and `:w ${LVI_FILE%.md}.html` works.
   Linux that is usually vim's).
 - **`/` builds a list rather than repeating a motion.** It doesn't wrap, `n` is
   always forward (after `?`, `N` keeps going back), and `n`/`N` step whichever
-  list is focused — search, lint, git hunks. The operator form is a separate
-  seam: `d/foo` works once `motion / prompt lvi-search --motion` is in your rc,
-  and it does wrap.
+  list is focused — search, lint, git hunks. The operator form is separate:
+  `d/foo` works once `motion / prompt lvi-search --motion` is in your rc, and it
+  does wrap.
 - **Maps have no wait-for-more timeout.** A mapping fires the instant it
   completes, so one cannot be a prefix of another: with `gc` mapped, `gcc` is
   unreachable (the sample rc uses `gC`).
@@ -247,18 +248,17 @@ out of scope, not unimplemented.
 
 **A plugin runtime.** No Vimscript, no `runtimepath`, no in-process extension
 language. The shell is the extension language and the socket is the API: a tool
-sends ex commands to a running view and reads its state back. That is why every
-row above is a program you can also run from a terminal, and why turning one on
-is one line in an rc file that is itself just ex commands.
+sends ex commands to a running view and reads its state back. Every row above is
+a program you can also run from a terminal, and turning one on is one line in
+the rc, which is itself a file of ex commands.
 
 **A full LSP client.** `lvi-lsp` asks a language server for a definition or a
-list of references, which is the part that beats ctags; it spawns the server per
-press and kills it, so there is no resident process and nothing to keep in sync.
+list of references, the part ctags can't resolve; it spawns the server per press
+and kills it, so there is no resident process and nothing to keep in sync.
 Diagnostics come from `lvi-lint` and need no server at all, formatting from
 `lvi-fmt`, completion from buffer words and paths. Hover, project-wide rename,
-and call hierarchy are not there. Nothing structural is in the way — a client is
-just a program driving the socket, which is what `lvi-lsp` demonstrates — but
-those three are not written.
+and call hierarchy are not written. Nothing structural is in the way: a client
+is just a program driving the socket.
 
 **`:set number` and the sign column.** The renderer draws buffer text from the
 left edge, so every column is content and the highlight overlay stays a recolor
