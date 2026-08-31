@@ -351,11 +351,9 @@ map \gg :bg lvi-gitchanges --focus --jump<CR>              " walk what is uncomm
 map \gu :bg lvi-gitchanges --focus --jump --unstaged<CR>   " ...only what is NOT staged
 map \gs :bg lvi-gitchanges --focus --jump --staged<CR>     " ...only what IS staged
 map \gr :bg lvi-gitchanges --focus --jump --repo<CR>       " ...the whole repo, not this file
-" --focus aims n/N at the hunks; --jump moves the cursor onto one. Separate flags
-" everywhere in contrib, and both opt-in -- which is what lets the hook above
-" only paint and count. A hook that focused and jumped would ambush you on every
-" :w. `on write` and not `on change`: the diff is read off DISK, so the write is
-" when its snapshot matches what you see.
+" --focus aims n/N at the hunks; --jump moves the cursor onto one. Bare (the hook
+" above) puts the entries, paints and counts. `on write`, not `on change`: the
+" diff is read off disk.
 " Or give the list its own step keys so it never steals focus from search:
 map ]c :bg lvi-list next gitchanges<CR>
 map [c :bg lvi-list prev gitchanges<CR>
@@ -367,16 +365,14 @@ map [c :bg lvi-list prev gitchanges<CR>
 "   hi gitunstaged bg=94 pri=10
 "   hi gitstaged   bg=28 pri=10
 "
-" A hunk is a line RANGE, and the margin is the only place that can show one as
-" an extent, so painting there gives you a change bar down the whole hunk rather
-" than a mark on its first line (gitgutter's look, from plain `git diff`). Needs
-" a `gitchanges` column in `set gutter=`:
+" Or mark the hunks in the margin -- +/-/~ per line, a change bar down each hunk.
+" Needs a `gitchanges` column in `set gutter=`:
 "   on ready lvi-list policy gitchanges gutter
 "   hi GitAdd    fg=green          " added lines
 "   hi GitChange fg=yellow         " lines that replaced something
 "   hi GitDel    fg=red            " where lines were removed
 "   hi gitchanges-cur fg=black bg=green   " the hunk you are standing in
-" Those three group names are lvi-diff's, so one theme serves both git tools.
+" Those group names are lvi-diff's too, so one theme serves both git tools.
 "
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
 " lvi-diff and is launched, not a rc default; run it by hand or from a key. It
@@ -393,11 +389,11 @@ map [c :bg lvi-list prev gitchanges<CR>
 " no producer ever writes to just draws blank, so listing one costs a column of
 " width and nothing else.
 "
-" A column is named after the LIST that fills it, which is why the line below
-" says `gitchanges` and not `git` (and wants `gitunstaged`/`gitstaged` too if you
-" use \gu and \gs). Marks pushed to a column this line never named are stored
-" and simply not drawn -- which is the failure you will hit first, and it is
-" silent, so start by uncommenting exactly this:
+" A column is named after the LIST that fills it -- `gitchanges`, not `git` (and
+" `gitunstaged`/`gitstaged` for \gu and \gs). A column no rc line names draws
+" nothing, whatever is pushed to it. Its glyphs are the producer's, per line
+" (lvi-lint sends E and W; lvi-gitchanges sends + - and ~), each naming the `hi`
+" group that themes it.
 " set gutter=gitchanges,lint,number
 " set number                            " ...or just vi's own option, on its own
 
@@ -406,11 +402,9 @@ hi CursorLineNr fg=yellow bold         " ...and the line you are on
 map \nn :set number!<CR>               " numbers off/on -- off to copy with the mouse
 map \nr :set rnu!<CR>                  " relative off/on (the cursor's line stays absolute)
 
-" WHAT a list paints is its paint policy, and `lvi-list policy` is your say over
-" it: set it once at startup and a producer's own runs leave it alone. Any
-" producer that names a policy itself keeps it (search and spell need `extent`,
-" which is a fact about their entries, not a preference), so this reaches exactly
-" the ones that don't: lvi-lint and lvi-gitchanges. See both sections below.
+" `lvi-list policy NAME POLICY` says how a list paints; set it once at startup and
+" the producer's own runs leave it alone. A producer that names its own policy
+" keeps it (search, spell and lsp need `extent`). See the sections below.
 
 " }}}
 " ---- linting ----------------------------------------------------------- {{{
@@ -428,16 +422,12 @@ map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
 map [e :bg lvi-list prev lint<CR>
 hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
 hi lint-cur bg=124 pri=11
-" Or put the findings in the margin instead of recoloring each line's first cell,
-" which leaves the text alone and lets a lint hit and a git hunk mark the same
-" line. Needs a `lint` column in `set gutter=` above. lvi-lint marks E and W
-" apart per line (an error outranks a warning on one line), and names its own
-" groups -- so theme THOSE, not `lint`, which is only the fallback for a list
-" that sends no glyphs of its own:
+" Or mark the findings in the margin, which needs a `lint` column in `set gutter=`
+" above. lvi-lint sends E and W per line, most severe first, under its own groups:
 "   on ready lvi-list policy lint gutter
 "   hi LintError fg=red bold
 "   hi LintWarn  fg=yellow
-"   hi lint-cur  fg=black bg=red     " ...and the finding n/N is parked on
+"   hi lint-cur  fg=black bg=red     " the finding n/N is parked on
 
 " }}}
 " ---- spell check ------------------------------------------------------- {{{
