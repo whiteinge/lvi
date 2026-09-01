@@ -1,6 +1,13 @@
-" lvirc.sample.vim -- a starting ~/.lvirc for external syntax highlighting.
-" Copy the parts you want into $XDG_CONFIG_HOME/lvi/lvirc or ~/.lvirc.
-" The rc file is just ex commands (see :hi / :map); " begins a comment.
+" lvirc.sample.vim -- a starting ~/.lvirc, with most of the contrib tooling on.
+" Copy it to $XDG_CONFIG_HOME/lvi/lvirc or ~/.lvirc and delete what you don't
+" want. The rc file is just ex commands (see :hi / :map); " begins a comment.
+"
+" WHAT SHIPS ON. A map is free: it does nothing until you press it, so every map
+" here is live unless its key is already taken. A hook runs on its own, so it is
+" live only if the behavior suits everyone. Where two lines are alternatives
+" (a clipboard per platform, a Pygments theme in place of the hand-written one)
+" exactly one is uncommented and the rest sit commented under it; uncommenting a
+" second would double-bind a key or race the first hook.
 " (Named .vim so GitHub/bat/Pygments highlight it as Vim script -- the syntax is
 " close enough: " comments, and map/set/hi keywords. Each section is wrapped in
 " fold markers so `on bufenter lvi-fold` folds this rc into a table of contents
