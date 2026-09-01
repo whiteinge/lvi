@@ -394,9 +394,13 @@ map \gp :bg lvi-stagediff<CR>                  " "git add -p" the current file
 " nothing, whatever is pushed to it. Its glyphs are the producer's, per line
 " (lvi-lint sends E and W; lvi-gitchanges sends + - and ~), each naming the `hi`
 " group that themes it.
-set gutter=gitchanges,lint              " the columns the sections below theme
+"
+" vi's own `number` option is defined onto this same list rather than kept as a
+" second piece of state: `set number` appends the column, `set nonumber` removes
+" it, and `set rnu` swaps the spelling in place. So the \nn and \nr maps below
+" toggle the very column named here, and the two can never disagree.
+set gutter=gitchanges,lint,number       " the columns the sections below theme
 " set gutter=gitunstaged,gitstaged,gitchanges,lint,number   " ...the full spread
-" set number                            " ...or just vi's own option, on its own
 
 hi LineNr       fg=240                 " the numbers (un-themed = plain)
 hi CursorLineNr fg=yellow bold         " ...and the line you are on
