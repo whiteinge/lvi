@@ -105,8 +105,8 @@ the socket, with **anything lvi doesn't implement delegated to the system `ex`**
 that's simply a list of those ex commands. A **styled highlight overlay** (`:hl`
 + `:hi`) and **change hooks** (`:on change …`) — the two primitives that let
 external tools paint syntax, search, and quickfix into the view. And a **left
-margin** of named columns (`set gutter=number,git,lint`) — line numbers, plus a
-column per tool to mark lines in, off by default.
+margin** of named columns (`set gutter=number,gitchanges,lint`) — line numbers,
+plus a column per tool to mark lines in, off by default.
 
 Turn those on and you get syntax highlighting, live-buffer search, quickfix
 lists, linting, formatting, toggleable spell check, fuzzy file-open,
@@ -164,12 +164,12 @@ version and nothing else notices.
 
 ### The left margin is a list of named columns
 
-`set gutter=number,git,lint` names the columns of the left margin, in order.
-Two names are the editor's own — `number` and `relativenumber`, whose content is
-a function of the row and the cursor. Every other name is a one-cell column that
-a tool fills by pushing marks (`:gutter git 4:+ 9:-`), replacing the column on
-every push exactly as `:hl` replaces a highlight group, and colored out of the
-same `:hi` table.
+`set gutter=number,gitchanges,lint` names the columns of the left margin, in
+order. Two names are the editor's own — `number` and `relativenumber`, whose
+content is a function of the row and the cursor. Every other name is a one-cell
+column that a tool fills by pushing marks (`:gutter gitchanges 4:+ 9:-`),
+replacing the column on every push exactly as `:hl` replaces a highlight group,
+and colored out of the same `:hi` table.
 
 The split is the point: **placement is the config's, content is the tool's.**
 There is deliberately no priority number, the thing that makes vim's sign column
