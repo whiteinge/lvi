@@ -218,13 +218,14 @@ motion * lvi-search --motion --word     " d* -- the word under the cursor
 motion # lvi-search --motion --word -b
 " On this side the search wraps and re-matches the live buffer, so the three list
 " deviations noted above do not apply to `d/`.
-" `n`/`N` are left to the list on purpose: bare `n` steps whichever list is
-" FOCUSED (lint, spell, git hunks), so a `dn` meaning "the next search match"
-" would not mirror it. To delete back to somewhere you reached by stepping a
-" list, use the previous-context mark -- `d` then two backticks -- since every
-" list step is jump-class. Add this if you want `dn` anyway:
-"motion n lvi-search --motion --last
-"motion N lvi-search --motion --last -b
+motion n lvi-search --motion --last     " dn -- the next match of the last pattern
+motion N lvi-search --motion --last -b
+" `dn` repeats the last SEARCH pattern, while bare `n` steps whichever list is
+" focused, so the two go to different places when that list is lint or spell or
+" git hunks. There is no useful `dn` in that case anyway: deleting to the next
+" lint finding is not an operation. To delete back to somewhere you reached by
+" stepping a list, use the previous-context mark instead -- `d` then two
+" backticks. Every list step is jump-class, so the mark is already where you left.
 
 " }}}
 " ---- insert-mode completion -------------------------------------------- {{{

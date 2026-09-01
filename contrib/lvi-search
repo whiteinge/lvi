@@ -28,16 +28,16 @@
 #     motion ? prompt lvi-search --motion -b    " d?foo
 #     motion * lvi-search --motion --word       " d*
 #     motion # lvi-search --motion --word -b
+#     motion n lvi-search --motion --last       " dn
+#     motion N lvi-search --motion --last -b
 # From another terminal, pass a WID: `lvi-search -w auto foo`.
 #
-# `n`/`N` are deliberately NOT motions here. Bare `n` steps whichever list is
-# focused -- lint, spell, git hunks -- so a `dn` that meant "to the next search
-# match" would not mirror it. To delete back to a point you reached by stepping
-# a list, use the previous-context mark instead -- `d` then two backticks. Every
-# list step is jump-class, so the mark is already where you left. Add
-# `motion n lvi-search --motion --last` if you
-# want it anyway; it is well defined (the next match of the last pattern), just
-# not the same place `n` goes.
+# `dn` repeats the last SEARCH pattern, while bare `n` steps whichever list is
+# focused, so the two go to different places when that list is lint or spell or
+# git hunks. There is no useful `dn` in that case anyway: deleting to the next
+# lint finding is not an operation. To delete back to a point you reached by
+# stepping a list, use the previous-context mark instead -- `d` then two
+# backticks. Every list step is jump-class, so the mark is already where you left.
 #
 # WHY ONE SCRIPT. The two shapes share the pattern, the case policy, the BRE
 # dialect and the matcher. Split across two programs, "the last pattern" was a
