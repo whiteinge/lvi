@@ -221,7 +221,7 @@ env knob.
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
 | ALE, Syntastic, neomake | `lvi-lint` — one small adapter per linter, findings as a list | `on write lvi-lint` |
-| coc.nvim, vim-lsp, nvim-lspconfig | `lvi-lsp` — `def` jumps to the definition, `refs` lists the uses, both as lists; the server is spawned per press, so there is no daemon. Hover and rename have no equivalent | `map <C-]> :bg lvi-lsp def<CR>`, and `\u` for `refs` |
+| coc.nvim, vim-lsp, nvim-lspconfig | `lvi-lsp` — `def` jumps to the definition, `refs` lists the uses, both as lists; the server is spawned per press, so there is no daemon. Hover, project-wide rename and call hierarchy are not written yet | `map <C-]> :bg lvi-lsp def<CR>`, and `\u` for `refs` |
 | vim-polyglot and friends (syntax) | `lvi-highlight` — Pygments or bat lexers over the live buffer | `on change lvi-highlight` |
 | neoformat, vim-autoformat | `lvi-fmt` — splices back only the changed window | `map \= :bg lvi-fmt<CR>` |
 | vim-sleuth, editorconfig-vim | `lvi-detect-indent` (delegates to `editorconfig`(1) when present) | called by `lvi-ftype` |
@@ -249,14 +249,6 @@ language. The shell is the extension language and the socket is the API: a tool
 sends ex commands to a running view and reads its state back. Every row above is
 a program you can also run from a terminal, and turning one on is one line in
 the rc, which is itself a file of ex commands.
-
-**A full LSP client.** `lvi-lsp` asks a language server for a definition or a
-list of references, the part ctags can't resolve; it spawns the server per press
-and kills it, so there is no resident process and nothing to keep in sync.
-Diagnostics come from `lvi-lint` and need no server at all, formatting from
-`lvi-fmt`, completion from buffer words and paths. Hover, project-wide rename,
-and call hierarchy are not written. Nothing structural is in the way: a client
-is just a program driving the socket.
 
 **A faithful reimplementation of ex.** `:s`, `:g`, `:m`, `:t` and the full
 address grammar are handed to the system `ex`, which ships on every UNIX lvi
