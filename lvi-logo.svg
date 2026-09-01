@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The "lvi" wordmark is Cantarell converted to paths, so the file carries no
+     font dependency. Everything draws in currentColor, so inlined into a page
+     the logo takes the surrounding text color. The svg:root rules apply only
+     when this file *is* the document (a direct load, or an <img> as in the
+     README) and there is nothing to inherit from: inlined, :root is the <html>
+     element, so they match nothing and the page wins. No width or height,
+     either; the viewBox fixes the aspect ratio and the consumer picks a size. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 61.25 50.539" fill="currentColor" role="img">
+  <title>lvi</title>
+  <style>
+    svg:root { color: #1f2328 }
+    @media (prefers-color-scheme: dark) { svg:root { color: #e6edf3 } }
+  </style>
+  <path d="m 6.606,50.539 c 1.506,0 3.254,-0.34 4.517,-0.874 L 9.861,45.488 c -0.534,0.194 -1.069,0.291 -1.506,0.291 -1.457,0 -2.234,-0.923 -2.234,-2.574 V 14.255 H 0 v 29.727 c 0,4.08 2.477,6.558 6.606,6.558 z M 20.644,50.151 h 6.12 l 9.181,-23.607 h -6.217 l -6.703,20.158 h 1.603 l -6.363,-20.158 h -6.8 z m 18.992,0 h 6.169 V 26.544 h -6.169 z"/>
+  <!-- The i's tittle is the circle below: oversized, and grouped with the
+       crescent rather than carried by the wordmark path above. -->
+  <g transform="translate(-80.485,-77.464)">
+    <path d="m 116.026,77.464 a 25.708,25.708 0 0 0 -23.608,15.625 25.708,25.708 0 0 1 19.457,-8.911 25.708,25.708 0 0 1 25.709,25.709 25.708,25.708 0 0 1 -2.1,10.083 25.708,25.708 0 0 0 6.251,-16.797 25.708,25.708 0 0 0 -25.708,-25.709 z"/>
+    <circle cx="123.299" cy="92.855" r="6.935"/>
+  </g>
+</svg>
