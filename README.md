@@ -1,3 +1,5 @@
+<p align="center"><img src="lvi-logo.svg" alt="" width="160"></p>
+
 # lvi — Lua vi
 
 **A tiny, POSIX-style modal editor that any program can drive.**
