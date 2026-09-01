@@ -17,7 +17,8 @@
 #
 # SYNOPSIS
 #   lvi-stagediff FILE         open the index|working split for FILE, wire it up
-#   lvi-stagediff              use $LVI_FILE (run it from a map inside lvi)
+#   lvi-stagediff              use $LVI_FILE (run it from a map inside lvi):
+#     map \gp :bg lvi-stagediff<CR>   " it wants a tmux split, not the terminal
 #   \dp     (working pane)     move the hunk under the cursor onto the index pane
 #   \do     (working pane)     pull the index's version of the hunk back to working
 #   \dx {motion} / g@{motion}  move just the motion's span (\dx ip, g@}, g@@ line)

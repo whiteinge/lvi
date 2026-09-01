@@ -354,7 +354,7 @@ hi refs-cur bg=28 pri=13
 " in two -- what is still to stage, and what is already staged -- which are the
 " questions you have mid-commit. \gr widens to the whole repo, which is what you
 " get by default when you run it from a shell instead.
-" on write lvi-gitchanges                      " keep the margin current, hands off
+on write lvi-gitchanges                        " keep the margin current, hands off
 map \gg :bg lvi-gitchanges --focus --jump<CR>              " walk what is uncommitted
 map \gu :bg lvi-gitchanges --focus --jump --unstaged<CR>   " ...only what is NOT staged
 map \gs :bg lvi-gitchanges --focus --jump --staged<CR>     " ...only what IS staged
@@ -374,10 +374,10 @@ hi GitDel    fg=red                            " where lines were removed
 hi gitchanges-cur fg=black bg=green            " the hunk you are standing in
 " Those group names are lvi-diff's too, so one theme serves both git tools.
 "
-" Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
-" lvi-diff and is launched, not a rc default; run it by hand or from a key. It
-" opens its panes in a tmux split and never wants the terminal, so :bg:
-"   map \gp :bg lvi-stagediff<CR>               " "git add -p" the current file
+" Staging hunks (git add -p, side-by-side) is lvi-stagediff, which stands on
+" lvi-diff. It opens its panes in a tmux split and never wants the terminal
+" itself, so :bg:
+map \gp :bg lvi-stagediff<CR>                  " "git add -p" the current file
 
 " }}}
 " ---- the left margin --------------------------------------------------- {{{
