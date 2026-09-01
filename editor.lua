@@ -19,6 +19,7 @@ local normal = require("normal")
 local disp   = require("disp")
 local bufs   = require("bufs")
 local fold   = require("fold")
+local view   = require("view")
 local config = require("config")
 
 local M = {}
@@ -93,7 +94,7 @@ function M.new_ed()
     -- fmtprg seeds from $LVI_FMT (startup default) but is live-settable via
     -- :set, the surface an env var can't reach in a running editor.
     opts = { wrap = true, linebreak = false, tabstop = 8, shiftwidth = 8, expandtab = false, autoindent = false,
-             foldenable = true, fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
+             foldenable = true, gutter = "", fmtprg = os.getenv("LVI_FMT") or "fmt", operatorfunc = "" },
     hlstyles = {},            -- :hi group -> SGR params (theme; survives :nohl)
     hlpri = {},               -- :hi group -> z-order
 
@@ -106,6 +107,7 @@ function M.new_ed()
     uline = nil,              -- U (restore-line): the line the cursor last settled on
     usaved = nil,             -- U (restore-line): that line's text at settle time
     highlights = {},          -- :hl group -> ranges (transient overlay)
+    gutters = {},             -- :gutter column -> line -> {ch, group} (left-margin marks)
     folds = {},               -- { {s,e,open}, ... } view overlay (see fold.lua)
     jumps = { list = {}, idx = 1 },  -- Ctrl-O/Ctrl-I jumplist
     changes = { list = {}, idx = 1 },  -- g;/g, changelist (fed by keyboard edits)
@@ -404,33 +406,19 @@ end
 -- plain l+/-1 and nsegs, so the fold-free paths below stay byte-for-byte the
 -- same. Kept local (editor and normal are separate modules); both defer the
 -- fold semantics to fold.lua so "what is visible" has one definition.
-local function ed_hasfolds(ed) return ed.opts.foldenable and ed.folds and ed.folds[1] ~= nil end
-local function ed_nextv(ed, l, nl)
-  if ed_hasfolds(ed) then return fold.next_vline(ed.folds, l, nl) end
-  return (l < nl) and l + 1 or nil
-end
-local function ed_prevv(ed, l, nl)
-  if ed_hasfolds(ed) then return fold.prev_vline(ed.folds, l, nl) end
-  return (l > 1) and l - 1 or nil
-end
-local function ed_segs(ed, l, W, ts)
-  if ed_hasfolds(ed) and fold.closed_head(ed.folds, l) then return 1 end
-  return disp.nsegs(ed.buf:line(l) or "", W, ts, ed.opts.linebreak)
-end
-
 local function refresh(ed)
   normal.clamp(ed)
   local nl = ed.buf:nlines()
   local curline = ed.buf:line(ed.cy) or ""
 
-  local textrows = ed.rows - 1
-  local W = ed.cols
+  local textrows = view.textrows(ed)
+  local W = view.textw(ed)            -- text width, not screen width (see gutter.lua)
   local ts = ed.opts.tabstop
 
   -- The viewport top must itself be a visible line; a fold closed over the old
   -- top would otherwise leave it pointing into hidden text. Snap it to the
   -- covering fold's head (clamp already did the same for the cursor).
-  if ed_hasfolds(ed) and fold.hidden(ed.folds, ed.top) then
+  if view.hasfolds(ed) and fold.hidden(ed.folds, ed.top) then
     ed.top = fold.innermost_closed(ed.folds, ed.top).s
   end
 
@@ -439,54 +427,33 @@ local function refresh(ed)
     ed.topsub = ed.topsub
     -- A closed-fold head is one row: its cursor sub-row is 0, not ed.cx's wrapped
     -- position in the (hidden-bodied) underlying line.
-    local csub = (ed_hasfolds(ed) and fold.closed_head(ed.folds, ed.cy)) and 0
+    local csub = (view.hasfolds(ed) and fold.closed_head(ed.folds, ed.cy)) and 0
         or select(1, disp.locate(curline, W, ts, ed.cx, ed.opts.linebreak))
     if ed.cy < ed.top or (ed.cy == ed.top and csub < ed.topsub) then
       ed.top, ed.topsub = ed.cy, csub                 -- cursor above top: scroll up
     else
-      -- Is the cursor in view? Walk forward from the top, bounded by textrows.
-      -- The cursor line gets one extra row when the cursor sits on the phantom
-      -- edge-wrap row past EOL (disp.locate returns csub == segment count for an
-      -- exactly-full row): without this the walk enumerates only real segments,
-      -- never reaches that csub, wrongly concludes "off-screen", and the reposition
-      -- below slams the line to the last row (the mid-viewport jump-to-bottom bug).
-      local l, sub, count, visible = ed.top, ed.topsub, 0, false
-      while count < textrows do
-        if l == ed.cy and sub == csub then visible = true; break end
-        if l == nil or l > nl then break end
-        local ns = ed_segs(ed, l, W, ts)
-        if l == ed.cy and csub >= ns then ns = csub + 1 end
-        if sub + 1 < ns then sub = sub + 1 else l, sub = ed_nextv(ed, l, nl), 0 end
-        count = count + 1
-      end
-      if not visible then
-        -- Put the cursor on the last visible row: walk back textrows-1 rows.
-        local l2, sub2 = ed.cy, csub
-        for _ = 1, textrows - 1 do
-          if sub2 > 0 then sub2 = sub2 - 1
-          else local p = ed_prevv(ed, l2, nl); if p then l2 = p; sub2 = ed_segs(ed, l2, W, ts) - 1 else break end end
-        end
-        ed.top, ed.topsub = l2, sub2
+      -- Is the cursor in view? A bounded walk from the top; view.rows_to owns
+      -- the phantom-edge-wrap stretch that makes an on-screen cursor findable.
+      local _, visible = view.rows_to(ed, ed.top, ed.topsub, ed.cy, csub, W, ts, textrows)
+      if not visible then      -- put it on the last row: back up textrows-1 rows
+        ed.top, ed.topsub = view.advance(ed, ed.cy, csub, -(textrows - 1))
       end
     end
-    local ns = ed_segs(ed, ed.top, W, ts)
+    local ns = view.segs(ed, ed.top, W, ts)
     if ed.topsub >= ns then ed.topsub = ns - 1 end
     if ed.topsub < 0 then ed.topsub = 0 end
     if ed.top < 1 then ed.top = 1 end
   else
     ed.topsub = 0
     if ed.cy < ed.top then ed.top = ed.cy end
-    if ed_hasfolds(ed) then
+    if view.hasfolds(ed) then
       -- Count visible rows from top down to the cursor; if it isn't reachable
       -- within the window (or lies above), put it on the last row by walking
       -- back textrows-1 visible lines. Folds compress rows, so plain
       -- top+textrows-1 arithmetic would scroll too early or too late.
-      local l, rows = ed.top, 0
-      while l and l < ed.cy do rows = rows + 1; l = ed_nextv(ed, l, nl) end
-      if l ~= ed.cy or rows > textrows - 1 then
-        local t = ed.cy
-        for _ = 1, textrows - 1 do local p = ed_prevv(ed, t, nl); if p then t = p else break end end
-        ed.top = t
+      local _, reached = view.rows_to(ed, ed.top, 0, ed.cy, 0, W, ts, textrows)
+      if not reached then
+        ed.top = (view.advance(ed, ed.cy, 0, -(textrows - 1)))
       end
     else
       if ed.cy > ed.top + textrows - 1 then ed.top = ed.cy - textrows + 1 end

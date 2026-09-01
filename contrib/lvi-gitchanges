@@ -1,9 +1,9 @@
 #!/bin/sh
-# lvi-gitchanges [-w auto|WID] [--print] [--repo] [--staged|--unstaged] [REF | REF..REF] [-- PATHSPEC...]
+# lvi-gitchanges [-w auto|WID] [--focus] [--jump] [--print] [--repo] [--staged|--unstaged] [REF | REF..REF] [-- PATHSPEC...]
 #
 # Turn git changes into a `lvi-list` quickfix and jump to the first hunk; `n`/`N`
 # then step them like any other list. A git producer in the same mold as
-# lvi-search -- it turns `git diff` into `file:line:text` entries, one per hunk,
+# lvi-search -- it turns `git diff` into `file:line1-line2:text` entries, one per hunk,
 # carrying that hunk's own diff as the entry BODY, and lets lvi-list's shared
 # step/paint/status machinery do the rest.
 #
@@ -93,10 +93,11 @@
 #
 # Bind it with :bg -- git is non-interactive so it needs no tty, and :bg avoids
 # the alt-screen flash that :silent ! causes:
-#     map \gg :bg lvi-gitchanges<CR>       " load this file's changes, focus, jump
-#     map \gu :bg lvi-gitchanges --unstaged<CR>  " ...only what is NOT staged yet
-#     map \gs :bg lvi-gitchanges --staged<CR>    " ...only what IS staged
-#     map \gr :bg lvi-gitchanges --repo<CR>      " ...the whole repo instead
+#     on write lvi-gitchanges                    " keep the margin current
+#     map \gg :bg lvi-gitchanges --focus --jump<CR>      " walk this file's hunks
+#     map \gu :bg lvi-gitchanges --focus --jump --unstaged<CR>  " ...only unstaged
+#     map \gs :bg lvi-gitchanges --focus --jump --staged<CR>    " ...only staged
+#     map \gr :bg lvi-gitchanges --focus --jump --repo<CR>      " ...the whole repo
 #     map ]c :bg lvi-list next gitchanges<CR>    " or step it without stealing focus
 #     map [c :bg lvi-list prev gitchanges<CR>
 # Theme the marks in your rc (un-themed = invisible; see lvi-list); give the three
@@ -104,6 +105,27 @@
 #     hi gitchanges  bg=22 pri=10
 #     hi gitunstaged bg=94 pri=10
 #     hi gitstaged   bg=28 pri=10
+#
+# --focus AND --jump ARE SEPARATE, AND BOTH OPT-IN. `--focus` only aims n/N at
+# this list; `--jump` only moves the cursor onto an entry. Neither implies the
+# other, here or in any other contrib producer -- a flag named for one thing
+# doing two is how a vocabulary rots. So all four combinations mean something:
+#
+#   (bare)          put, paint, count. Touches nothing you were doing.
+#   --focus         aim n/N at the hunks, leave the cursor alone.
+#   --jump          go to a hunk without stealing what n/N point at.
+#   --focus --jump  the walk: what you want on a key.
+#
+# Both are opt-in because this runs from two places with opposite needs. From a
+# key, aiming and landing IS the gesture. From `on write` it must do neither:
+# yanking the focused list away from your search and teleporting the cursor on
+# every save is not a margin, it is an ambush. The invocation that fires
+# unattended is the SAFE one, so a rc that forgets a flag costs you a jump
+# instead of your place in a file.
+#
+# `on write` and not `on change`: the diff is read from the file on DISK, so the
+# write is the one moment its snapshot is guaranteed to match the buffer. On
+# change it would show you the last-saved state while you type.
 #
 # Config: LVI (client, default `lvi`). Needs git on PATH, and lvi-list when
 # pushing to a view.
@@ -115,11 +137,13 @@ LVI=${LVI:-lvi}
 die() { echo "lvi-gitchanges: $*" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || die "git not found on PATH"
 
-want_wid=; doprint=; repo=; staged=; unstaged=
+want_wid=; doprint=; repo=; staged=; unstaged=; focus=; jump=
 while :; do
   case ${1:-} in
     -w)                   want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
     --print)              doprint=1; shift ;;
+    --focus)              focus=1; shift ;;
+    --jump)               jump=1; shift ;;
     --repo|--all)         repo=1; shift ;;
     --staged|--cached)    staged=1; shift ;;
     --unstaged|--modified) unstaged=1; shift ;;
@@ -177,7 +201,8 @@ what=uncommitted
 [ -n "$ref" ] && what="'$ref'"
 diff=$(gitdiff "$@" 2>/dev/null) || die "git failed (not a repo, or bad ref '$ref'?)"
 
-# One entry per hunk -- `<abs path>:<new-start>:+A -D  <section context>` -- with
+# One entry per hunk -- `<abs path>:<new-start>-<new-end>:+A -D  <section context>`
+# (a one-line hunk drops the range half) -- with
 # the hunk's own lines indented under it as the body. @@ -a,d +s,i @@ ctx; a
 # comma-less count means 1, and +s,0 is a pure deletion (clamped to line 1).
 # Tracking `+++` is what skips deleted files and names the rest: git's own header
@@ -203,7 +228,13 @@ entries=$(printf '%s\n' "$diff" | awk '
     ctx=$0; sub(/^@@[^@]*@@ ?/,"",ctx)
     label=sprintf("+%d -%d", add, del)
     if (ctx != "") label=label "  " ctx
-    printf "%s:%s:%s\n", f, s, label
+    # A hunk is a RANGE, in the GNU spelling `file:L1-L2:`, so lvi-list can mark
+    # the whole hunk in a gutter column instead of just its first line. Every
+    # other consumer already lands a range on its start, so this is invisible to
+    # them. A pure deletion (+0) has no new-side span, so it stays a point.
+    e = (add + 0 > 0) ? s + add - 1 : s
+    if (e + 0 > s + 0) printf "%s:%s-%s:%s\n", f, s, e, label
+    else printf "%s:%s:%s\n", f, s, label
     inh=1; next }
   inh { print " " $0 }                            # indent: see BODIES -- a body
 ')                                                # line must not look like a header
@@ -229,8 +260,68 @@ if [ -z "$entries" ]; then
   exit 0
 fi
 
-printf '%s\n' "$entries" | lvi-list $wflag put "$name" --focus
-lvi-list $wflag next
+# --at-cursor: a refresh mid-walk keeps your place instead of resetting the index
+# to the top -- which is what makes `on write` usable, and is the same reason
+# lvi-lint seeds this way. --focus and --jump are separate and both opt-in, so a
+# hook moves neither the cursor nor what n/N point at (see the header).
+printf '%s\n' "$entries" | lvi-list $wflag put "$name" --at-cursor ${focus:+--focus}
+
+# MARGIN GLYPHS, per LINE rather than per hunk -- which is the whole reason the
+# marks channel is keyed by line: one hunk carries `+` on the lines that were
+# added and `~` on the ones that replaced something. Runs, not whole hunks: a
+# hunk that adds a paragraph and edits a word elsewhere reports both truthfully.
+# A run of removals with nothing added is a `-` on the line ABOVE the gap, which
+# is where git's own `@@ -13,2 +14,0 @@` points and where gitgutter draws it: one
+# cell cannot show a gap between two lines, so it marks an edge of it.
+# The group names are lvi-diff's (GitAdd/GitDel/GitChange), so the two git tools
+# share one vocabulary and one `hi` line themes both.
+#
+# gitdiff runs -U0, so a hunk body is only -/+ lines and each hunk is one run.
+# The context-line branch below is what makes the pass right for a diff that has
+# context anyway, rather than a rule that quietly depends on the flag.
+printf '%s\n' "$diff" | awk '
+  function flush() {
+    if (na > 0) {
+      g   = (ndel > 0) ? "~" : "+"
+      grp = (ndel > 0) ? "GitChange" : "GitAdd"
+      for (i = 1; i <= na; i++) printf "%s:%s\t%s\t%s\n", f, add[i], g, grp
+    } else if (ndel > 0 && nl >= 1) {
+      # The line ABOVE the gap: nl is the next new-side line, which is below it
+      # once any new-side line has been emitted in this hunk. At the hunk start
+      # nl is still the +s,0 line git itself named, and a deletion from line 1
+      # has no line above to mark: both fall out of the same comparison.
+      # (No apostrophes or backticks in here -- the awk program is one
+      # single-quoted shell word, and either one ends it.)
+      printf "%s:%s\t-\tGitDel\n", f, (nl > hs) ? nl - 1 : nl
+    }
+    na = 0; ndel = 0
+  }
+  /^diff / { if (inh) flush(); inh = 0; next }
+  /^--- /  { if (inh) flush(); inh = 0; next }
+  /^\+\+\+ / {
+    if (inh) flush()
+    inh = 0; p = substr($0, 5)
+    if (p == "/dev/null") { skip = 1; next }
+    skip = 0; sub(/^b\//, "", p)
+    f = (substr(p, 1, 1) == "/") ? p : ENVIRON["LVI_GC_TOP"] p
+    next }
+  /^@@ / {
+    if (inh) flush()
+    inh = 0
+    if (skip) next
+    s = $3; sub(/^\+/, "", s); sub(/,.*/, "", s)
+    if (s + 0 < 1) s = 1
+    nl = s + 0; hs = nl; inh = 1; next }
+  inh && /^\\/ { next }                          # "\ No newline at end of file"
+  inh && /^-/   { ndel++; next }
+  inh && /^\+/  { add[++na] = nl; nl++; next }
+  inh          { flush(); nl++ }                 # context line: the run ends
+  END { if (inh) flush() }
+' | lvi-list $wflag marks "$name"
+
+# `next "$name"`, not a bare `next`: --jump must work without --focus, and a
+# bare step acts on the FOCUSED list -- which may be someone else's, or none.
+[ -n "$jump" ] && lvi-list $wflag next "$name"
 # After `next`, so it lands on top of the entry text lvi-list just echoed: when
 # there is a deletion to report it outranks a line you are already looking at,
 # and when there is none (the usual case) the echo stands untouched.

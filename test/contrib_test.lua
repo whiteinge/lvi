@@ -798,7 +798,8 @@ cat >> '%s/sent'
       run(env, "contrib/lvi-search --worker -- foo")
       expect(read(d .. "/sock.lists/search")).to.equal(
         "x.txt:1.5-7: aaa foo(bar) foo\nx.txt:1.14-16: aaa foo(bar) foo\n")
-      -- the match is what you are looking at, so it lights rather than signs
+      -- the match is what you are looking at, so it lights in place rather
+      -- than marking the margin beside it
       expect(read(d .. "/sock.lists/search.paint")).to.equal("extent\n")
       expect(read(d .. "/log"):find("\nhl search 1:5%-7 1:14%-16")).to.exist()
       -- with every match lit, the one you are on needs its own look
@@ -977,6 +978,70 @@ cat >> '%s/sent'
       run(env, [[contrib/lvi-match add -F 'a.b*+c']])
       expect(read(d .. "/sock.match")).to.equal("1\tmatch1\t-\ta\\.b\\*+c\n")
       cleanup(d)
+    end)
+
+    -- Severity resolution is the PRODUCER's job: a line with both an error and a
+    -- warning is one cell and two facts, and only lvi-lint knows E outranks W.
+    -- The entries keep both findings -- n steps both -- and only the mark folds.
+    it("lvi-lint marks the most severe finding per line", function()
+      -- An adapter is resolved BESIDE lvi-lint (not on PATH), so the script gets
+      -- copied next to a fake one rather than a fixture landing in contrib/.
+      local bin = tmpdir()
+      assert(os.execute(("cp '%s/contrib/lvi-lint' '%s/'"):format(pwd, bin)))
+      write(bin .. "/lvi-lint-fake", table.concat({
+        "#!/bin/sh",
+        'echo "$1:2: W: soft"',
+        'echo "$1:2: E: hard"',
+        'echo "$1:5: W: only a warning"',
+        'echo "$1:7: I: unknown severity"',
+        "",
+      }, "\n"))
+      assert(os.execute("chmod +x '" .. bin .. "/lvi-lint-fake'"))
+      local d = stub({ buffer = "a\nb\nc\nd\ne\nf\ng\n", path = "/cur/x.zz\n" })
+      run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+            LVI_FILE = "/cur/x.zz", LVI_LINE = "1", LVI_COL = "1",
+            LVI_LINT_BACKEND = "fake", PATH = bin },
+        bin .. "/lvi-lint --worker")
+      local marks = read(d .. "/sock.lists/lint.marks")
+      expect(marks:find("/cur/x%.zz:2\tE\tLintError")).to.exist()   -- E beat W
+      expect(marks:find("/cur/x%.zz:2\tW")).to_not.exist()
+      expect(marks:find("/cur/x%.zz:5\tW\tLintWarn")).to.exist()
+      expect(marks:find(":7")).to_not.exist()                       -- unknown: no mark
+      -- both findings on line 2 are still ENTRIES, so n steps both
+      local _, n = read(d .. "/sock.lists/lint"):gsub("x%.zz:2:", "")
+      expect(n).to.equal(2)
+      cleanup(d); cleanup(bin)
+    end)
+
+    -- The same standing rule as lvi-gitchanges: --focus aims n/N, --jump moves
+    -- the cursor, neither implies the other, and a bare hook run does neither.
+    it("lvi-lint keeps --focus and --jump independent", function()
+      local bin = tmpdir()
+      assert(os.execute(("cp '%s/contrib/lvi-lint' '%s/'"):format(pwd, bin)))
+      write(bin .. "/lvi-lint-fake", table.concat({
+        "#!/bin/sh", 'echo "$1:3: E: boom"', "",
+      }, "\n"))
+      assert(os.execute("chmod +x '" .. bin .. "/lvi-lint-fake'"))
+      local function attempt(flags)
+        local d = stub({ buffer = "a\nb\nc\nd\n", path = "/cur/x.zz\n" })
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+              LVI_FILE = "/cur/x.zz", LVI_LINE = "1", LVI_COL = "1",
+              LVI_LINT_BACKEND = "fake", PATH = bin },
+          bin .. "/lvi-lint --worker " .. flags)
+        local log = read(d .. "/log")
+        local res = { jumped = log:find("pos ") ~= nil,
+                      focused = read(d .. "/sock.focus") ~= "" }
+        cleanup(d)
+        return res
+      end
+      local bare = attempt("")
+      expect(bare.jumped).to_not.be.truthy()
+      expect(bare.focused).to_not.be.truthy()
+      local f = attempt("--focus")
+      expect(f.focused).to.be.truthy(); expect(f.jumped).to_not.be.truthy()
+      local j = attempt("--jump")
+      expect(j.jumped).to.be.truthy(); expect(j.focused).to_not.be.truthy()
+      cleanup(bin)
     end)
 
     it("lvi-lint --worker reports a missing backend, never a clean [0/0]", function()
@@ -1178,22 +1243,24 @@ cat >> '%s/sent'
     end)
 
     -- PAINT POLICY: what an entry looks like is the producer's declaration, not
-    -- a property of the paint call. `sign` is the default for everyone, so a
-    -- range entry marks its first cell (and, before the policy existed, mangled
-    -- the :hl range doing it -- `12.5-20` reached :hl as a line number).
-    it("lvi-list signs a range entry's first cell by default", function()
+    -- a property of the paint call, and `gutter` is what a producer that
+    -- declares nothing gets. A col-bearing entry must not reach :gutter as a
+    -- position: the margin is per LINE, and `12.5-20` once leaked its column
+    -- into the mark.
+    it("lvi-list marks the margin by default, by line", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf '/cur/f.c:12.5-20: boom\n' | contrib/lvi-list put qq --focus]])
       local log = read(d .. "/log")
-      expect(log:find("hl qq 12:1%-1")).to.exist()
+      expect(log:find("gutter qq 12:>")).to.exist()
       expect(log:find("12%.5")).to_not.exist()
+      expect(log:find("\nhl qq\n")).to.exist()          -- and no overlay left behind
       cleanup(d)
     end)
 
-    it("lvi-list --paint=extent lights each entry's range, signing the rest", function()
+    it("lvi-list --paint=extent lights the ranges and nothing else", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
@@ -1201,8 +1268,10 @@ cat >> '%s/sent'
       run(env, [[printf '/cur/f.c:12.5-20: match\n]] ..
                [[/cur/f.c:30:7: col only\n]] ..
                [[/cur/f.c:44: line only\n' | contrib/lvi-list put s --focus --paint=extent]])
-      -- the range lights; a bare column and a bare line have no extent to light
-      expect(read(d .. "/log"):find("hl s 12:5%-20 30:1%-1 44:1%-1")).to.exist()
+      -- the range lights; a bare column and a bare line have no extent to light,
+      -- and there is no marking-in-place left that is not a range
+      expect(read(d .. "/log"):find("hl s 12:5%-20 ")).to.exist()
+      expect(read(d .. "/log"):find("30:1%-1")).to_not.exist()
       -- the sidecar is not a list
       expect(run(env, "contrib/lvi-list ls"):find("s%.paint")).to_not.exist()
       cleanup(d)
@@ -1217,22 +1286,185 @@ cat >> '%s/sent'
                [[/cur/f.c:30.3-8: two\n' | contrib/lvi-list put s --focus --paint=cur]])
       run(env, "contrib/lvi-list next")
       local log = read(d .. "/log")
-      expect(log:find("\nhl s 12:1%-1 30:1%-1")).to.exist()   -- every entry still a sign
-      expect(log:find("\nhl s%-cur 12:5%-20\n")).to.exist()  -- ...except the one you are on
+      expect(log:find("\nhl s\n")).to.exist()                 -- nothing lit but...
+      expect(log:find("\nhl s%-cur 12:5%-20\n")).to.exist()  -- ...the one you are on
       cleanup(d)
     end)
 
     -- :hl takes byte ranges and never learned units, and lvi-list has no way to
-    -- convert (a col-bearing entry's text is a message, not the line). Signing
-    -- is the honest degradation; a mispainted extent would be silent.
-    it("lvi-list falls back to signs when an extent list is not in bytes", function()
+    -- convert (a col-bearing entry's text is a message, not the line). Marking
+    -- the margin is the honest degradation; a mispainted extent would be silent.
+    it("lvi-list --paint=gutter marks the margin, one glyph per entry", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:12: one\n/cur/f.c:30: two\n' ]] ..
+               [[| contrib/lvi-list put s --focus --paint=gutter:E]])
+      local log = read(d .. "/log")
+      expect(log:find("gutter s 12:E 30:E")).to.exist()
+      expect(log:find("\nhl s\n")).to.exist()             -- the overlay it replaces, cleared
+      cleanup(d)
+    end)
+
+    -- GNU's `line1-line2` spelling has always parsed; the end line used to be
+    -- dropped because one :hl range covers one line. The margin can hold a span,
+    -- which is how a git hunk gets marked for its whole length.
+    it("lvi-list fills a whole line span in the gutter, same glyph throughout", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:4-6: hunk\n/cur/f.c:9: point\n' ]] ..
+               [[| contrib/lvi-list put s --paint=gutter]])
+      expect(read(d .. "/log"):find("gutter s 4:> 5:> 6:> 9:>")).to.exist()
+      cleanup(d)
+    end)
+
+    -- A mark is a glyph, not a byte: a shell `?` matches one byte, so the obvious
+    -- validation pattern rejects every box-drawing character people reach for.
+    it("lvi-list takes a multibyte gutter mark", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      local bar = "\226\148\130"                          -- U+2502, three bytes
+      local _, ok = run(env, [[printf '/cur/f.c:3: one\n' ]] ..
+                             [[| contrib/lvi-list put s --paint=gutter:]] .. bar)
+      expect(ok).to_not.equal(false)
+      expect(read(d .. "/log"):find("gutter s 3:" .. bar, 1, true)).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-list marks the span you are standing in as the current entry", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "5", LVI_COL = "1" }     -- inside the 4-6 span
+      run(env, [[printf '/cur/f.c:4-6: hunk\n/cur/f.c:9: point\n' ]] ..
+               [[| contrib/lvi-list put s --focus --paint=gutter]])
+      run(env, "contrib/lvi-list here")
+      local log = read(d .. "/log")
+      expect(log:find("gutter s 4:>:s%-cur 5:>:s%-cur 6:>:s%-cur 9:>")).to.exist()
+      expect(log:find("\npos 4 1 byte jump\n")).to.exist()   -- `here` picked the span, not 9
+      cleanup(d)
+    end)
+
+    -- The user's say over how a list paints has to survive the producer's next
+    -- run: `put` used to delete the stored policy whenever a run named none.
+    it("lvi-list policy outlives a producer that names no policy", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, "contrib/lvi-list policy s gutter:E")        -- before the list exists
+      expect(run(env, "contrib/lvi-list policy s"):find("gutter")).to.exist()
+      run(env, [[printf '/cur/f.c:12: one\n' | contrib/lvi-list put s --focus]])
+      expect(read(d .. "/log"):find("gutter s 12:E")).to.exist()
+      -- ...and a producer stating a capability still wins
+      run(env, [[printf '/cur/f.c:12.1-4: one\n' ]] ..
+               [[| contrib/lvi-list put s --paint=extent]])
+      expect(read(d .. "/log"):find("hl s 12:1%-4")).to.exist()
+      expect(select(2, run(env, "contrib/lvi-list policy s blink"))).to.equal(false)
+      cleanup(d)
+    end)
+
+    -- The producer's glyphs. lvi-list stores and replays them and never learns
+    -- what one MEANS -- which is the whole point: lint wants E/W, git hunks want
+    -- +/-/~, and no table in here could hold both without growing forever.
+    it("lvi-list marks replays the producer's glyphs and groups", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:3: one\n/cur/f.c:7: two\n' ]] ..
+               [[| contrib/lvi-list put s --paint=gutter]])
+      run(env, [[printf '/cur/f.c:3\tE\tLintError\n/cur/f.c:7\tW\tLintWarn\n' ]] ..
+               [[| contrib/lvi-list marks s]])
+      expect(read(d .. "/log"):find("gutter s 3:E:LintError 7:W:LintWarn")).to.exist()
+      -- the sidecar is not a list
+      expect(run(env, "contrib/lvi-list ls"):find("s%.marks")).to_not.exist()
+      cleanup(d)
+    end)
+
+    -- Marks summarize the ENTRIES, so new entries have to invalidate them.
+    -- Otherwise a list re-put (or loaded from a file) under a name that once
+    -- held marks replays a dead producer's glyphs against unrelated lines on
+    -- every repaint, and nothing short of `drop` clears them.
+    it("lvi-list forgets the last run's marks when new entries arrive", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:3: one\n' | contrib/lvi-list put s --paint=gutter]])
+      run(env, [[printf '/cur/f.c:3\tE\tLintError\n' | contrib/lvi-list marks s]])
+      local n = #read(d .. "/log")
+      run(env, [[printf '/cur/f.c:8: other\n' | contrib/lvi-list put s]])
+      local tail = read(d .. "/log"):sub(n + 1)
+      expect(tail:find("gutter s 8:>")).to.exist()      -- back to the policy glyph
+      expect(tail:find("LintError")).to_not.exist()
+      -- ...and the same for a list loaded over the name from a file
+      write(d .. "/saved", "/cur/f.c:3\tE\tLintError\n")
+      run(env, [[printf '/cur/f.c:3\tE\tLintError\n' | contrib/lvi-list marks s]])
+      write(d .. "/saved", "/cur/f.c:5: fresh\n")
+      n = #read(d .. "/log")
+      run(env, "contrib/lvi-list load " .. d .. "/saved s")
+      tail = read(d .. "/log"):sub(n + 1)
+      expect(tail:find("gutter s 5:>")).to.exist()
+      expect(tail:find("LintError")).to_not.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-list marks are per line, so one hunk can carry two glyphs", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:4-6: hunk\n' | contrib/lvi-list put s --paint=gutter]])
+      run(env, [[printf '/cur/f.c:4\t~\tGitChange\n/cur/f.c:5\t+\tGitAdd\n' ]] ..
+               [[| contrib/lvi-list marks s]])
+      -- marks ARE the column: no span expansion, so line 6 goes unmarked
+      expect(read(d .. "/log"):find("gutter s 4:~:GitChange 5:%+:GitAdd%s*\n")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-list marks skip another file's lines", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:3: here\n/other/g.c:9: there\n' ]] ..
+               [[| contrib/lvi-list put s --paint=gutter]])
+      run(env, [[printf '/cur/f.c:3\tE\n/other/g.c:9\tE\n' ]] ..
+               [[| contrib/lvi-list marks s]])
+      local log = read(d .. "/log")
+      expect(log:find("gutter s 3:E:s%s*\n")).to.exist()   -- no group -> the list name
+      expect(log:find("9:E")).to_not.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-list -cur covers the current entry's whole span, glyph intact", function()
+      local d = stub({ path = "/cur/f.c\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                    LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
+                    LVI_LINE = "1", LVI_COL = "1" }
+      run(env, [[printf '/cur/f.c:4-5: hunk\n/cur/f.c:9: point\n' ]] ..
+               [[| contrib/lvi-list put s --focus --paint=gutter]])
+      run(env, [[printf '/cur/f.c:4\t~\tGitChange\n/cur/f.c:5\t~\tGitChange\n]] ..
+               [[/cur/f.c:9\t+\tGitAdd\n' | contrib/lvi-list marks s]])
+      run(env, "contrib/lvi-list first")
+      expect(read(d .. "/log"):find("gutter s 4:~:s%-cur 5:~:s%-cur 9:%+:GitAdd")).to.exist()
+      cleanup(d)
+    end)
+
+    it("lvi-list marks the margin when an extent list is not in bytes", function()
       local d = stub({ path = "/cur/f.c\n" })
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
                     LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.c",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf '/cur/f.c:12.5-20: match\n' ]] ..
                [[| contrib/lvi-list put s --focus --paint=extent --cols=char]])
-      expect(read(d .. "/log"):find("hl s 12:1%-1")).to.exist()
+      expect(read(d .. "/log"):find("gutter s 12:>")).to.exist()
       expect(select(2, run(env, [[: | contrib/lvi-list put s --paint=blink]]))).to.equal(false)
       cleanup(d)
     end)
@@ -1246,7 +1478,7 @@ cat >> '%s/sent'
                     LVI_SOCK = d .. "/sock", LVI_FILE = pwd .. "/./sub/f.txt",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf 'sub/f.txt:4:1: boom\n' | contrib/lvi-list put qq --focus]])
-      expect(read(d .. "/log"):find("^hl qq 4:1%-1 \n")).to.exist()    -- painted, not skipped
+      expect(read(d .. "/log"):find("^gutter qq 4:> \n")).to.exist()   -- painted, not skipped
       run(env, "contrib/lvi-list next")
       local log = read(d .. "/log")
       expect(log:find("\npos 4 1 byte jump\n")).to.exist()
@@ -1260,7 +1492,7 @@ cat >> '%s/sent'
                     LVI_SOCK = d .. "/sock", LVI_FILE = pwd .. "/sub/f.txt",
                     LVI_LINE = "1", LVI_COL = "1" }
       run(env, [[printf 'sub/../other/g.txt:2:1: boom\n' | contrib/lvi-list put qq --focus]])
-      expect(read(d .. "/log"):find("^hl qq\n")).to.exist()           -- nothing to paint here
+      expect(read(d .. "/log"):find("^gutter qq %\n")).to.exist()      -- nothing to paint here
       run(env, "contrib/lvi-list next")
       expect(read(d .. "/log"):find("\ne %-%- sub/%.%./other/g%.txt\n")).to.exist()
       cleanup(d)
@@ -1296,6 +1528,50 @@ cat >> '%s/sent'
       expect(out:find("doomed")).to_not.exist()            -- deletion: nowhere to go, skipped
       expect(out:find("1 deleted file%(s%) skipped")).to.exist()   -- ...and said so
       cleanup(r)
+    end)
+
+    -- A hunk is a range, so a gutter column can mark the whole thing. Its own
+    -- repo: the shared fixture's hunks are all one line long, which is exactly
+    -- the case that must NOT grow a range half.
+    it("lvi-gitchanges spells a multi-line hunk as a GNU line range", function()
+      local d = tmpdir()
+      assert(os.execute(([[
+        cd '%s' && git init -q . &&
+        git config user.email t@t && git config user.name t &&
+        printf '1\n2\n3\n4\n5\n6\n7\n8\n' > f.txt &&
+        git add -A && git commit -qm init &&
+        printf '1\n2\nB\nC\nD\n6\n7\n8\n' > f.txt
+      ]]):format(d)))
+      local out = run({}, ("cd '%s' && %s --repo"):format(d, GC))
+      expect(out:find("/f%.txt:3%-5:%+3 %-3")).to.exist()      -- three lines, one range
+      -- ...and a one-line hunk stays a point, not `L-L`.
+      assert(os.execute(("cd '%s' && printf '1\n2\nB\nC\nD\n6\nZ\n8\n' > f.txt"):format(d)))
+      expect(run({}, ("cd '%s' && %s --repo"):format(d, GC)):find("/f%.txt:7:%+1 %-1")).to.exist()
+      cleanup(d)
+    end)
+
+    -- Marks are keyed by LINE precisely so one hunk can say `+` where lines were
+    -- added and `~` where they replaced something. Runs, not whole hunks.
+    it("lvi-gitchanges marks added, changed and removed lines apart", function()
+      local d = tmpdir()
+      assert(os.execute(([[
+        cd '%s' && git init -q . &&
+        git config user.email t@t && git config user.name t &&
+        printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n' > f.txt &&
+        git add -A && git commit -qm init &&
+        printf '1\n2\nC\nD\n5\nNEW\n6\n7\n10\n' > f.txt
+      ]]):format(d)))
+      local st = stub({ path = d .. "/f.txt\n" })
+      run({ LVI = STUB, STUB_DIR = st, LVI_WID = "w1", LVI_SOCK = st .. "/sock",
+            LVI_FILE = d .. "/f.txt", LVI_LINE = "1", LVI_COL = "1",
+            PATH = pwd .. "/contrib" },
+        ("cd '%s' && %s"):format(d, GC))
+      local marks = read(st .. "/sock.lists/gitchanges.marks")
+      expect(marks:find("f%.txt:3\t~\tGitChange")).to.exist()   -- 3,4 replaced 3,4
+      expect(marks:find("f%.txt:4\t~\tGitChange")).to.exist()
+      expect(marks:find("f%.txt:6\t%+\tGitAdd")).to.exist()     -- NEW, nothing removed
+      expect(marks:find("\t%-\tGitDel")).to.exist()             -- 8,9 removed
+      cleanup(st); cleanup(d)
     end)
 
     it("lvi-gitchanges narrows to $LVI_FILE, and --repo opts back out", function()
@@ -1347,11 +1623,45 @@ cat >> '%s/sent'
       expect(out:find("/sub/f%.txt:2:")).to.exist()
       expect(read(d .. "/log")).to.equal("")
       env.LVI_WID = "w1"                                   -- now there is a view
-      run(env, ("cd '%s' && %s"):format(r, GC))
+      run(env, ("cd '%s' && %s --focus --jump"):format(r, GC))
       local log = read(d .. "/log")
       expect(log:find("\npos 2 1 byte jump\n")).to.exist()
       expect(log:find("e %-%-")).to_not.exist()   -- absolute entry IS the buffer: no :e
       cleanup(d); cleanup(r)
+    end)
+
+    -- --focus and --jump are SEPARATE and both opt-in: a flag named for one
+    -- thing must not do two, and a hook has to be able to refresh the list
+    -- while touching neither. All four combinations mean something.
+    it("lvi-gitchanges keeps --focus and --jump independent", function()
+      local r = gitrepo()
+      local function attempt(flags)
+        local d = stub({ path = r .. "/sub/f.txt\n" })
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+              LVI_FILE = r .. "/sub/f.txt", LVI_LINE = "1", LVI_COL = "1",
+              PATH = pwd .. "/contrib:" .. os.getenv("PATH") },
+          ("cd '%s' && %s %s"):format(r, GC, flags))
+        local log = read(d .. "/log")
+        local res = { painted = log:find("gutter gitchanges") ~= nil,
+                      jumped  = log:find("pos ") ~= nil,
+                      focused = read(d .. "/sock.focus") ~= "" }
+        cleanup(d)
+        return res
+      end
+      local bare = attempt("")
+      expect(bare.painted).to.be.truthy()          -- the hook form still paints
+      expect(bare.jumped).to_not.be.truthy()
+      expect(bare.focused).to_not.be.truthy()
+      local f = attempt("--focus")
+      expect(f.focused).to.be.truthy()
+      expect(f.jumped).to_not.be.truthy()          -- focus alone never moves you
+      local j = attempt("--jump")
+      expect(j.jumped).to.be.truthy()
+      expect(j.focused).to_not.be.truthy()         -- jump alone never steals n/N
+      local both = attempt("--focus --jump")
+      expect(both.focused).to.be.truthy()
+      expect(both.jumped).to.be.truthy()
+      cleanup(r)
     end)
 
     -- lvi-ftype's two entry points: the name (a commit message classifies on

@@ -43,6 +43,34 @@ words — so `LVI_PICKER='fzf --height 10'` in your rc reaches all of them. Rows
 are built so any of them work: the column a tool reads back sits at the front of
 the line, never behind an fzf-only `--with-nth`.
 
+**`--focus` and `--jump` are separate flags, and both are opt-in.** A standing
+rule for every producer that takes them. `--focus` aims `n`/`N` at the list.
+`--jump` moves the cursor onto an entry. Neither implies the other — a flag named
+for one thing doing two is how a vocabulary rots — so all four combinations mean
+something, and a bare run only puts the entries, paints, and sets the counter.
+
+That last part is what makes a producer hookable at all. Forgetting a flag on a
+key costs you a jump; a hook that focused would yank `n`/`N` away from your
+search and move the cursor on every save. So the invocation that fires
+unattended, hundreds of times a day, is the safe one, and the rc says out loud
+when it wants more. The rc lines in the tool sections below are prescriptive —
+they carry the combination you actually want, rather than the minimum that runs:
+
+```
+on write lvi-gitchanges                            " keep the margin current
+map \gg :bg lvi-gitchanges --focus --jump<CR>       " walk the hunks
+map \e  :bg lvi-lint --focus --jump<CR>             " lint, then go to a finding
+```
+
+A producer reached *only* by a keypress has nothing to gate and takes no such
+flags: `lvi-search` and `lvi-lsp` focus and land as one gesture, because that is
+the gesture. The flags exist where a hook can call the same script.
+
+Producers that refresh also seed from the cursor (`put --at-cursor`), so a re-run
+mid-walk keeps your place rather than resetting the index to the top — and it is
+what makes `--jump` land on the next entry past the cursor rather than always the
+first.
+
 **Three spawn disciplines** — the reason the bindings differ:
 
 - `:silent !CMD` hands over the terminal (drops to and back from the alt screen).
@@ -260,14 +288,50 @@ since only the editor has the line's bytes to convert with.
 
 A second declaration, `--paint=`, says what the mark *looks* like. A list is
 either something you read or something you see, and only the producer knows
-which. The default is a **sign** — the entry's first cell, a mark in the left
-margin scanned down the edge of the screen. That is right for a linter, whose
-lines you read, and wrong for a search, where the match is what you are looking
-at, so `--paint=extent` lights each entry's own range instead and `--paint=cur`
-lights only the one you are standing on. An extent needs byte columns: `:hl`
-takes byte ranges and lvi-list cannot convert, since a col-bearing entry's text
-is a message rather than the line. A char or display list signs rather than
-mispaint. The `lvi-list` header lists who reads a column and who ignores it.
+which. The default is `gutter` — a glyph in the left-margin column named after
+the list, scanned down the edge of the screen. That is right for a linter, whose
+lines you read: lighting the offending token would bury the very text you are
+scanning. It is wrong for a search, where the match *is* what you are looking at,
+so `--paint=extent` lights each entry's own range in place and `--paint=cur`
+lights only the one you are standing on.
+
+A margin column costs a screen column, so it needs turning on: `set
+gutter=number,lint,todo`, and a column no rc line names draws nothing. In
+exchange, a line that is both a lint hit and a todo shows both, each in its own
+column — one cell per list rather than one cell shared. It also works where an
+extent cannot: an extent needs byte columns, since `:hl` takes byte ranges and
+lvi-list cannot convert (a col-bearing entry's text is a message rather than the
+line), so a char or display list marks the margin instead of mispainting. The
+`lvi-list` header lists who reads a column and who ignores it.
+
+`lvi-list policy NAME POLICY` is the user's say — `put` leaves a stored policy
+alone unless the run named one — so one rc line changes how `lvi-lint` or
+`lvi-gitchanges` paints without editing either.
+
+**The glyph is the producer's, per line.** `lvi-list marks NAME` takes a second
+stream — `FILE:LINE<TAB>GLYPH[<TAB>GROUP]` — stored beside the entries and
+replayed on every repaint. `lvi-list` never learns what a glyph *means*, which is
+the point: `lvi-lint` sends `E`/`W`, `lvi-gitchanges` sends `+`/`-`/`~`, and no
+table inside `lvi-list` could hold both without growing with every producer that
+arrives. Each mark also names its own `hi` group, so the rc themes the producer's
+vocabulary (`LintError`, `GitAdd`) rather than a list. A producer that sends no
+marks gets the single glyph its policy names.
+
+Keyed by line, not by entry, and that buys the interesting case: one git hunk
+carries `+` on the lines that were added and `~` on the ones that replaced
+something — gitgutter's rendering, out of a plain `git diff`. One mark per line,
+so a line bearing both an error and a warning is the *producer's* call to
+resolve; `lvi-lint` folds it to the more severe. Entries stay 1:1 with findings
+either way, so `n` still steps both and shows both messages. A mark is a per-line
+summary of a list, not a rendering of it.
+
+Painting there is also the only way to draw a **multi-line** extent. An entry
+spelled as a GNU line range — `f.c:4-9: text` — marks every line it covers,
+which is a git hunk as a bar down the margin rather than a mark on its first
+line. `:hl` can't express that: one range covers one line, which is why
+`lvi-list` read the range's end line and threw it away until there was a margin
+to draw it in. `lvi-gitchanges` now emits hunks that way, and nothing is asked
+of a producer beyond the spelling GNU already defines.
 
 lvi knows nothing about lists: `lvi-list` owns them and drives the view over
 the socket, jumping the cursor, painting the `:hl` overlay, and setting a
@@ -393,11 +457,16 @@ want the built-in palette, your own `hi match1`… lines.
 
 The second `lvi-list` producer, and a one-line proof that "any tool that speaks
 `file:line:text` is a quickfix": it turns `git diff` into a `gitchanges` list —
-one entry per hunk, each carrying that hunk's own diff as its body — and jumps to
-the first, so `n`/`N` walk your uncommitted changes and `lvi-list preview` shows
-you the diff behind the one you're on. Unlike `lvi-search` it reads the file on
-**disk** (or the index), not the live buffer, so it shows changes since your last
-`:w` / `git add`.
+one entry per hunk, each carrying that hunk's own diff as its body — so `n`/`N`
+walk your uncommitted changes and `lvi-list preview` shows you the diff behind the
+one you're on. Unlike `lvi-search` it reads the file on **disk** (or the index),
+not the live buffer, so it shows changes since your last `:w` / `git add`.
+
+`--focus` aims `n`/`N` at the hunks and `--jump` lands you on one; bare, it only
+puts the entries and paints, which is what makes it usable from `on write` (see
+the flag rule above). Painting into a gutter column gives you `+`/`-`/`~`
+per line rather than one mark per hunk — gitgutter's rendering, out of the same
+`git diff`.
 
 Three flags answer the three questions you have while building a commit, and
 they're git's own three diffs:
@@ -716,7 +785,8 @@ and columns in **UTF-16 code units**; lvi counts lines from 1 and columns in
 bytes. Both conversions here walk the actual bytes of the line in question, so
 they are exact rather than only right on ASCII: a hit on a line with multibyte
 text before it still lands on its symbol, and the entries carry byte columns,
-which is what lets a list paint the extent instead of degrading to a sign.
+which is what lets a list light the extent instead of falling back to a margin
+mark.
 
 It is written in LuaJIT — lvi's own runtime, so no new dependency — with two
 FIFOs carrying JSON-RPC and a small JSON reader inline. `$LVI_LSP_DEBUG` names a

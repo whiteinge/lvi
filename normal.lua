@@ -16,6 +16,7 @@
 local ex = require("ex")
 local disp = require("disp")
 local fold = require("fold")
+local view = require("view")
 
 local M = {}
 
@@ -107,11 +108,6 @@ local function first_nonblank(s)
   return (s:find("%S")) or 1
 end
 
--- Are folds in play at all? `zi` (nofoldenable) leaves ed.folds intact but
--- makes every line visible, so every fold path below -- stepping, clamping,
--- revealing -- hangs off this one predicate.
-local function has_folds(ed) return ed.opts.foldenable and ed.folds and ed.folds[1] ~= nil end
-
 -- Clamp the cursor to the buffer: the ONE cursor-bounds rule. Exported because
 -- the driver's refresh() applies the same invariant after socket-driven motion
 -- -- a single definition, so the insert-mode EOL+1 special case cannot drift.
@@ -122,7 +118,7 @@ function M.clamp(ed)
   -- fold's (visible) head. This is the one place that invariant lives, so every
   -- motion that lands in a fold -- G, marks, gg, a mistyped count -- collapses
   -- onto the fold line, and render's crow can always be found on a visible row.
-  if has_folds(ed) and fold.hidden(ed.folds, ed.cy) then
+  if view.hasfolds(ed) and fold.hidden(ed.folds, ed.cy) then
     ed.cy = fold.innermost_closed(ed.folds, ed.cy).s
   end
   local s = line(ed, ed.cy)
@@ -438,7 +434,7 @@ local function insert_mode(ed, ai)
   ed.mode = "insert"
   ed.message = "-- INSERT --"
   ed.ai_text = ai or ""
-  if has_folds(ed) then fold.reveal(ed.folds, ed.cy) end
+  if view.hasfolds(ed) then fold.reveal(ed.folds, ed.cy) end
   clamp(ed)
   local sy, sx = ed.cy, ed.cx
   local fresh = true                                 -- nothing typed yet (NUL's window)
@@ -507,7 +503,7 @@ local function replace_mode(ed)
   ed.changed = true
   ed.mode = "insert"
   ed.message = "-- REPLACE --"
-  if has_folds(ed) then fold.reveal(ed.folds, ed.cy) end   -- same reveal as insert_mode
+  if view.hasfolds(ed) then fold.reveal(ed.folds, ed.cy) end   -- same reveal as insert_mode
   clamp(ed)
   while true do
     local k = getkey(ed)
@@ -968,63 +964,11 @@ local function match_bracket(ed)
 end
 
 -- ---- screen geometry (shared by H/M/L and the scroll commands) --------------
-local function textrows(ed) return ed.rows - 1 end
-
--- Fold-aware buffer-line stepping. When folds are present these skip closed-fold
--- interiors (a closed fold is one screen row at its head); with no folds they
--- collapse to plain l+/-1, so the fold-free fast paths are unchanged. These are
--- the single point where this module bends the buffer-line <-> screen-row
--- mapping away from affine -- the same bend wrap already made (one line -> many
--- rows); folding is its inverse (many lines -> one row).
-local function nextv(ed, l)
-  if has_folds(ed) then return fold.next_vline(ed.folds, l, ed.buf:nlines()) end
-  return (l < ed.buf:nlines()) and l + 1 or nil
-end
-local function prevv(ed, l)
-  if has_folds(ed) then return fold.prev_vline(ed.folds, l, ed.buf:nlines()) end
-  return (l > 1) and l - 1 or nil
-end
--- Screen rows a buffer line occupies: 1 for a closed-fold head (its summary),
--- else its wrapped segment count.
-local function segs_at(ed, l, W, ts)
-  if has_folds(ed) and fold.closed_head(ed.folds, l) then return 1 end
-  return disp.nsegs(line(ed, l), W, ts, ed.opts.linebreak)
-end
-
--- Move a screen position (line l, sub-row sub) by `rows` screen rows (negative =
--- up), honoring wrap AND folds, clamped to the buffer. In nowrap each visible
--- line is one row; a closed fold collapses its interior to a single head row.
-local function advance_rows(ed, l, sub, rows)
-  local N = ed.buf:nlines()
-  if not ed.opts.wrap then
-    if not has_folds(ed) then return math.max(1, math.min(l + rows, N)), 0 end
-    if rows >= 0 then
-      for _ = 1, rows do local nl = nextv(ed, l); if nl then l = nl else break end end
-    else
-      for _ = 1, -rows do local pl = prevv(ed, l); if pl then l = pl else break end end
-    end
-    return l, 0
-  end
-  local W, ts = ed.cols, ed.opts.tabstop
-  if rows > 0 then
-    for _ = 1, rows do
-      if sub + 1 < segs_at(ed, l, W, ts) then sub = sub + 1
-      else local nl = nextv(ed, l); if nl then l, sub = nl, 0 else break end end
-    end
-  else
-    for _ = 1, -rows do
-      if sub > 0 then sub = sub - 1
-      else local pl = prevv(ed, l); if pl then l, sub = pl, segs_at(ed, pl, W, ts) - 1 else break end end
-    end
-  end
-  return l, sub
-end
-
 -- The bottommost buffer line with a row on screen. Walk textrows-1 rows down
 -- from the top; in wrap a single line spans several rows, so this is well below
 -- top+textrows-1. (nowrap collapses to exactly top+textrows-1, clamped.)
 local function visible_bottom(ed)
-  return (advance_rows(ed, ed.top, ed.topsub, textrows(ed) - 1))
+  return (view.advance(ed, ed.top, ed.topsub, view.textrows(ed) - 1))
 end
 
 -- The gg/gj/gk body, split out so the standalone `g` command (which must peek
@@ -1051,7 +995,7 @@ local function g_motion_move(ed, k2, count)
   -- offset but never to reduce it: a short row that clamp truncated reads back the
   -- column the truncation took, while a full row past the first keeps the cursor's
   -- own offset instead of drifting left one row per keypress.
-  local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
+  local W, ts, lb = view.textw(ed), ed.opts.tabstop, ed.opts.linebreak
   local N, l = ed.buf:nlines(), ed.cy
   local cur = line(ed, l)
   local sub, ccol = disp.locate(cur, W, ts, ed.cx, lb)
@@ -1152,15 +1096,15 @@ local motions = {
   -- column notes above. As operator targets they are linewise, so the column
   -- they return is discarded and this costs the operator path nothing.
   [b("j")] = { kind = "line", move = function(ed, n)
-    if not has_folds(ed) then local t = ed.cy + (n or 1); return t, want_byte(ed, t) end
+    if not view.hasfolds(ed) then local t = ed.cy + (n or 1); return t, want_byte(ed, t) end
     local l = ed.cy                          -- step over closed folds (one row each)
-    for _ = 1, (n or 1) do local nl = nextv(ed, l); if nl then l = nl else break end end
+    for _ = 1, (n or 1) do local nl = view.nextv(ed, l); if nl then l = nl else break end end
     return l, want_byte(ed, l)
   end },
   [b("k")] = { kind = "line", move = function(ed, n)
-    if not has_folds(ed) then local t = ed.cy - (n or 1); return t, want_byte(ed, t) end
+    if not view.hasfolds(ed) then local t = ed.cy - (n or 1); return t, want_byte(ed, t) end
     local l = ed.cy
-    for _ = 1, (n or 1) do local pl = prevv(ed, l); if pl then l = pl else break end end
+    for _ = 1, (n or 1) do local pl = view.prevv(ed, l); if pl then l = pl else break end end
     return l, want_byte(ed, l)
   end },
   [b("G")] = { kind = "line", jump = true, move = function(ed, n)
@@ -1346,40 +1290,38 @@ end
 
 -- Screen rows from the top of the window down to the cursor (0 = cursor on the
 -- top row). Assumes the cursor is at or below the top (true whenever we scroll,
--- since the cursor is on-screen beforehand).
+-- since the cursor is on-screen beforehand) -- so the walk is bounded by the
+-- window and answers 0 if that assumption ever breaks, rather than walking to
+-- the end of the buffer looking for a cursor that is behind it.
 local function cursor_row_offset(ed)
-  if not ed.opts.wrap then
-    if not has_folds(ed) then return ed.cy - ed.top end
-    local n, l = 0, ed.top                    -- count only visible lines between
-    while l and l < ed.cy do n = n + 1; l = nextv(ed, l) end
-    return n
-  end
-  local W, ts = ed.cols, ed.opts.tabstop
+  -- No wrap and no folds is the affine case: one row per line, so no walk.
+  if not ed.opts.wrap and not view.hasfolds(ed) then return ed.cy - ed.top end
+  local W, ts = view.textw(ed), ed.opts.tabstop
   -- A closed-fold head is a single row: its cursor sub-row is 0, not the wrapped
-  -- position of ed.cx in the underlying (hidden-bodied) line.
-  local csub = fold.closed_head and has_folds(ed) and fold.closed_head(ed.folds, ed.cy)
-      and 0 or select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx, ed.opts.linebreak))
-  local l, sub, n = ed.top, ed.topsub, 0
-  while l < ed.cy or (l == ed.cy and sub < csub) do
-    if sub + 1 < segs_at(ed, l, W, ts) then sub = sub + 1 else l, sub = (nextv(ed, l) or (l + 1)), 0 end
-    n = n + 1
+  -- position of ed.cx in the underlying (hidden-bodied) line. In nowrap every
+  -- row is a whole line, so there is no sub-row to find at all.
+  local csub = 0
+  if ed.opts.wrap then
+    csub = (view.hasfolds(ed) and fold.closed_head(ed.folds, ed.cy)) and 0
+        or select(1, disp.locate(line(ed, ed.cy), W, ts, ed.cx, ed.opts.linebreak))
   end
-  return n
+  local n, reached = view.rows_to(ed, ed.top, ed.topsub, ed.cy, csub, W, ts, view.textrows(ed))
+  return reached and n or 0
 end
 
 -- Place the cursor `off` screen rows below the (already-updated) top, holding
 -- the visual column.
 local function place_cursor_at_offset(ed, off)
   if not ed.opts.wrap then
-    if has_folds(ed) then
-      ed.cy = (advance_rows(ed, ed.top, 0, off))  -- step visible rows (skip folds)
+    if view.hasfolds(ed) then
+      ed.cy = (view.advance(ed, ed.top, 0, off))  -- step visible rows (skip folds)
     else
       ed.cy = ed.top + off                     -- column (ed.cx) preserved
     end
   else
-    local W, ts, lb = ed.cols, ed.opts.tabstop, ed.opts.linebreak
+    local W, ts, lb = view.textw(ed), ed.opts.tabstop, ed.opts.linebreak
     local _, ccol = disp.locate(line(ed, ed.cy), W, ts, ed.cx, lb)
-    local cl, csub = advance_rows(ed, ed.top, ed.topsub, off)
+    local cl, csub = view.advance(ed, ed.top, ed.topsub, off)
     ed.cy = cl
     ed.cx = disp.byteat(line(ed, cl), W, ts, csub, ccol, lb)
   end
@@ -1390,7 +1332,7 @@ end
 -- same screen row.
 local function scroll_page(ed, rows)
   local off = cursor_row_offset(ed)
-  ed.top, ed.topsub = advance_rows(ed, ed.top, ed.topsub, rows)
+  ed.top, ed.topsub = view.advance(ed, ed.top, ed.topsub, rows)
   place_cursor_at_offset(ed, off)
 end
 
@@ -1398,11 +1340,11 @@ end
 -- line while that line stays on screen; only drag it at the window edge.
 local function scroll_reveal(ed, rows)
   local off = cursor_row_offset(ed)
-  local nt, ns = advance_rows(ed, ed.top, ed.topsub, rows)
+  local nt, ns = view.advance(ed, ed.top, ed.topsub, rows)
   if nt == ed.top and ns == ed.topsub then return end   -- at a buffer edge
   ed.top, ed.topsub = nt, ns
   local noff = off - rows
-  noff = math.max(0, math.min(noff, textrows(ed) - 1))
+  noff = math.max(0, math.min(noff, view.textrows(ed) - 1))
   place_cursor_at_offset(ed, noff)
 end
 
@@ -1745,7 +1687,7 @@ actions = {
     -- the buffer top; in nowrap it collapses to one row per line (top = target -
     -- offset). Leaving the cursor on-screen keeps refresh() from re-scrolling.
     if ed.opts.wrap then
-      ed.top, ed.topsub = advance_rows(ed, target, 0, -offset)
+      ed.top, ed.topsub = view.advance(ed, target, 0, -offset)
     else
       ed.top = math.max(1, target - offset)
       ed.topsub = 0
@@ -1820,10 +1762,10 @@ actions = {
   -- Scrolling. Ctrl-F/B page (count = pages, 2-row overlap like vi); Ctrl-D/U
   -- half-page (count = the scroll size in rows); Ctrl-E/Y reveal one line
   -- (count = rows).
-  [6]  = function(ed, count) scroll_page(ed,  (count or 1) * math.max(1, textrows(ed) - 2)) end, -- Ctrl-F
-  [2]  = function(ed, count) scroll_page(ed, -(count or 1) * math.max(1, textrows(ed) - 2)) end, -- Ctrl-B
-  [4]  = function(ed, count) scroll_page(ed,  count or math.max(1, math.floor(textrows(ed) / 2))) end, -- Ctrl-D
-  [21] = function(ed, count) scroll_page(ed, -(count or math.max(1, math.floor(textrows(ed) / 2)))) end, -- Ctrl-U
+  [6]  = function(ed, count) scroll_page(ed,  (count or 1) * math.max(1, view.textrows(ed) - 2)) end, -- Ctrl-F
+  [2]  = function(ed, count) scroll_page(ed, -(count or 1) * math.max(1, view.textrows(ed) - 2)) end, -- Ctrl-B
+  [4]  = function(ed, count) scroll_page(ed,  count or math.max(1, math.floor(view.textrows(ed) / 2))) end, -- Ctrl-D
+  [21] = function(ed, count) scroll_page(ed, -(count or math.max(1, math.floor(view.textrows(ed) / 2)))) end, -- Ctrl-U
   [5]  = function(ed, count) scroll_reveal(ed,  (count or 1)) end,   -- Ctrl-E
   [25] = function(ed, count) scroll_reveal(ed, -(count or 1)) end,   -- Ctrl-Y
   [15] = function(ed) jump_back(ed) end,   -- Ctrl-O: older position in the jumplist

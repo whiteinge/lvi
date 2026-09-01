@@ -59,11 +59,6 @@ Linux, macOS, BSD, and WSL.
   window manager. The socket allows cross-view coordination via scripts
   (see [`contrib/lvi-diff`](contrib/)). (Multiple buffers *within* a view
   are supported; on-screen splits are not.)
-- **No gutter.** No line-number column, sign column, or fold margin: the
-  renderer draws buffer text from the left edge, so every screen column is real
-  content and the highlight overlay stays a recolor, not a layout. `:set number`
-  is the POSIX-vi feature this drops; `Ctrl-G` (or `:.=`) reports the current
-  line and the ruler carries line:column instead.
 - **UNIX only.** POSIX environment and standard CLI tools assumed; Windows
   outside WSL is out of scope.
 
@@ -107,7 +102,9 @@ the socket, with **anything lvi doesn't implement delegated to the system `ex`**
 (so `:s`, `:g`, `:m`, and the full address grammar just work). A **config file**
 that's simply a list of those ex commands. A **styled highlight overlay** (`:hl`
 + `:hi`) and **change hooks** (`:on change …`) — the two primitives that let
-external tools paint syntax, search, and quickfix into the view.
+external tools paint syntax, search, and quickfix into the view. And a **left
+margin** of named columns (`set gutter=number,git,lint`) — line numbers, plus a
+column per tool to mark lines in, off by default.
 
 Turn those on and you get syntax highlighting, live-buffer search, quickfix
 lists, linting, formatting, toggleable spell check, fuzzy file-open,
@@ -162,6 +159,29 @@ divergent struct (`sockaddr_un`) branching on `ffi.os`.
 entire unsafe surface is one small, auditable file behind a plain interface, the
 choice of LuaJIT stays **reversible** — swap `sys.lua` for a PUC-Lua + `luaposix`
 version and nothing else notices.
+
+### The left margin is a list of named columns
+
+`set gutter=number,git,lint` names the columns of the left margin, in order.
+Two names are the editor's own — `number` and `relativenumber`, whose content is
+a function of the row and the cursor. Every other name is a one-cell column that
+a tool fills by pushing marks (`:gutter git 4:+ 9:-`), replacing the column on
+every push exactly as `:hl` replaces a highlight group, and colored out of the
+same `:hi` table.
+
+The split is the point: **placement is the config's, content is the tool's.**
+There is deliberately no priority number, the thing that makes vim's sign column
+awkward — vim needs one because every producer shares one column, and here a
+linter and a git diff each get their own. Marking a line no longer means
+recoloring the text on it, so the marks and the syntax highlighting stop
+competing for the same cells.
+
+*Implication:* the renderer's rows no longer start at screen column 1, and that
+offset is confined to two functions (`gutter.width`, `gutter.textw`). Everything
+measured in screen columns — wrapping, horizontal scroll, the paging commands —
+measures against the text width instead. `test/gutter_test.lua` pins that down as
+a property: a margin *g* columns wide must behave exactly like a terminal *g*
+columns narrower.
 
 ### One command dispatcher, three entry points
 

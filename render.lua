@@ -16,6 +16,7 @@
 local term = require("term")
 local disp = require("disp")
 local fold = require("fold")
+local gutter = require("gutter")
 
 local M = {}
 
@@ -97,7 +98,13 @@ end
 
 function M.frame(ed)
   local rows, cols = ed.rows, ed.cols
-  local W = cols
+  -- The spike's one structural change: buffer text starts at screen column
+  -- gw+1, so the width every wrapped/sliced row is measured against is textw,
+  -- not cols. Rows that are not a buffer line's FIRST screen row (wrapped
+  -- continuations, the phantom edge-wrap row, `~` fillers) pass nil and get a
+  -- blank gutter, so the eye reads one number per buffer line.
+  local gw, gns = gutter.width(ed), gutter.names(ed)   -- hoisted: once per frame
+  local W = cols - gw
   local textrows = rows - 1
   local buf = ed.buf
   local ts = ed.opts.tabstop
@@ -121,8 +128,9 @@ function M.frame(ed)
     while sr < textrows and l ~= nil and l <= nl do
       local head = hasfolds and fold.closed_head(folds, l) or nil
       if head then
-        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. fold_summary(head, buf, ts, W, foldsgr)
-        if l == ed.cy then crow, ccol = sr + 1, 1 end
+        out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol
+            .. gutter.cell(ed, l, ts, gns, gw) .. fold_summary(head, buf, ts, W, foldsgr)
+        if l == ed.cy then crow, ccol = sr + 1, gw + 1 end
         sr, skip = sr + 1, 0
         if hasfolds then l = fold.next_vline(folds, l, nl) else l = l + 1 end
       else
@@ -137,8 +145,9 @@ function M.frame(ed)
           local b, w = disp.seg_end(orig, a, W, ts, lb)
           if si >= skip then
             if sr >= textrows then break end
-            out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. disp.slice(orig, ts, sc, w, ivs)
-            if l == ed.cy and si == ccsub then crow, ccol = sr + 1, cccol + 1 end
+            out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol
+                .. gutter.cell(ed, (si == 0) and l or nil, ts, gns, gw) .. disp.slice(orig, ts, sc, w, ivs)
+            if l == ed.cy and si == ccsub then crow, ccol = sr + 1, gw + cccol + 1 end
             sr = sr + 1
           end
           a, sc, si = b, sc + w, si + 1
@@ -148,16 +157,19 @@ function M.frame(ed)
         -- count, cccol == 0). The segment loop never drew that row; draw it empty
         -- and land the cursor there, matching refresh's phantom-aware scroll.
         if l == ed.cy and ccsub >= si and si >= skip and sr < textrows then
-          out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol
-          crow, ccol = sr + 1, cccol + 1
+          out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. gutter.cell(ed, nil, ts, gns, gw)
+          crow, ccol = sr + 1, gw + cccol + 1
           sr = sr + 1
         end
         skip = 0
         if hasfolds then l = fold.next_vline(folds, l, nl) else l = l + 1 end
       end
     end
-    while sr < textrows do out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. "~"; sr = sr + 1 end
-    crow, ccol = crow or 1, ccol or 1
+    while sr < textrows do
+      out[#out + 1] = term.move(sr + 1, 1) .. term.clr_eol .. gutter.cell(ed, nil, ts, gns, gw) .. "~"
+      sr = sr + 1
+    end
+    crow, ccol = crow or 1, ccol or (gw + 1)
   else
     -- One visible buffer line per screen row; slice by the horizontal offset
     -- leftcol. With folds present, walk fold.next_vline instead of top+i (which
@@ -166,8 +178,9 @@ function M.frame(ed)
     local L = ed.top
     for i = 0, textrows - 1 do
       out[#out + 1] = term.move(i + 1, 1) .. term.clr_eol
-      if L == nil or L > nl then out[#out + 1] = "~"
+      if L == nil or L > nl then out[#out + 1] = gutter.cell(ed, nil, ts, gns, gw) .. "~"
       else
+        out[#out + 1] = gutter.cell(ed, L, ts, gns, gw)
         local head = hasfolds and fold.closed_head(folds, L) or nil
         if head then out[#out + 1] = fold_summary(head, buf, ts, W, foldsgr)
         else
@@ -179,8 +192,8 @@ function M.frame(ed)
       end
     end
     crow = crow or 1
-    if hasfolds and fold.closed_head(folds, ed.cy) then ccol = 1   -- cursor on a fold row: col 1
-    else ccol = disp.dispcol(buf:line(ed.cy) or "", ts, ed.cx) - left + 1 end
+    if hasfolds and fold.closed_head(folds, ed.cy) then ccol = gw + 1  -- cursor on a fold row: first text col
+    else ccol = gw + disp.dispcol(buf:line(ed.cy) or "", ts, ed.cx) - left + 1 end
   end
 
   -- Bottom row: command line while typing ':', otherwise the status line.

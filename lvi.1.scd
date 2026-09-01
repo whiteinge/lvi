@@ -680,9 +680,38 @@ spaces and tabs included.
 
 	*wrap*, *nowrap*
 		Soft-wrap long lines onto the next screen row, or truncate them at the
-		right edge. Either way *lvi* draws buffer text from the left edge with
-		no gutter: no line-number, sign, or fold column. *Ctrl-G* (or *:.=*)
-		reports the current line, and the ruler carries line:column.
+		right edge.
+	*gutter*=_list_
+		The left margin's columns, innermost last: a comma-separated list of
+		names, empty (the default) for no margin at all. Two names are the
+		editor's own. *number* draws the absolute line number;
+		*relativenumber* (*rnu*) draws the distance from the cursor, with the
+		cursor's own line showing its absolute number. Either one widens with
+		the buffer's line count, and they are two spellings of one column, not
+		two columns. Every other name is a one-cell column a tool fills with
+		the *gutter* command. Nothing validates a name: a column no producer
+		writes to draws blank.
+
+		The margin costs text width, so it is off by default, and everything
+		lvi measures in screen columns (wrapping, horizontal scroll, *Ctrl-F*
+		and friends) measures against what is left. Colors come from *hi*:
+		*LineNr* and *CursorLineNr* for the numbers, the column's own name for
+		a tool column. Selecting text with the mouse picks the margin up with
+		it, so *set gutter=* before copying, as in vi's cousins.
+	*number*, *nonumber* (*nu*, *nonu*), *relativenumber*, *norelativenumber* (*rnu*, *nornu*)
+		vi's line-number option, and vim's relative spelling of it. Both act on
+		the *gutter* list above rather than carrying a flag of their own, so
+		*set nu* and *set gutter=* can never tell different stories: *set nu*
+		adds the numeric column innermost, *set nonumber* removes it whichever
+		spelling it wears, and *set rnu* swaps the spelling without moving the
+		margin. lvi has ONE numeric column, so *relativenumber* is the hybrid
+		vim gets from setting both: distances, with the cursor's own line
+		showing its absolute number.
+
+		POSIX's *number* also numbers the output of the print commands. lvi's
+		does not, deliberately: *p* here is a socket API (*:%p* hands a script
+		the buffer's raw text), so a line-number prefix would corrupt every
+		reader of it. The margin is where lvi puts the numbers.
 	*linebreak*, *nolinebreak* (*lbr*, *nolbr*)
 		When wrapping, break at the last whitespace that fits instead of
 		mid-word; a single word wider than the screen still breaks mid-word.
@@ -755,6 +784,15 @@ spaces and tabs included.
 
 *nohl*
 	Clear all highlight ranges (styles set by *hi* persist).
+
+*gutter* _column_ [_L_:_CHAR_[:_group_] ...]
+	Put marks in a left-margin _column_, replacing whatever it held; no marks
+	clears it. _CHAR_ is the glyph to draw on line _L_, and the optional
+	_group_ colors that one mark (default: the column's name), so a column can
+	carry a green *+* and a red *-* at once. The column shows on screen only
+	when *set gutter=* named it -- the tool owns what a column says, the rc
+	owns whether and where it sits. Marks are transient view state, like *hl*
+	ranges.
 
 *fold*
 	With an address range, create a closed fold over it (*:3,6fold*). With no

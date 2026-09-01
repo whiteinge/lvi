@@ -1,5 +1,5 @@
 #!/bin/sh
-# lvi-lint [-w auto|WID] [--focus] -- lint the LIVE buffer into an `lvi-list`.
+# lvi-lint [-w auto|WID] [--focus] [--jump] -- lint the LIVE buffer into an `lvi-list`.
 #
 # Run a linter over the current buffer (unsaved edits included), normalize its
 # complaints to `file:line[:col]: text` entries, and hand them to `lvi-list put
@@ -12,14 +12,25 @@
 #   lvi-lint                    lint the current buffer (run from a map or hook)
 #   lvi-lint -w auto|WID        target a specific view instead of $LVI_WID
 #   lvi-lint --focus            lint now and aim n/N at the results
+#   lvi-lint --focus --jump     ...and go to the first finding past the cursor
+#
+# FLAGS. --focus only aims n/N at the `lint` list; --jump only moves the cursor
+# onto a finding. Neither implies the other -- that separation is the standing
+# rule across contrib, because a flag named for one thing doing two is how a
+# vocabulary rots -- and both are opt-in, so the bare form a hook uses refreshes
+# the list and the margin while touching nothing you were doing. On a key you
+# usually want both, which is what the rc snippet below binds.
 #
 # THE ADAPTER CONTRACT (the lvi-hl-<name> shape): an executable
 # `lvi-lint-<name>` beside this script gets the buffer text on STDIN and the
 # buffer's real filename as $1, and emits `FILE:LINE[:COL]: text` on stdout.
 #   * FILE is $1 VERBATIM (not `-`, not a temp name), so entries match what
 #     lvi calls the buffer and jump/paint work in place (the lvi-search trick).
-#   * Severity folds into the text as an `E: `/`W: ` prefix (one list, one
-#     style; splitting severities into separate lists is a possible follow-up).
+#   * Severity folds into the text as an `E: `/`W: ` prefix. One list, so n
+#     steps every finding -- but the prefix is also what picks the MARGIN GLYPH
+#     (`E` vs `W`, groups LintError/LintWarn) when the lint list paints into a
+#     gutter column, resolved to the most severe per line. See MARGIN GLYPHS
+#     below. A backend that emits neither letter just gets no marks.
 #   * COL, if the tool reports one, is passed through as the tool spells it.
 #     Tools disagree about what a column counts -- bytes, characters, or display
 #     cells with tabs expanded (what the GNU Coding Standards prescribe and gcc
@@ -43,7 +54,7 @@
 # Bindings (rc):
 #     on write lvi-lint                    " lint on every save
 #     " on change lvi-lint                 " ...or as you type (it reads the live buffer)
-#     map \e :bg lvi-lint --focus<CR>      " lint now and aim n/N at the results
+#     map \e :bg lvi-lint --focus --jump<CR>   " lint now, aim n/N, go to a finding
 #     map ]e :bg lvi-list next lint<CR>    " or step it with pinned keys
 #     map [e :bg lvi-list prev lint<CR>
 #     hi lint bg=52 pri=10                 " un-themed = invisible, so theme it
@@ -97,13 +108,14 @@ fail() {
   exit 1
 }
 
-worker= want_wid= focus=
+worker= want_wid= focus= jump=
 while [ $# -gt 0 ]; do
   case $1 in
     --worker) worker=1; shift ;;
     -w)       want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
     --focus)  focus=1; shift ;;
-    *)        die "unknown argument '$1' (usage: lvi-lint [-w auto|WID] [--focus])" ;;
+    --jump)   jump=1; shift ;;
+    *)        die "unknown argument '$1' (usage: lvi-lint [-w auto|WID] [--focus] [--jump])" ;;
   esac
 done
 target=${want_wid:-${LVI_WID:-auto}}
@@ -112,7 +124,7 @@ wflag=; [ -n "$want_wid" ] && wflag="-w $want_wid"
 # Detach the buffer-reading half; return at once so lvi's loop resumes and can
 # service the worker's socket traffic.
 if [ -z "$worker" ]; then
-  ( "$0" --worker $wflag ${focus:+--focus} >"${LVI_LINT_DEBUG:-/dev/null}" 2>&1 & )
+  ( "$0" --worker $wflag ${focus:+--focus} ${jump:+--jump} >"${LVI_LINT_DEBUG:-/dev/null}" 2>&1 & )
   exit 0
 fi
 
@@ -155,11 +167,15 @@ if [ "$nbytes" -gt "$MAXBYTES" ]; then
   fail "${nbytes}B over cap ${MAXBYTES}B (raise LVI_LINT_MAXBYTES)"
 fi
 
-# Adapter normalizes; put paints, counts, and (with --focus) aims n/N.
+# Adapter normalizes; put paints and counts. --focus aims n/N at the findings and
+# --jump moves the cursor onto one; they are SEPARATE flags and both opt-in, the
+# standing rule for every contrib producer -- a hook must be able to refresh the
+# list without touching either (see FLAGS below).
 # --at-cursor: an `on write` refresh mid-walk keeps your place instead of
-# resetting the step index. An adapter with nothing to say yields an empty
-# list -- the clean [0/0]. Captured first, so an adapter that FAILS (its
-# missing-linter guard) is an error, not an ingest of empty input.
+# resetting the step index, and it is also what makes --jump land on the next
+# finding past the cursor rather than always the first. An adapter with nothing
+# to say yields an empty list -- the clean [0/0]. Captured first, so an adapter
+# that FAILS (its missing-linter guard) is an error, not an ingest of empty input.
 entries=$(printf '%s\n' "$text" | "$adapter" "$fname") ||
   fail "backend '$backend' failed (is the linter installed?)"
 cols=${LVI_LINT_COLS:+--cols=$LVI_LINT_COLS}
@@ -168,3 +184,36 @@ if [ -n "$entries" ]; then
 else
   : | lvi-list $wflag put lint --at-cursor ${focus:+--focus} $cols
 fi
+# Named, not a bare `next`: --jump has to work without --focus, and a bare step
+# acts on whatever list is focused -- which may be a search you were walking.
+[ -n "$jump" ] && [ -n "$entries" ] && lvi-list $wflag next lint
+
+# MARGIN GLYPHS. One mark per LINE, so severity has to be resolved here: a line
+# with both an error and a warning is one cell, and only this script knows that E
+# outranks W. The list keeps both findings either way -- n steps both and shows
+# both messages; the mark is a per-line summary. lvi-list stores what it is given
+# and never learns what E means, which is what keeps a vocabulary out of it (git
+# hunks want +/-/~, and no table in lvi-list could hold both).
+#
+# Severity is the message's `E: `/`W: ` prefix, per THE ADAPTER CONTRACT above.
+# Its field index depends on whether the adapter reported a column, the same fork
+# lvi-list's own parser makes. A backend that emits neither letter simply yields
+# no marks, and the list falls back to the single glyph its paint policy names.
+printf '%s\n' "$entries" | awk -F: '
+  /^[^ \t]/ && $2 ~ /^[0-9]/ {
+    ln = $2; sub(/[.].*/, "", ln)                  # GNU also spells it line.col
+    sev = ($3 ~ /^[0-9]+$/) ? $4 : $3              # the col-bearing form shifts it
+    gsub(/^[ \t]+|[ \t]+$/, "", sev)
+    rank = (sev == "E") ? 2 : (sev == "W") ? 1 : 0
+    if (rank == 0) next                            # a letter we do not know: no mark
+    key = $1 ":" ln
+    if (!(key in best) || rank > best[key]) best[key] = rank
+  }
+  END {
+    for (k in best) {
+      g = (best[k] == 2) ? "E" : "W"
+      grp = (best[k] == 2) ? "LintError" : "LintWarn"
+      printf "%s\t%s\t%s\n", k, g, grp
+    }
+  }
+' | lvi-list $wflag marks lint

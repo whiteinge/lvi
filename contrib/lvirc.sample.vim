@@ -31,6 +31,7 @@
 "                     \ho column-limit marks (lvi-hl-col)
 "       \y  yankring  \yy pick      \yp older  \yn newer
 "       \i  invis     \ii toggle    \ip page (exact bytes in less)
+"       \n  numbers   \nn absolute  \nr relative        (the left margin)
 "       \x  execute   \xx run again  \xp pick pane  \xw watch  \xq unwatch
 "       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
 "
@@ -345,25 +346,58 @@ hi refs-cur bg=28 pri=13
 " in two -- what is still to stage, and what is already staged -- which are the
 " questions you have mid-commit. \gr widens to the whole repo, which is what you
 " get by default when you run it from a shell instead.
-map \gg :bg lvi-gitchanges<CR>                 " everything uncommitted + focus
-map \gu :bg lvi-gitchanges --unstaged<CR>      " ...only what is NOT staged yet
-map \gs :bg lvi-gitchanges --staged<CR>        " ...only what IS staged
-map \gr :bg lvi-gitchanges --repo<CR>          " ...the whole repo, not this file
+" on write lvi-gitchanges                      " keep the margin current, hands off
+map \gg :bg lvi-gitchanges --focus --jump<CR>              " walk what is uncommitted
+map \gu :bg lvi-gitchanges --focus --jump --unstaged<CR>   " ...only what is NOT staged
+map \gs :bg lvi-gitchanges --focus --jump --staged<CR>     " ...only what IS staged
+map \gr :bg lvi-gitchanges --focus --jump --repo<CR>       " ...the whole repo, not this file
+" --focus aims n/N at the hunks; --jump moves the cursor onto one. Bare (the hook
+" above) puts the entries, paints and counts. `on write`, not `on change`: the
+" diff is read off disk.
 " Or give the list its own step keys so it never steals focus from search:
 map ]c :bg lvi-list next gitchanges<CR>
 map [c :bg lvi-list prev gitchanges<CR>
-" A group with no style is invisible; lvi-search styles `search` itself, but you
-" can theme any list's group (and its -cur current-entry group), e.g.:
-"   hi gitchanges bg=22 pri=10  " pri lifts the mark above syntax (which sits at 0)
-" Each mode has its own list, so give them distinct colors and the three read
-" apart at a glance:
-"   hi gitunstaged bg=94 pri=10
-"   hi gitstaged   bg=28 pri=10
+" Hunks mark the margin: +/-/~ per line, a change bar down each hunk. The margin
+" section names the `gitchanges` column that draws it (add gitunstaged/gitstaged
+" if you want \gu and \gs marked too).
+hi GitAdd    fg=green                          " added lines
+hi GitChange fg=yellow                         " lines that replaced something
+hi GitDel    fg=red                            " where lines were removed
+hi gitchanges-cur fg=black bg=green            " the hunk you are standing in
+" Those group names are lvi-diff's too, so one theme serves both git tools.
 "
 " Staging hunks (git add -p, side-by-side) is lvi-stagediff -- it stands on
 " lvi-diff and is launched, not a rc default; run it by hand or from a key. It
 " opens its panes in a tmux split and never wants the terminal, so :bg:
 "   map \gp :bg lvi-stagediff<CR>               " "git add -p" the current file
+
+" }}}
+" ---- the left margin --------------------------------------------------- {{{
+
+" `set gutter=` names the margin's columns in order, innermost (next to the
+" text) last; empty, the default, means no margin at all. Two names are the
+" editor's own -- `number` and `relativenumber` -- and every other name is a
+" one-cell column that a tool marks lines in. Nothing validates a name: a column
+" no producer ever writes to just draws blank, so listing one costs a column of
+" width and nothing else.
+"
+" A column is named after the LIST that fills it -- `gitchanges`, not `git` (and
+" `gitunstaged`/`gitstaged` for \gu and \gs). A column no rc line names draws
+" nothing, whatever is pushed to it. Its glyphs are the producer's, per line
+" (lvi-lint sends E and W; lvi-gitchanges sends + - and ~), each naming the `hi`
+" group that themes it.
+set gutter=gitchanges,lint              " the columns the sections below theme
+" set gutter=gitunstaged,gitstaged,gitchanges,lint,number   " ...the full spread
+" set number                            " ...or just vi's own option, on its own
+
+hi LineNr       fg=240                 " the numbers (un-themed = plain)
+hi CursorLineNr fg=yellow bold         " ...and the line you are on
+map \nn :set number!<CR>               " numbers off/on -- off to copy with the mouse
+map \nr :set rnu!<CR>                  " relative off/on (the cursor's line stays absolute)
+
+" `lvi-list policy NAME POLICY` says how a list paints; set it once at startup and
+" the producer's own runs leave it alone. A producer that names its own policy
+" keeps it (search, spell and lsp need `extent`). See the sections below.
 
 " }}}
 " ---- linting ----------------------------------------------------------- {{{
@@ -376,11 +410,14 @@ map [c :bg lvi-list prev gitchanges<CR>
 " glance: [0/0] after a run means clean.
 on write lvi-lint                      " re-lint on every save...
 " on change lvi-lint                   " ...or as you type
-map \e :bg lvi-lint --focus<CR>        " lint now and aim n/N at the findings
+map \e :bg lvi-lint --focus --jump<CR> " lint now, aim n/N, go to a finding
 map ]e :bg lvi-list next lint<CR>      " ...or step them with pinned keys
 map [e :bg lvi-list prev lint<CR>
-hi lint     bg=52 pri=10               " theme the marks (un-themed = invisible)
-hi lint-cur bg=124 pri=11
+" Findings mark the margin, E and W per line (most severe wins), under lvi-lint's
+" own groups; the margin section names the `lint` column that draws them.
+hi LintError fg=red bold
+hi LintWarn  fg=yellow
+hi lint-cur  fg=black bg=red           " the finding n/N is parked on
 
 " }}}
 " ---- spell check ------------------------------------------------------- {{{
