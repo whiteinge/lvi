@@ -1611,6 +1611,35 @@ cat >> '%s/sent'
       cleanup(d); cleanup(r)
     end)
 
+    -- An untracked file has no diff by construction, so the empty answer must
+    -- not be reported as "no changes" -- that would fire on every :w of a file
+    -- you are writing from scratch. Clear the paint, say nothing.
+    it("lvi-gitchanges is silent on an untracked file", function()
+      local r = gitrepo()
+      os.execute(("printf 'new\n' > '%s/fresh.txt'"):format(r))
+      local d = stub({ path = r .. "/fresh.txt\n" })
+      local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock",
+                    LVI_FILE = r .. "/fresh.txt", LVI_LINE = "1", LVI_COL = "1",
+                    PATH = pwd .. "/contrib:" .. os.getenv("PATH") }
+      run(env, ("cd '%s' && %s"):format(r, GC))
+      local log = read(d .. "/log")
+      expect(log:find("status gitchanges\n")).to.exist()    -- stale paint still goes
+      expect(log:find("msg")).to_not.exist()                -- but nothing is announced
+      -- A tracked file with nothing to report still says so.
+      os.execute(("cd '%s' && printf 'clean\n' > clean.txt && git add clean.txt &&"
+                  .. " git commit -qm clean -- clean.txt"):format(r))
+      local d2 = stub({ path = r .. "/clean.txt\n" })
+      env.STUB_DIR = d2; env.LVI_SOCK = d2 .. "/sock"; env.LVI_FILE = r .. "/clean.txt"
+      run(env, ("cd '%s' && %s"):format(r, GC))
+      expect(read(d2 .. "/log"):find("msg gitchanges: no changes")).to.exist()
+      -- Print mode still fails (so `&&` will not open an editor), and says why.
+      local out, ok = run({ LVI_FILE = r .. "/fresh.txt" },
+        ("cd '%s' && %s 2>&1"):format(r, GC))
+      expect(ok).to.equal(false)
+      expect(out:find("untracked")).to.exist()
+      cleanup(d); cleanup(d2); cleanup(r)
+    end)
+
     it("lvi-gitchanges prints without a view and pushes with one", function()
       local r = gitrepo()
       local d = stub({ path = r .. "/sub/f.txt\n" })

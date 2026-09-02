@@ -67,6 +67,15 @@
 # no hunks and so needs no filtering. When a deletion IS dropped, the run says so
 # rather than leaving you to notice the gap.
 #
+# AN UNTRACKED FILE IS A NO-OP, not "no changes". git has no diff for a path it
+# has never seen, so the empty answer means something different than it does for
+# a clean file, and a brand-new file stays untracked for its whole first session
+# -- long enough for `on write` to say "no changes" on every save of a file you
+# are writing from scratch. So when nothing in the scope is tracked, the run
+# clears any stale paint and says nothing (print mode still exits 1, and labels
+# the reason). A file git knows and has just lost -- removed from the index, or
+# gone on the branch you switched to -- is a deletion, and still reports.
+#
 # BODIES: each entry carries its hunk's diff as indented body lines -- vim's
 # multi-line quickfix shape, which lvi-list stores and `lvi-list preview` prints
 # (bind that to a tmux popup; see the lvi-list header). Stepping still echoes only
@@ -246,8 +255,21 @@ hunks=$(printf '%s\n' "$entries" | grep -c '^[^:[:space:]][^:]*:[0-9]')
 # deletion is the only change would be the very gap this is here to close.
 skipped=; [ "$deleted" -gt 0 ] && skipped=" ($deleted deleted file(s) skipped)"
 
+# UNTRACKED SCOPE. git has no diff for a file it has never seen, so an untracked
+# buffer comes back empty for a different reason than a clean one does, and "no
+# changes" is the wrong thing to say about a file whose every line is new. It is
+# also the state a brand-new file sits in for its whole first session, so `on
+# write` would announce it on every :w. The test is that nothing tracked matches
+# the pathspec at all -- `git ls-files` is silent -- and that nothing was skipped
+# either, which is what separates "git does not know this path" from a file git
+# knows and has just lost (removed from the index, or deleted on the branch you
+# switched to): those still have news. Repo scope has no pathspec and is never
+# untracked.
+untracked=
+[ $# -gt 0 ] && [ -z "$skipped" ] && [ -z "$(git ls-files -- "$@" 2>/dev/null)" ] && untracked=1
+
 if [ -z "$push" ]; then
-  [ -n "$entries" ] || { echo "lvi-gitchanges: no $what changes$skipped" >&2; exit 1; }
+  [ -n "$entries" ] || { echo "lvi-gitchanges: no $what changes${untracked:+ (untracked)}$skipped" >&2; exit 1; }
   printf '%s\n' "$entries"
   [ -n "$skipped" ] && echo "lvi-gitchanges:$skipped" >&2
   exit 0
@@ -256,7 +278,10 @@ fi
 if [ -z "$entries" ]; then
   # Clear the paint and the stale counter; the notice itself is a one-shot
   # answer, so an ephemeral :msg, not a status segment that would sit forever.
-  send "hl $name" "hl $name-cur" "status $name" "msg $name: no changes$skipped"
+  # An untracked scope gets the clearing but not the notice: a file that just
+  # stopped being tracked has paint to drop, and nothing worth saying.
+  send "hl $name" "hl $name-cur" "status $name"
+  [ -z "$untracked" ] && send "msg $name: no changes$skipped"
   exit 0
 fi
 
