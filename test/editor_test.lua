@@ -302,6 +302,94 @@ describe("mark/jumplist adjustment across edits (make_splice_hook)", function()
   end)
 end)
 
+-- The `:hl`/`:gutter` overlay rides the same hook, with one deliberate
+-- difference: it drops rather than clamps, since a range on a line whose text
+-- was replaced would paint bytes that never matched. See make_splice_hook.
+describe("overlay adjustment across edits (make_splice_hook)", function()
+  local function ed_painted(text)
+    local ed = editor.new_ed()
+    ed.buf = buffer.new(text)
+    ed.highlights = { search = { { line = 2, c1 = 1, c2 = 3 }, { line = 5, c1 = 1, c2 = 3 } } }
+    ed.gutters = { git = { [2] = { ch = "+", group = "git" }, [5] = { ch = "-", group = "git" } } }
+    ed.splice_hook = editor.make_splice_hook(ed)
+    ed.buf.on_splice = ed.splice_hook
+    return ed
+  end
+
+  it("shifts highlight ranges below an insertion, leaves those above alone", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:insert(3, { "x", "y" })             -- two lines in, above line 5 only
+    expect(ed.highlights.search[1]).to.equal({ line = 2, c1 = 1, c2 = 3 })
+    expect(ed.highlights.search[2]).to.equal({ line = 7, c1 = 1, c2 = 3 })
+  end)
+
+  it("shifts gutter marks below an insertion (rekeying the map)", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:insert(1, { "x" })                  -- one line at the top: everything slides
+    expect(ed.gutters.git[3]).to.equal({ ch = "+", group = "git" })
+    expect(ed.gutters.git[6]).to.equal({ ch = "-", group = "git" })
+    expect(ed.gutters.git[2]).to_not.exist()
+    expect(ed.gutters.git[5]).to_not.exist()
+  end)
+
+  it("keeps a highlight on the line it names after an insert above", function()
+    local ed = ed_painted("aaa\nbbb\nccc\nddd\neee\nfff")
+    expect(ed.buf:line(ed.highlights.search[1].line)).to.equal("bbb")
+    ed.buf:insert(1, { "NEW" })
+    expect(ed.buf:line(ed.highlights.search[1].line)).to.equal("bbb")
+  end)
+
+  it("shifts up after a deletion above", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:delete(3, 4)                        -- lines 3-4 gone
+    expect(ed.highlights.search[1]).to.equal({ line = 2, c1 = 1, c2 = 3 })
+    expect(ed.highlights.search[2].line).to.equal(3)
+    expect(ed.gutters.git[3]).to.equal({ ch = "-", group = "git" })
+  end)
+
+  it("drops a range whose line the edit removed, rather than clamping it", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:delete(5, 6)                        -- line 5's text is gone
+    expect(#ed.highlights.search).to.equal(1)
+    expect(ed.highlights.search[1].line).to.equal(2)
+    expect(ed.gutters.git[5]).to_not.exist()
+  end)
+
+  it("drops a range inside a resized replacement", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:splice(4, 3, { "only" })            -- lines 4-6 -> one line
+    expect(#ed.highlights.search).to.equal(1)  -- the line-5 range is gone
+    expect(ed.highlights.search[1].line).to.equal(2)
+  end)
+
+  it("in-place single-line set (typing) keeps the line's overlay", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:set(2, "edited")                    -- ndel == nins: line identity kept
+    expect(ed.highlights.search[1]).to.equal({ line = 2, c1 = 1, c2 = 3 })
+    expect(ed.gutters.git[2]).to.equal({ ch = "+", group = "git" })
+  end)
+
+  it("undo replays the inverse splice and un-shifts the overlay", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    ed.buf:undo_checkpoint()
+    ed.buf:insert(1, { "x" })
+    expect(ed.highlights.search[2].line).to.equal(6)
+    expect(ed.gutters.git[6]).to.exist()
+    ed.buf:undo()
+    expect(ed.highlights.search[2].line).to.equal(5)
+    expect(ed.gutters.git[5]).to.exist()
+  end)
+
+  it("ignores splices on a non-current buffer (stale hook)", function()
+    local ed = ed_painted("1\n2\n3\n4\n5\n6")
+    local old = ed.buf
+    ed.buf = buffer.new("other")
+    old:delete(1, 1)
+    expect(ed.highlights.search[2].line).to.equal(5)
+    expect(ed.gutters.git[5]).to.exist()
+  end)
+end)
+
 describe("framed requests (%hello / %cmd)", function()
   local sys, proto, vpath = require("sys"), require("proto"), require("path")
 

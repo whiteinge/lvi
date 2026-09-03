@@ -29,6 +29,9 @@ understanding once; they're all *you* need to write your own.
 highlighting. They only differ in what feeds it: a highlighter emits token
 groups, a list emits match groups (search sets a positive `pri` so its matches
 draw over syntax). A new visual feature is usually just a new producer of `:hl`.
+The editor slides the ranges it holds as you edit, so a producer doesn't have to
+re-push on every keystroke to stay put: `lvi-gitchanges` runs `on write`, and
+its bars still sit on the right lines while you type.
 
 **Lists are files; list focus is a pointer.** Both live beside the buffer
 socket, the state survives across processes and needs no daemon — any

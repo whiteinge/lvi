@@ -773,6 +773,11 @@ spaces and tabs included.
 *hl* _group_ [_L_:_C1_-_C2_ ...]
 	Paint _group_ over the given byte ranges (bare _L_ = whole line); no ranges
 	clears it. The overlay external search and syntax highlighting build on.
+	A line inserted or deleted above a range slides the range with it, so what is
+	painted stays on the text it was painted on while you type. A range whose line
+	the edit rewrote or removed is dropped rather than sliding onto a surviving
+	line, which would paint text that never matched. Undo does not bring a dropped
+	range back; the producer's next push does.
 
 *hi* _group_ [_spec_...]
 	Give _group_ a color. _spec_ is *fg*=_color_, *bg*=_color_ (an 8-color name
@@ -791,8 +796,8 @@ spaces and tabs included.
 	_group_ colors that one mark (default: the column's name), so a column can
 	carry a green *+* and a red *-* at once. The column shows on screen only
 	when *set gutter=* named it -- the tool owns what a column says, the rc
-	owns whether and where it sits. Marks are transient view state, like *hl*
-	ranges.
+	owns whether and where it sits. Marks are transient view state and follow the
+	text as you edit, like *hl* ranges.
 
 *fold*
 	With an address range, create a closed fold over it (*:3,6fold*). With no

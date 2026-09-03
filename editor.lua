@@ -336,6 +336,17 @@ end
 -- funnel, so positions un-adjust symmetrically. Wired to each buffer by bufs
 -- as it becomes current; the buf guard drops events from a stale hook on a
 -- non-current buffer (nothing edits one today).
+--
+-- EVERY position-bearing view field is adjusted here, the `:hl`/`:gutter`
+-- overlay included. The overlay was conceived as transient -- its producer
+-- re-states its whole world on every push -- but a push is only as fresh as the
+-- event that triggers it: lvi-highlight re-pushes on the debounced `change`
+-- hook, lvi-gitchanges only `on write`, and lvi-search's list never. Between
+-- pushes the editor holds the only copy, so it has to move it; otherwise
+-- inserting a line slides syntax colors off their tokens while you type, and
+-- leaves the git bars and a search hit painting a line they do not describe.
+-- The cost is the same order as the render already pays: render.frame walks
+-- every range in every group on every repaint to bucket them by line.
 function M.make_splice_hook(ed)
   return function(buf, start, ndel, nins)
     if buf ~= ed.buf then return end
@@ -364,6 +375,43 @@ function M.make_splice_hook(ed)
       for i = #ed.folds, 1, -1 do
         if ed.folds[i].e <= ed.folds[i].s then table.remove(ed.folds, i) end
       end
+    end
+    -- The overlay deliberately does NOT clamp the way a mark does. A clamped mark
+    -- is still a usable place to jump to, but a range clamped onto a surviving
+    -- line paints bytes that were never a match, which is the mispaint this is
+    -- here to stop. So a line inside the replaced region is dropped instead,
+    -- UNLESS the splice replaced it one-for-one (ndel == nins), which is the
+    -- in-place set() of ordinary typing: there the line index still names the
+    -- same line, and dropping would erase the highlight on the line you are
+    -- typing in. Columns are left alone, since only the producer can re-derive
+    -- them and stale columns on the right line are a smaller error than the
+    -- right columns on the wrong line. A dropped range does not come back on
+    -- undo (a fully-deleted fold is already gone the same way); the producer's
+    -- next push restores it.
+    local inplace = (ndel == nins)
+    local function shift(line)
+      if line >= start + ndel then return line + delta
+      elseif line >= start then return inplace and line or nil end
+      return line
+    end
+    for _, ranges in pairs(ed.highlights) do
+      local keep = 0
+      for i = 1, #ranges do
+        local r, l = ranges[i], shift(ranges[i].line)
+        if l then r.line = l; keep = keep + 1; ranges[keep] = r end
+      end
+      for i = #ranges, keep + 1, -1 do ranges[i] = nil end
+    end
+    -- Gutter marks are keyed BY line, so a shift rebuilds the map rather than
+    -- rewriting a field. No two lines can shift onto one (the map is monotonic
+    -- and nothing clamps), so no mark can silently eat another.
+    for name, marks in pairs(ed.gutters) do
+      local moved = {}
+      for line, m in pairs(marks) do
+        local l = shift(line)
+        if l then moved[l] = m end
+      end
+      ed.gutters[name] = moved
     end
   end
 end
