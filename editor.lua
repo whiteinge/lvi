@@ -535,6 +535,26 @@ function M.run(opts)
     sys.setenv("LVI_LINE", ed.cy)
     sys.setenv("LVI_COL", ed.cx)
     sys.setenv("LVI_TOP", ed.top)          -- viewport top line, for `on scroll`
+    -- The line journal (see buffer.lua), for a producer holding stored line
+    -- numbers: LVI_REV is the stamp to record beside them, LVI_LINEMAP the log
+    -- of the splices that have moved lines, LVI_LINEMAP_BASE the oldest stamp
+    -- the log can still answer. A consumer replays the entries past its own
+    -- stamp; a stamp below the base, or one carrying another buffer's id, means
+    -- re-run rather than retrack.
+    --
+    -- Handed over in the ENV rather than served as a query, for the reason
+    -- LVI_BUFS is (below): a picker or a stepper bound to `:!`/`:silent !`
+    -- freezes the poll loop, so it could not read the log back over the socket
+    -- -- and unlike a stale line number, a socket read that never returns hangs
+    -- the editor. The env reaches a child under every spawn discipline.
+    sys.setenv("LVI_REV", buf.id .. "." .. buf.rev)
+    sys.setenv("LVI_LINEMAP_BASE", buf.jbase)
+    local jl = {}
+    for i = 1, #buf.journal do
+      local e = buf.journal[i]
+      jl[i] = e.rev .. " " .. e.start .. " " .. e.ndel .. " " .. e.nins
+    end
+    sys.setenv("LVI_LINEMAP", table.concat(jl, "\n"))
     sys.setenv("LVI_CWORD", (buf == ed.buf) and normal.cword(ed) or "")
     -- This buffer's state as the flags field :ls prints (bufs.flags): one format
     -- for a hook and for the listing, and one var instead of a var per attribute

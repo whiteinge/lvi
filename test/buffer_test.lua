@@ -305,6 +305,57 @@ describe("buffer", function()
     end)
   end)
 
+  -- The bounded log of line-moving splices an external producer replays to bring
+  -- stored line numbers forward; see THE LINE JOURNAL in buffer.lua.
+  describe("line journal", function()
+    local function triples(b)
+      local out = {}
+      for i, e in ipairs(b.journal) do out[i] = { e.rev, e.start, e.ndel, e.nins } end
+      return out
+    end
+
+    it("records an insert and a delete, with the rev that made them", function()
+      local b = buffer.new("a\nb\nc")
+      b:insert(1, { "z" })
+      b:delete(3, 3)
+      expect(triples(b)).to.equal({ { 1, 1, 0, 1 }, { 2, 3, 1, 0 } })
+    end)
+
+    it("ignores a one-for-one splice: typing moves no line", function()
+      local b = buffer.new("a\nb\nc")
+      b:set(2, "typed")
+      b:splice(1, 2, { "x", "y" })              -- multi-line, still one-for-one
+      expect(#b.journal).to.equal(0)
+      expect(b.rev).to.equal(2)                 -- ...but they are mutations
+    end)
+
+    it("records undo's inverse splice, so the pair composes to identity", function()
+      local b = buffer.new("a\nb\nc")
+      b:undo_checkpoint()
+      b:insert(1, { "z" })
+      b:undo()
+      local j = triples(b)
+      expect(#j).to.equal(2)
+      expect(j[1][2] .. "/" .. j[1][3] .. "/" .. j[1][4]).to.equal("1/0/1")
+      expect(j[2][2] .. "/" .. j[2][3] .. "/" .. j[2][4]).to.equal("1/1/0")
+    end)
+
+    it("drops the oldest past the cap and raises the answerable base", function()
+      local b = buffer.new("a")
+      expect(b.jbase).to.equal(0)
+      for _ = 1, 600 do b:insert(1, { "x" }) end
+      expect(#b.journal).to.equal(512)
+      expect(b.jbase).to.equal(88)              -- 600 - 512, the last rev dropped
+      expect(b.journal[1].rev).to.equal(89)     -- ...and the oldest still held
+    end)
+
+    it("gives each buffer its own id, so a stale stamp is detectable", function()
+      local a, b = buffer.new("x"), buffer.new("y")
+      expect(a.id == b.id).to.be(false)
+      expect(b.rev).to.equal(0)                 -- rev restarts; the id does not
+    end)
+  end)
+
   describe("modified flag", function()
     it("is false on a fresh buffer, true after an edit", function()
       local b = buffer.new("a")

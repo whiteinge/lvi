@@ -43,12 +43,41 @@ function M.split(text)
   return lines
 end
 
+-- ---- the line journal ---------------------------------------------------------
+-- An external producer (a quickfix list, a search, a linter's findings) stores
+-- absolute line numbers, and every edit above one invalidates it. The producer
+-- cannot see the edit -- only the buffer can -- so the buffer keeps a bounded
+-- log of the splices that MOVED lines, and a consumer that stamped its data
+-- with `rev` at the time replays the entries past that stamp to bring its line
+-- numbers forward. See editor.export_context, which hands it to a child.
+--
+-- Only a splice with ndel ~= nins is recorded: a one-for-one replacement moves
+-- no line, and that is the shape of ordinary typing (set() is splice(n,1,{s})),
+-- so a session of editing inside existing lines adds nothing to the log. The
+-- rule here must stay in step with make_splice_hook's `shift`, which moves the
+-- editor's own overlay through the same arithmetic.
+--
+-- Bounded, because it is exported into the environment of every child process:
+-- past JOURNAL_MAX the oldest entry is dropped and `jbase` rises to its rev, so
+-- a stamp older than jbase reads as unanswerable rather than as "nothing moved"
+-- -- the distinction a consumer needs in order to fall back to re-running.
+local JOURNAL_MAX = 512
+
+-- Buffer identity, so a stamp cannot be read against the wrong buffer. `rev`
+-- is per-buffer and restarts at 0, so after :e (a fresh Buffer) an old stamp of
+-- 50 would look like a valid, quiet position in the new buffer's history. The
+-- id is process-global and never reused, so the mismatch is detectable.
+local nextid = 0
+
 -- Build a buffer from raw text. A single trailing newline is treated as the
 -- final line's terminator (noeol=false); its absence sets noeol=true. An empty
 -- string is the empty file: one empty line, no final newline.
 function M.new(text)
   text = text or ""
+  nextid = nextid + 1
   local self = setmetatable({ modified = false, path = nil, rev = 0,
+    -- The line journal and the oldest stamp it can still answer; see above.
+    id = nextid, journal = {}, jbase = 0,
     -- scratch: an ephemeral buffer (a command window, a picker) that never
     -- counts as modified, so :bd/:q/:qa never nag and a crash won't preserve
     -- it. name: a display label shown in place of a path ("[Command Line]").
@@ -216,6 +245,15 @@ function Buffer:splice(start, ndel, ins)
                  noeol = was_noeol })
   update_modified(self)
   self.rev = self.rev + 1   -- monotonic mutation counter (undo/redo bump it too)
+  -- Log the splice if it moved lines (see THE LINE JOURNAL). Undo and redo
+  -- replay inverse splices through here too, so an edit and its undo land as
+  -- two entries that compose to the identity -- a consumer needs no special
+  -- case for either.
+  if ndel ~= nins then
+    local j = self.journal
+    j[#j + 1] = { rev = self.rev, start = start, ndel = ndel, nins = nins }
+    if #j > JOURNAL_MAX then self.jbase = j[1].rev; table.remove(j, 1) end
+  end
   -- Optional line-shape notification for position bookkeeping (marks, the
   -- jumplist) -- wired by the editor, absent in unit/headless use. Because ALL
   -- mutations funnel through splice, a subscriber sees every edit, including

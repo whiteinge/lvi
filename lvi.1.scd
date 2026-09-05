@@ -1665,6 +1665,27 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	*map* over the socket. Rows are in *map*'s own notation, so a child can
 	hand an _lhs_ back to *normal*. *contrib/lvi-cmd* is that tool.
 
+*LVI_REV*, *LVI_LINEMAP*, *LVI_LINEMAP_BASE*
+	The line journal, for a tool holding stored line numbers (a quickfix list, a
+	search, a linter's findings). Every edit above a stored line invalidates it,
+	and only the editor can see the edit. *LVI_REV* is the stamp to record beside
+	the data, as _buffer_._revision_. *LVI_LINEMAP* is the log of the splices
+	that have moved lines since, one _rev_ _start_ _ndel_ _nins_ per line, oldest
+	first: a splice that replaced _ndel_ lines at _start_ with _nins_ new ones.
+	Replay the entries whose _rev_ is past your stamp, in order, and a stored line
+	_L_ moves to _L_ + (_nins_ - _ndel_) when _L_ >= _start_ + _ndel_; a line
+	inside the replaced region is gone.
+	A one-for-one splice moves nothing and is never logged, so ordinary typing
+	adds no entries.
+
+	The log is bounded. *LVI_LINEMAP_BASE* is the oldest stamp it can still
+	answer: when your stamp is below it, or names a different buffer, the history
+	you need has been dropped and the honest move is to re-run whatever produced
+	the data rather than to guess. Handed over in the environment for the reason
+	*LVI_BUFS* is, with one addition: a tool bound to *:!* freezes the event loop,
+	and where a stale line number is merely wrong, a socket read that never
+	returns would hang the editor.
+
 *LVI_EVENT*
 	The event name (*change*, *write*, ...) while an *:on* hook's command runs;
 	empty for every other child (*:bg*, *:!*, *g@*). Lets one tool serve both
