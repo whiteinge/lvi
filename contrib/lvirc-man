@@ -24,6 +24,9 @@ on exit
 
 set scratch          " never dirty -> :q never nags; nothing to preserve on crash
 set wrap linebreak   " wrap long lines (e.g. a wide SYNOPSIS) at word boundaries
+set gutter=          " no margin: man formats to the FULL terminal width, so any
+                     " gutter pushes its longest lines past the edge and they
+                     " soft-wrap. Numbers/git/lint mean nothing on a man page anyway.
 
 " Section folds: collapse each manpage section body under its heading into a
 " navigable table of contents. Folds arrive closed; zj/zk step heading to
