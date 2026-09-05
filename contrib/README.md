@@ -40,6 +40,18 @@ lvi-list paint` is the glue that repaints the current buffer's matches when
 you arrive in it, which is what makes *cross-file* lists (project grep,
 a compiler) light up per file.
 
+**Lists move with the buffer.** A list is line numbers frozen at the moment it
+was made, so every line you insert above one leaves its entries pointing a line
+short. Re-running the producer is the obvious fix, and for several it is not
+available: `lvi-lsp` costs a round trip to a language server, and a list loaded
+from `$LVI_QUICKFIX` was made by a compiler in another terminal, with nothing
+here to re-run. So the editor logs the splices that moved lines
+(`$LVI_REV`/`$LVI_LINEMAP`), each list records the revision it was valid at, and
+`lvi-list` replays the difference the next time you step or repaint. Nothing
+runs while you type, and no rc line turns it on. When the log no longer reaches
+back far enough the counter shows `!`, which is the honest answer rather than a
+guess.
+
 **`$LVI_PICKER` is one setting, and it may carry flags.** Every tool that picks
 reads it (default `fzf`; `fzy` and `sk` work too), and the value is split into
 words — so `LVI_PICKER='fzf --height 10'` in your rc reaches all of them. Rows

@@ -768,6 +768,192 @@ cat >> '%s/sent'
     -- A list paints the groups <name> and <name>-cur, so a list NAMED `x-cur`
     -- would be a second writer on `x`'s current-entry group and the two would
     -- take turns erasing each other.
+    -- Retracking: a list is line numbers frozen when it was made, and the
+    -- editor's line journal ($LVI_LINEMAP) is how they move forward. See
+    -- RETRACKING in contrib/lvi-list.
+    describe("lvi-list retrack", function()
+      local function listed(d, name)
+        return read(d .. "/sock.lists/" .. name)
+      end
+      -- A list put at rev 0, then two lines inserted at the top (rev 1) and one
+      -- line deleted at 9 (rev 6) -- the shape `O` twice and `dd` once leaves.
+      local function fixture(entries, map, rev)
+        local d = stub({ path = "/cur/f.txt\n" })
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.txt",
+                      LVI_LINE = "1", LVI_COL = "1",
+                      LVI_REV = "1.0", LVI_LINEMAP = "", LVI_LINEMAP_BASE = "0" }
+        run(env, ("printf '%s' | contrib/lvi-list put qq --focus"):format(entries))
+        env.LVI_REV = "1." .. rev
+        env.LVI_LINEMAP = map
+        return d, env
+      end
+
+      it("moves entries down past an insert above them", function()
+        local d, env = fixture([[/cur/f.txt:4:hit\n/cur/f.txt:8:hit\n]], "1 1 0 2", 1)
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:6:hit\n/cur/f.txt:10:hit\n")
+        cleanup(d)
+      end)
+
+      it("keeps columns and both GNU range spellings, moving only lines", function()
+        local d, env = fixture(
+          [[/cur/f.txt:4.6-11: a\n/cur/f.txt:8-9: b\n/cur/f.txt:12.1-14.9: c\n]], "1 1 0 2", 1)
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal(
+          "/cur/f.txt:6.6-11: a\n/cur/f.txt:10-11: b\n/cur/f.txt:14.1-16.9: c\n")
+        cleanup(d)
+      end)
+
+      it("drops an entry whose line the edit removed, and its body lines", function()
+        local d, env = fixture(
+          [[/cur/f.txt:4:gone\n    a note\n/cur/f.txt:8:kept\n]], "1 4 1 0", 1)
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:7:kept\n")
+        cleanup(d)
+      end)
+
+      it("pulls the current index back with the entries it dropped", function()
+        -- Walk to entry 2 FIRST, with nothing to retrack; the edit lands after,
+        -- so the next read is the one that has to move the index.
+        local d, env = fixture(
+          [[/cur/f.txt:2:a\n/cur/f.txt:4:b\n/cur/f.txt:6:c\n]], "", 0)
+        run(env, "contrib/lvi-list next")          -- cur = 1
+        run(env, "contrib/lvi-list next")          -- cur = 2 (entry b)
+        env.LVI_REV, env.LVI_LINEMAP = "1.1", "1 2 1 0"   -- line 2 deleted: entry a goes
+        run(env, "contrib/lvi-list paint")
+        expect(read(d .. "/sock.lists/qq.cur")).to.equal("1\n")   -- b is entry 1 now
+        cleanup(d)
+      end)
+
+      it("leaves another file's entries alone (the journal is one buffer's)", function()
+        local d, env = fixture([[/cur/f.txt:4:mine\n/oth/g.txt:4:theirs\n]], "1 1 0 2", 1)
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:6:mine\n/oth/g.txt:4:theirs\n")
+        cleanup(d)
+      end)
+
+      it("replays several splices in order", function()
+        local d, env = fixture([[/cur/f.txt:10:hit\n]], "1 1 0 2\n6 5 3 0", 6)
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:9:hit\n")  -- +2 then -3
+        cleanup(d)
+      end)
+
+      it("marks a list stale past the journal's horizon instead of guessing", function()
+        local d, env = fixture([[/cur/f.txt:4:hit\n]], "70 1 0 2", 70)
+        env.LVI_LINEMAP_BASE = "65"               -- our stamp (0) has been dropped
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:4:hit\n")   -- untouched
+        expect(exists(d .. "/sock.lists/qq.stale")).to.be(true)
+        expect(read(d .. "/log"):find("status qq %[0/1!%] qq")).to.exist()
+        cleanup(d)
+      end)
+
+      it("a put re-stamps and clears the stale mark", function()
+        local d, env = fixture([[/cur/f.txt:4:hit\n]], "70 1 0 2", 70)
+        env.LVI_LINEMAP_BASE = "65"
+        run(env, "contrib/lvi-list paint")
+        expect(exists(d .. "/sock.lists/qq.stale")).to.be(true)
+        run(env, [[printf '/cur/f.txt:6:hit\n' | contrib/lvi-list put qq]])
+        expect(exists(d .. "/sock.lists/qq.stale")).to.be(false)
+        cleanup(d)
+      end)
+
+      -- A producer driven from another terminal has no $LVI_REV to stamp with.
+      -- Its entries are still CURRENT, so the put stays clean; the admission is
+      -- the first read's to make, when there is something we cannot do.
+      it("puts clean without $LVI_REV, then admits it on the first read", function()
+        local d = stub({ path = "/cur/f.txt\n" })
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_SOCK = d .. "/sock", LVI_FILE = "/cur/f.txt",
+                      LVI_LINE = "1", LVI_COL = "1" }   -- a -w run: no journal in reach
+        run(env, [[printf '/cur/f.txt:4:hit\n' | contrib/lvi-list put qq]])
+        expect(exists(d .. "/sock.lists/qq.stale")).to.be(false)
+        expect(read(d .. "/log"):find("status qq %[0/1%] qq")).to.exist()
+        env.LVI_REV, env.LVI_LINEMAP, env.LVI_LINEMAP_BASE = "1.3", "1 1 0 2", "0"
+        run(env, "contrib/lvi-list paint")
+        expect(exists(d .. "/sock.lists/qq.stale")).to.be(true)
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:4:hit\n")     -- not guessed at
+        cleanup(d)
+      end)
+
+      -- ...and it admits it even when the list already carried a real stamp:
+      -- the unstampable put REPLACED those entries, so reading the superseded
+      -- revision would replay the whole journal over lines that are current.
+      it("lets an unstampable put override a stamp the list already had", function()
+        local d, env = fixture([[/cur/f.txt:4:old\n]], "", 0)   -- stamped in-editor at 1.0
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" },
+            [[printf '/cur/f.txt:20:fresh\n' | contrib/lvi-list put qq]])  -- a -w run
+        env.LVI_REV, env.LVI_LINEMAP = "1.13", "13 1 0 5"
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("/cur/f.txt:20:fresh\n")   -- not moved to 25
+        expect(exists(d .. "/sock.lists/qq.stale")).to.be(true)
+        cleanup(d)
+      end)
+
+      -- retrack's temps are dot-prefixed so `names()` cannot see them, and the
+      -- `.new` filter catches a leftover from a run killed mid-rewrite: promoted
+      -- by `mv`, it becomes the list; listed by `names`, it becomes a phantom
+      -- one that gets retracked and painted like the real thing.
+      it("never promotes or lists a leftover <name>.new", function()
+        local d, env = fixture([[/cur/f.txt:4:only\n]], "1 4 1 0", 1)   -- line 4 deleted
+        write(d .. "/sock.lists/qq.new", "JUNK\n")
+        expect(run(env, "contrib/lvi-list ls"):find("qq%.new")).to_not.exist()
+        run(env, "contrib/lvi-list paint")
+        expect(listed(d, "qq")).to.equal("")        -- every entry dropped, not JUNK
+        cleanup(d)
+      end)
+
+      -- The producer's gutter glyphs are a SECOND store of line numbers, and
+      -- when marks are present they ARE the column (see MARKS) -- so a margin
+      -- left behind would point at the old lines while the entries moved.
+      -- lvi-lint and lvi-gitchanges both push them.
+      it("moves the producer's gutter marks with the entries", function()
+        local d, env = fixture([[/cur/f.txt:4:hit\n/cur/f.txt:8:hit\n]], "", 0)
+        run(env, "printf '/cur/f.txt:4\\t+\\tGitAdd\\n/cur/f.txt:8\\t~\\n'"
+                 .. " | contrib/lvi-list marks qq")
+        env.LVI_REV, env.LVI_LINEMAP = "1.1", "1 1 0 2"
+        run(env, "contrib/lvi-list paint")
+        expect(read(d .. "/sock.lists/qq.marks"))
+          .to.equal("/cur/f.txt:6\t+\tGitAdd\n/cur/f.txt:10\t~\n")
+        -- ...and the margin actually pushed reflects the new lines.
+        local log = read(d .. "/log")
+        expect(log:find("gutter qq 6:%+:GitAdd 10:~:qq")).to.exist()
+        cleanup(d)
+      end)
+
+      it("drops a mark whose line the edit removed", function()
+        local d, env = fixture([[/cur/f.txt:4:a\n/cur/f.txt:8:b\n]], "", 0)
+        run(env, "printf '/cur/f.txt:4\\t+\\n/cur/f.txt:8\\t~\\n'"
+                 .. " | contrib/lvi-list marks qq")
+        env.LVI_REV, env.LVI_LINEMAP = "1.1", "1 4 1 0"   -- line 4 deleted
+        run(env, "contrib/lvi-list paint")
+        expect(read(d .. "/sock.lists/qq.marks")).to.equal("/cur/f.txt:7\t~\n")
+        cleanup(d)
+      end)
+
+      it("leaves another file's marks alone", function()
+        local d, env = fixture([[/cur/f.txt:4:a\n]], "", 0)
+        run(env, "printf '/cur/f.txt:4\\t+\\n/oth/g.txt:4\\t+\\n'"
+                 .. " | contrib/lvi-list marks qq")
+        env.LVI_REV, env.LVI_LINEMAP = "1.1", "1 1 0 2"
+        run(env, "contrib/lvi-list paint")
+        expect(read(d .. "/sock.lists/qq.marks"))
+          .to.equal("/cur/f.txt:6\t+\n/oth/g.txt:4\t+\n")
+        cleanup(d)
+      end)
+
+      it("does not list its sidecars as lists of their own", function()
+        local d, env = fixture([[/cur/f.txt:4:hit\n]], "1 1 0 2", 1)
+        run(env, "contrib/lvi-list paint")
+        local out = run(env, "contrib/lvi-list ls")
+        expect(out:find("qq%.rev")).to_not.exist()
+        expect(out:find("qq%.stale")).to_not.exist()
+        cleanup(d)
+      end)
+    end)
+
     it("lvi-list refuses a name that collides with a -cur paint group", function()
       local d = stub({})
       local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/sock" }

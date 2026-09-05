@@ -32,6 +32,8 @@
 #                                              bind it to a tmux popup -- see PREVIEW below)
 #   lvi-list goto|switch                       fzf over entries / over list names
 #   lvi-list focus [NAME] | ls | paint [NAME] | policy NAME [POLICY]
+#   lvi-list retrack [NAME]                    move stored line numbers up to the buffer's
+#                                              state now (automatic; see RETRACKING)
 #   lvi-list marks NAME                        producer glyphs on stdin (see MARKS)
 #   lvi-list hide [NAME]                       stop showing a list (keep it; n/N re-show)
 #   lvi-list save NAME PATH | load PATH [NAME] [--focus] [--cols=UNIT]
@@ -44,6 +46,8 @@
 #   $LVI_SOCK.lists/<name>.cols   what its columns count (absent = byte)
 #   $LVI_SOCK.lists/<name>.paint  how its entries paint (absent = gutter)
 #   $LVI_SOCK.lists/<name>.marks  the producer glyphs (see MARKS; cleared by a new put)
+#   $LVI_SOCK.lists/<name>.rev    the buffer revision(s) its lines are valid at (RETRACKING)
+#   $LVI_SOCK.lists/<name>.stale  present when its lines can no longer be moved
 #   $LVI_SOCK.focus               the focused list name
 # A name may not end in `-cur`: a list paints the `:hl` groups <name> and
 # <name>-cur, so `x-cur` would be a second writer on `x`'s current-entry group
@@ -253,7 +257,10 @@ focus_get() { cat "$focusfile" 2>/dev/null; }
 focus_set() { printf '%s\n' "$1" > "$focusfile"; }
 last_set()  { printf '%s\n' "$1" > "$lastfile"; }                 # a step -> "the list you care about"
 last_get()  { l=$(cat "$lastfile" 2>/dev/null); [ -n "$l" ] && [ -f "$listdir/$l" ] && printf '%s\n' "$l"; }
-names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|*.cols|*.paint|*.marks|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
+# `.new` is here for a leftover only: retrack writes its temps dot-prefixed, so
+# the glob never sees them -- but a run killed mid-rewrite by an older lvi-list
+# leaves `<name>.new` behind, and a phantom list gets retracked and painted.
+names()     { [ -d "$listdir" ] && for f in "$listdir"/*; do case "$f" in *.cur|*.cols|*.paint|*.marks|*.rev|*.stale|*.new|"$listdir"/'*') ;; *) [ -f "$f" ] && printf '%s\n' "${f##*/}";; esac; done; }
 # What this list's columns COUNT (see THE COLUMN FIELD). Unset/unknown reads as
 # `byte`, which is what every producer meant before there was anywhere to say.
 colunit()   { u=$(cat "$listdir/$1.cols" 2>/dev/null); case "$u" in char|display) echo "$u";; *) echo byte;; esac; }
@@ -373,6 +380,212 @@ function epos(s, p,   f, n, a, b, m) {
   return p["l"] > 0
 }'
 
+# ---- retracking: bring stored line numbers forward ---------------------------
+# A list is line numbers frozen at the moment it was made, and every edit above
+# one invalidates it -- the entry paints and jumps a line off for each line
+# inserted above. Re-running the producer fixes it for a producer that can be
+# re-run cheaply, and several cannot: lvi-lsp costs a round trip to a language
+# server, and a list loaded from $LVI_QUICKFIX was made by a compiler in another
+# terminal and has nothing here to re-run at all.
+#
+# So instead of re-deriving the entries we move them, from the editor's own log
+# of the splices that shifted lines ($LVI_LINEMAP; see lvi(1) ENVIRONMENT). Each
+# list records the buffer revision it was valid at, and every read-side
+# subcommand replays the entries past that stamp before doing its work. Lazy,
+# not hooked: nothing runs while you type, one pass runs when you next step or
+# repaint, and the editor keeps the visible paint honest in between by shifting
+# the `:hl` overlay itself.
+#
+# BOTH STORES MOVE. A list keeps line numbers in two places -- its entries, and
+# the producer's gutter glyphs (`<name>.marks`), which are keyed by LINE and so
+# cannot be derived from the entries. When marks are present they ARE the column
+# (see MARKS), so retracking only the entries would leave the margin marking
+# lines nothing happened on: lvi-lint's E and lvi-gitchanges' change bars both
+# ride in that store. The same map is applied to both.
+#
+# THE STAMP IS PER BUFFER (`<name>.rev`, one `BUFID REV` per line), because a
+# cross-file list outlives any one of them and `REV` restarts at 0 in the fresh
+# buffer `:e` makes. Only entries naming the CURRENT buffer's file are moved;
+# entries in other files are frozen against those files on disk, which is what
+# an unknown buffer id reads as -- stamp 0, the state a file has when it is
+# opened. The case that misses is a buffer edited in memory BEFORE the list was
+# made, whose entries were already describing a file the buffer did not match.
+#
+# WHEN IT CANNOT: the log is bounded, so a stamp older than $LVI_LINEMAP_BASE
+# has lost the history it needs; and a `put` driven from another terminal has no
+# $LVI_REV in its environment and so cannot stamp at all (`?`, the same degraded
+# -w behaviour lvi-search's pattern store has). Both mark the list stale rather
+# than guess -- the status counter shows `!` -- since a silently mis-moved entry
+# is worse than a visibly untrustworthy one. Re-running the producer clears it.
+stalefile() { printf '%s\n' "$listdir/$1.stale"; }
+setstale()  { if [ -n "$2" ]; then : > "$listdir/$1.stale"; else rm -f "$listdir/$1.stale"; fi; }
+isstale()   { [ -f "$listdir/$1.stale" ]; }
+# The counter's staleness marker. Every `status` push goes through it, so a list
+# that cannot be retracked says so on whichever path last touched it.
+counter()   { printf '[%s/%s%s]' "$2" "$3" "$(isstale "$1" && printf '!')"; }
+# A `?` row means the put could not stamp at all (no $LVI_REV, a -w run), and it
+# WINS over any buffer row: the newest put is the one that cannot be vouched
+# for. stamp_set drops it when a real stamp lands, so the two never coexist past
+# a good put -- and a `?` must never be read as "no row for this buffer", which
+# would fall through to rev 0 and replay the whole journal over entries that
+# were never there.
+#
+# So the scan reads the WHOLE file before answering, rather than returning on
+# the first row it matches. stamp_set appends, and the rows it keeps are the
+# other buffers' -- so a `?` written after an in-editor put sits BELOW that
+# buffer's row, and a first-match scan would hand back the superseded revision
+# and retrack entries that were current.
+stamp_get() {
+  [ -f "$listdir/$1.rev" ] || return 0
+  awk -v id="$2" '$1=="?"{q=1} $1==id{r=$2} END{print q ? "?" : r}' "$listdir/$1.rev"
+}
+stamp_set() {
+  t="$listdir/$1.rev"
+  { [ -f "$t" ] && awk -v id="$2" '$1!=id && $1!="?"' "$t"; printf '%s %s\n' "$2" "$3"; } \
+    > "$t.new" && mv "$t.new" "$t"
+}
+# Stamp NAME at the current buffer's revision: called by every door a list comes
+# in by (put, load), so an entry never predates the stamp that vouches for it.
+stamp_now() {
+  mkdir -p "$listdir"; setstale "$1" ""
+  case "${LVI_REV:-}" in
+    *.*) stamp_set "$1" "${LVI_REV%%.*}" "${LVI_REV#*.}" ;;
+    # No journal in reach: a producer driven from another terminal (`-w`) has no
+    # $LVI_REV in its environment. Record that we could not stamp rather than
+    # marking it stale here -- these entries are CURRENT, they just cannot be
+    # moved later. The admission is the first read's to make (retrack_one), when
+    # there is actually something we are failing to do.
+    *)   stamp_set "$1" '?' '?' ;;
+  esac
+}
+
+# The line map, as awk: replay the splices past our stamp over one line number.
+# Must stay in step with make_splice_hook's `shift` in editor.lua, which moves
+# the editor's own overlay through the same arithmetic. A line at or past the
+# end of a replaced region slides by the delta; a line INSIDE one is gone (0),
+# since the text it named was replaced. Nothing clamps: an entry moved onto a
+# surviving line would point at text that never matched it.
+MAP_AWK='
+function mapl(l,   i) {
+  for (i = 1; i <= NE; i++) {
+    if (l >= ES[i] + ED[i]) l = l + EI[i] - ED[i]
+    else if (l >= ES[i]) return 0
+  }
+  return l
+}
+# Rebuild a position field (GNU 4.3: L, L.C, L1-L2, L.C1-C2, L1.C1-L2.C2) with
+# its line numbers moved. Columns pass through untouched -- only the producer
+# could re-derive those, and the text on a moved line has not changed. An end
+# line that maps away collapses to the start rather than dropping the entry: the
+# complaint still has somewhere to point.
+function remap(pos,   a, b, m, mc, nl, ne, head) {
+  b = ""; m = pos
+  if (split(pos, a, "-") == 2) { m = a[1]; b = a[2] }
+  mc = ""
+  if (split(m, a, "[.]") == 2) { m = a[1]; mc = a[2] }
+  nl = mapl(m + 0)
+  if (!nl) return ""                                  # start line gone: drop it
+  head = nl (mc == "" ? "" : "." mc)
+  if (b == "") return head
+  if (split(b, a, "[.]") == 2) {                      # L1.C1-L2.C2
+    ne = mapl(a[1] + 0); if (!ne || ne < nl) ne = nl
+    return head "-" ne "." a[2]
+  }
+  if (mc != "") return head "-" b                     # L.C1-C2: b is a column
+  ne = mapl(b + 0); if (!ne || ne < nl) ne = nl       # L1-L2
+  return head "-" ne
+}'
+
+# Move NAME's entries for the current buffer up to the buffer's revision now.
+# Rewrites the list in place, drops entries whose line the edit removed, and
+# pulls `.cur` back with them so the walk keeps its place.
+retrack_one() {
+  name=$1
+  [ -f "$listdir/$name" ] || return 0
+  isstale "$name" && return 0                       # already known untrustworthy
+  case "${LVI_REV:-}" in
+    *.*) bufid=${LVI_REV%%.*}; nowrev=${LVI_REV#*.} ;;
+    *)   return 0 ;;                                # no journal in reach (a -w run)
+  esac
+  st=$(stamp_get "$name" "$bufid")
+  case "$st" in
+    '?') setstale "$name" 1; return 0 ;;
+    '')  st=0 ;;                                    # a buffer opened since: rev 0 is its disk state
+  esac
+  [ "$st" = "$nowrev" ] && return 0                 # nothing has moved
+  if [ "$st" -lt "${LVI_LINEMAP_BASE:-0}" ]; then setstale "$name" 1; return 0; fi
+  printf '%s\n' "${LVI_LINEMAP:-}" | awk -v st="$st" 'NF==4 && $1+0 > st+0' > "$listdir/.map.$$"
+  if [ -s "$listdir/.map.$$" ]; then
+    cur=$(getcur "$name")
+    # The temps are dot-prefixed, the way `.map.$$` is, because `names()` globs
+    # this directory and `*` skips a dotfile: `$name.new` would list as a list
+    # of its own, and get retracked and painted like one. Truncated up front
+    # rather than after the fact -- awk only opens `out` when it prints, so a
+    # rewrite that keeps NO entry never touches it, and a leftover from a killed
+    # run would otherwise be what `mv` promotes.
+    : > "$listdir/.new.$$"
+    # Guarded the way the marks rewrite below is: a failed awk (an unwritable
+    # temp, a full disk) would otherwise `mv` a half-written file over the list.
+    # Bail without stamping, so the next read retries the same replay rather
+    # than skipping past it -- the entries are unmoved, and the stamp still says
+    # so.
+    if ! newcur=$(awk -F: -v OFS=: -v cf="$(curfile)" -v hdr="$HDR" -v cur="$cur" \
+                 -v out="$listdir/.new.$$" "$CANON_AWK$MAP_AWK"'
+      BEGIN { f = canon(cf) }
+      # First file: the splices to replay, oldest first (rev start ndel nins).
+      # Split by hand -- FS is ":" for the entries, and these fields are blanks.
+      FNR == NR { NE++; split($0, jf, " "); ES[NE] = jf[2] + 0; ED[NE] = jf[3] + 0; EI[NE] = jf[4] + 0; next }
+      {
+        if ($0 ~ hdr) {
+          ent++; keep = 1
+          if (canon($1) == f) {
+            np = remap($2)
+            if (np == "") keep = 0; else $2 = np
+          }
+          if (keep) { kept++; if (ent <= cur) newcur = kept }
+        }
+        # A body line belongs to the entry above it, so it goes where that went.
+        if (keep) print > out
+      }
+      END { print newcur + 0 }' "$listdir/.map.$$" "$listdir/$name"); then
+      rm -f "$listdir/.map.$$" "$listdir/.new.$$"
+      return 0
+    fi
+    mv "$listdir/.new.$$" "$listdir/$name"
+    setcur "$name" "${newcur:-0}"
+    # The producer's glyphs are a SECOND store of line numbers (FILE:LINE per
+    # line; see MARKS), and when marks are present they ARE the column -- so a
+    # margin left behind would keep pointing at the old lines while the entries
+    # moved out from under it. lvi-lint and lvi-gitchanges both push them.
+    # Keyed by line rather than by entry, so this cannot be derived from the
+    # rewrite above; it is the same map applied to the other store.
+    if [ -s "$listdir/$name.marks" ]; then
+      awk -F'\t' -v OFS='\t' -v cf="$(curfile)" "$CANON_AWK$MAP_AWK"'
+        BEGIN { f = canon(cf) }
+        FNR == NR { NE++; split($0, jf, " "); ES[NE] = jf[2] + 0; ED[NE] = jf[3] + 0
+                    EI[NE] = jf[4] + 0; next }
+        {
+          # A mark names its file with the line appended, so the split is at the
+          # LAST colon -- the same shape `paint` reads it back with.
+          if (match($1, /:[0-9]+$/)) {
+            fn = substr($1, 1, RSTART - 1); ln = substr($1, RSTART + 1) + 0
+            if (canon(fn) == f) {
+              nl = mapl(ln)
+              if (!nl) next                        # the line it marked is gone
+              $1 = fn ":" nl
+            }
+          }
+          print
+        }' "$listdir/.map.$$" "$listdir/$name.marks" > "$listdir/.marks.$$" \
+        && mv "$listdir/.marks.$$" "$listdir/$name.marks"
+    fi
+  fi
+  rm -f "$listdir/.map.$$" "$listdir/.new.$$" "$listdir/.marks.$$"
+  stamp_set "$name" "$bufid" "$nowrev"
+}
+
+retrack_all() { names | while IFS= read -r nm; do retrack_one "$nm"; done; }
+
 # Jump the editor to an entry (file:line[:col]:...). Skips :e when already
 # there. :pos lands exactly on the column, in whatever unit the list was put
 # with (see THE COLUMN FIELD), and asks for `jump`, so stepping a list feeds the
@@ -456,7 +669,7 @@ paint() {
     fi
     send "gutter $name $marks"
     send "hl $name"; send "hl $name-cur"      # drop the overlay this policy replaces
-    send "status $name [$cur/$total] $name"
+    send "status $name $(counter "$name" "$cur" "$total") $name"
     return 0
   fi
   # extent and cur both light RANGES, so an entry with no range to light shows
@@ -477,7 +690,7 @@ paint() {
             epos($0, p) && p["e"] { print p["l"] ":" p["c"] "-" p["e"] }')"
   else send "hl $name-cur"; fi
   send "gutter $name"                          # drop the margin marks this policy replaces
-  send "status $name [$cur/$total] $name"
+  send "status $name $(counter "$name" "$cur" "$total") $name"
 }
 
 # ---- subcommands ------------------------------------------------------------
@@ -489,6 +702,15 @@ need_name() { n=$(if [ -n "${1:-}" ]; then printf '%s\n' "$1"; else focus_get; f
 # other. Refuse the name at the two doors a list can come in by; there is
 # nothing to gain by allowing it and no way to notice it going wrong.
 check_name() { case "$1" in *-cur) die "'$1': a list may not end in -cur (it is the current-entry :hl group of '${1%-cur}')" ;; esac; }
+
+# Every subcommand below that READS a stored line number wants it current, so
+# retracking happens once here rather than at each of them. `put` is excluded
+# because it is writing fresh entries and stamping them; the rest never look at
+# a line. One pass covers the whole directory: each list applies only the
+# splices past its own stamp, so the cost does not grow with the list count.
+case "$sub" in
+  next|prev|first|last|nfile|pfile|here|current|cc|preview|goto|paint|save) retrack_all ;;
+esac
 
 case "$sub" in
   put)
@@ -557,6 +779,7 @@ case "$sub" in
       setcur "$name" 0                                        # a following `next` lands on 1
     fi
     [ -n "$dofocus" ] && focus_set "$name"
+    stamp_now "$name"                  # these entries are valid at THIS revision
     paint "$name" ;;
 
   next|prev|first|last)
@@ -578,7 +801,7 @@ case "$sub" in
     [ "$cur" -lt 1 ]        && { cur=1;       edge=" (start)"; }
     [ "$cur" -gt "$total" ] && { cur=$total;  edge=" (end)"; }
     setcur "$name" "$cur"; jump "$(nth "$name" "$cur")" "$name"; paint "$name"
-    [ -n "$edge" ] && send "status $name [$cur/$total] $name$edge"
+    [ -n "$edge" ] && send "status $name $(counter "$name" "$cur" "$total") $name$edge"
     show_cur "$name" ;;
 
   nfile|pfile)
@@ -596,7 +819,7 @@ case "$sub" in
       ef=$(nth "$name" "$i"); ef=${ef%%:*}
       [ "$ef" != "$curf" ] && { target_i=$i; break; }
     done
-    [ -n "$target_i" ] || { send "status $name [$cur/$total] $name (no more files)"; exit 0; }
+    [ -n "$target_i" ] || { send "status $name $(counter "$name" "$cur" "$total") $name (no more files)"; exit 0; }
     setcur "$name" "$target_i"; jump "$(nth "$name" "$target_i")" "$name"; paint "$name"; show_cur "$name" ;;
 
   here)
@@ -680,6 +903,10 @@ case "$sub" in
     cat > "$listdir/$name.marks" || true
     [ -f "$listdir/$name" ] && paint "$name" ;;   # show them without a third call
 
+  retrack)                                   # normally automatic (see RETRACKING)
+    if [ -n "${1:-}" ]; then retrack_one "$1"; paint "$1"
+    else retrack_all; names | while IFS= read -r nm; do paint "$nm"; done; fi ;;
+
   paint)                                     # :on bufenter -> repaint all lists
     if [ -n "${1:-}" ]; then paint "$1"; else names | while IFS= read -r nm; do paint "$nm"; done; fi ;;
 
@@ -709,6 +936,7 @@ case "$sub" in
     # actually named one.
     setcols "$name" "$cols"; [ -n "$pgiven" ] && setpaint "$name" "$pmode"
     case " $* " in *" --focus "*) focus_set "$name" ;; esac
+    stamp_now "$name"
     paint "$name" ;;
 
   drop|clear|hide)
@@ -718,8 +946,10 @@ case "$sub" in
     name=$(need_name "${1:-}") || exit 1
     case "$sub" in
       drop)  rm -f "$listdir/$name" "$listdir/$name.cur" "$listdir/$name.cols" \
-                    "$listdir/$name.paint" "$listdir/$name.marks" ;;
-      clear) : > "$listdir/$name"; rm -f "$listdir/$name.marks"; setcur "$name" 0 ;;
+                    "$listdir/$name.paint" "$listdir/$name.marks" \
+                    "$listdir/$name.rev" "$listdir/$name.stale" ;;
+      clear) : > "$listdir/$name"; rm -f "$listdir/$name.marks"; setcur "$name" 0
+             stamp_now "$name" ;;                   # empty, but valid as of now
       hide)  : ;;
     esac
     send "hl $name"; send "hl $name-cur"; send "gutter $name"; send "status $name" ;;
