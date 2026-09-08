@@ -873,11 +873,13 @@ de-dupes the buffers' words, current buffer first.
 
 A source is a `lvi-complete-<name>` script that reads the same stdin and
 environment and prints candidates, one per line, best first. Each candidate is
-a whole replacement for the token, since that is what lvi splices. Sources run
-no picker of their own: that lives in `lvi-complete`, so `$LVI_PICKER` and the
-popup are configured once and every source gets both. (The `lvi-hl-<name>` and
-`lvi-lint-<name>` adapters each finish their job alone; here the picker is the
-shared part.)
+a whole replacement for the token, since that is what lvi splices. The picker
+hides the part of the token you already typed — the `{` of `{foo`, the `src/` of
+`src/fo` — and puts it back on your choice, so the list shows what the
+completion adds. Sources run no picker of their own: that lives in
+`lvi-complete`, so `$LVI_PICKER` and the popup are configured once and every
+source gets both. (The `lvi-hl-<name>` and `lvi-lint-<name>` adapters each
+finish their job alone; here the picker is the shared part.)
 
 Two sources ship. `lvi-complete-word` reads the buffers; `lvi-complete-path`
 lists file names under the path you're typing, one directory level per press —

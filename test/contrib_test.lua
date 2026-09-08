@@ -323,6 +323,37 @@ describe("contrib", function()
       expect(seed("(gam", "gamma delta\n")).to.equal("gam\n")
       os.execute("rm -rf '" .. d .. "'")
     end)
+
+    -- The other half of the seed: what the PICKER is shown. A source carries the
+    -- token's leading run through on every candidate (lvi replaces the whole
+    -- token), so the list would repeat the `{` or the `dir/` you just typed back
+    -- at you on every row -- and an anchored query would match none of them.
+    -- lvi-complete strips that run for the picker and puts it back on the choice.
+    it("lvi-complete hides the typed prefix from the picker, not from the splice", function()
+      local d = tmpdir()
+      os.execute(("mkdir -p '%s/proj' '%s/bin'"):format(d, d))
+      write(d .. "/proj/alpha.c", "")
+      write(d .. "/proj/alpha.h", "")
+      -- A picker that records the whole list it was shown and takes the top row.
+      write(d .. "/bin/fakepick", "#!/bin/sh\ncat > '" .. d .. "/list'\nhead -n1 '"
+        .. d .. "/list'\n")
+      os.execute("chmod +x '" .. d .. "/bin/fakepick'")
+      local function pick(token, stdin)
+        local out = run({ PATH = d .. "/bin", LVI_PICKER = "fakepick", LVI_COMPL_TOKEN = token },
+          ("cd '%s/proj' && printf '%s' | lvi-complete"):format(d, stdin or ""))
+        return read(d .. "/list"), out
+      end
+      -- Words behind a `{`: the picker sees bare words, the splice keeps the `{`.
+      local list, sel = pick("{foo", "foobar foolish\n")
+      expect(list).to.equal("foobar\nfoolish\n")
+      expect(sel).to.equal("{foobar\n")
+      -- Same rule for a path's directory prefix, which is the run before the
+      -- part being typed.
+      list, sel = pick("./al")
+      expect(list).to.equal("alpha.c\nalpha.h\n")
+      expect(sel).to.equal("./alpha.c\n")
+      os.execute("rm -rf '" .. d .. "'")
+    end)
   end)
 
   describe("socket scripts against the stub", function()
