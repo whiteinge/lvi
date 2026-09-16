@@ -1287,8 +1287,8 @@ below, with the happy-path rc lines that turn it on:
 	```
 	map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
 	map ? :prompt ? bg lvi-search -b -- "$LVI_INPUT"<CR>
-	map * :bg lvi-search "$LVI_CWORD"<CR>
-	map # :bg lvi-search -b "$LVI_CWORD"<CR>
+	map * :bg lvi-search --word<CR>
+	map # :bg lvi-search --word -b<CR>
 	map n :bg lvi-list next<CR>
 	map N :bg lvi-list prev<CR>
 	on bufenter lvi-list paint

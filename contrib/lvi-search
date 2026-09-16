@@ -121,7 +121,7 @@
 # Case: -i forces case-insensitive; LVI_SEARCH_CASE picks the default policy --
 # `sensitive` (default), `ignore`, or `smart` (the vi/vim rule: insensitive unless
 # PATTERN has an uppercase letter). Set it per binding to taste, e.g.
-#     map / :silent !LVI_SEARCH_CASE=smart lvi-search<CR>
+#     map / :prompt / bg LVI_SEARCH_CASE=smart lvi-search -- "$LVI_INPUT"<CR>
 # How the folding is done (sed's `I` flag where there is one, `tr` where there is
 # not) is lvi-bre-locate's business, not ours.
 #
