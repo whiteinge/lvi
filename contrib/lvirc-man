@@ -39,10 +39,20 @@ on ready lvi-fold man
 " user's $LVI_HL_BACKEND default.
 on ready LVI_HL_BACKEND=bat lvi-highlight lang man
 
-" Search with `/` (contrib lvi-search, since lvi has no built-in search): grep
-" the page, jump to the first match, step with n/N. `*` searches the word under
-" the cursor -- handy for chasing an option through a page.
-map / :silent !LVI_SEARCH_CASE=smart lvi-search<CR>
-map * :bg lvi-search "$LVI_CWORD"<CR>
+" Search with `/` and `?` (contrib lvi-search, since lvi has no built-in
+" search): grep the page, jump to the first match, step with n/N. `*` and `#`
+" search the word under the cursor -- handy for chasing an option through a
+" page. `:prompt` reads the pattern with lvi's own line editor (Esc cancels,
+" Backspace erases a character) and hands it over in $LVI_INPUT, which leaves
+" every one of these a detached `:bg` spawn: no terminal handover, so no
+" alt-screen flash while you hold down n/N. Case is `smart` on the typed
+" patterns -- insensitive unless you type an uppercase letter, right for a page
+" you are skimming -- but not on `*`/`#`, where the word comes off the page
+" rather than from you, and folding its case would match words you did not
+" point at.
+map / :prompt / bg LVI_SEARCH_CASE=smart lvi-search -- "$LVI_INPUT"<CR>
+map ? :prompt ? bg LVI_SEARCH_CASE=smart lvi-search -b -- "$LVI_INPUT"<CR>
+map * :bg lvi-search --word<CR>
+map # :bg lvi-search --word -b<CR>
 map n :bg lvi-list next<CR>
 map N :bg lvi-list prev<CR>
