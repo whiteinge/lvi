@@ -304,13 +304,25 @@ map \c :silent !lvi-cmd<CR>
 " }}}
 " ---- tags -------------------------------------------------------------- {{{
 
-" lvi-tags lists this file's ctags tags in file order through your picker and
-" jumps to the one you choose -- a jump-to-symbol and a file outline in one key.
-" It tags the live buffer (your unsaved edits included) -- no `tags` file needed.
-" It needs the picker's tty (:silent !), which freezes lvi, so it can't read the
-" buffer back over the socket -- :wbuf snapshots it to $LVI_BUFFER first, then
-" the frozen picker reads that. (See `Shelling out` in lvi.1.scd.)
-map \t :wbuf<CR>:silent !lvi-tags<CR>
+" tags MENU (\t). Both tools need the picker's tty (:silent !), which freezes
+" lvi, so neither can read the buffer back over the socket -- :wbuf snapshots it
+" to $LVI_BUFFER first and the frozen picker reads that. (See `Shelling out` in
+" lvi.1.scd.) Keep the :wbuf on both.
+"
+" lvi-tags lists THIS FILE's ctags tags in file order and jumps to the one you
+" choose -- a jump-to-symbol and a file outline in one key. It tags the live
+" buffer, your unsaved edits included, and never reads a `tags` file.
+map \tt :wbuf<CR>:silent !lvi-tags<CR>
+
+" lvi-tagfile is the other half: vi's :tag, over the project's `tags` file,
+" found by walking up from the file you are in, then from the cwd. \tp browses
+" every tag ctags indexed; \tj jumps to the one under the cursor, which is
+" Ctrl-] for anyone without a language server (rebind <C-]> below to it if that
+" is you). A pattern address is re-found in the :wbuf snapshot when it points
+" into this buffer, so a jump inside a file you have been editing still lands
+" on the definition.
+map \tp :wbuf<CR>:silent !lvi-tagfile<CR>
+map \tj :wbuf<CR>:silent !lvi-tagfile -c<CR>
 
 " }}}
 " ---- language server (def / refs) --------------------------------------- {{{

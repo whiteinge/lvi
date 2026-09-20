@@ -1,0 +1,294 @@
+#!/bin/sh
+# lvi-tagfile [-w auto|WID] [-c | NAME] -- jump to any tag in the project's tags file.
+#
+# vi's `:tag`, driven from outside. `readtags` queries the on-disk `tags` file,
+# the hits go through a fuzzy picker (fzf/fzy/sk), and the view opens the file
+# and lands on the definition. lvi-tags is the companion for the file you are
+# in: it re-tags the live buffer and never reads a `tags` file. This one reaches
+# every file ctags indexed, and is only as fresh as the last ctags run.
+#
+# SYNOPSIS
+#   lvi-tagfile               every tag in the tags file, in the picker
+#   lvi-tagfile NAME          the tags named NAME -- the picker opens only if several
+#   lvi-tagfile -c            NAME is the word under the cursor ($LVI_CWORD): vi's Ctrl-]
+#   lvi-tagfile -w auto|WID   run from another terminal
+#
+# Bindings (rc):
+#     map \tp :wbuf<CR>:silent !lvi-tagfile<CR>      " browse the project's tags
+#     map \tj :wbuf<CR>:silent !lvi-tagfile -c<CR>   " the tag under the cursor
+# Run it under `:silent !` -- the picker needs the tty -- and keep the `:wbuf`:
+# the snapshot it writes is what keeps a jump inside the file you are editing
+# landing on the right line (see RE-FINDING A TAG).
+#
+# FINDING THE TAGS FILE. $LVI_TAG_FILE names one outright. Otherwise we walk up
+# from the directory of the file being edited looking for `tags`, then `.tags`,
+# stopping at the root; failing that, up from the editor's own cwd. That is
+# vim's default `tags=./tags,tags` -- relative to the file, then relative to
+# where you are -- with no path list to configure. The cwd pass is what finds
+# the project's tags file while you are editing something from outside the
+# tree, and it is all a buffer with no file name has to go on. Paths inside a tags file are relative to wherever ctags ran,
+# which Universal Ctags records in the `!_TAG_PROC_CWD` pseudo-tag; with no such
+# tag we read them against the tags file's own directory, the conventional
+# assumption. What goes back to lvi is relative to the editor's cwd when the
+# file lives under it, so `:e` opens it under the name you would have typed --
+# an absolute spelling of a file lvi already holds would open a SECOND buffer on
+# it, since `bufs.open` matches on the path string.
+#
+# RE-FINDING A TAG. A tags file addresses a tag by line number, by a search
+# pattern for its definition line, or -- Universal Ctags' default -- by both.
+# The pattern wins, because the combined form `12;/^def$/` is an ex address
+# chain: line 12, then search from there. The number says where the definition
+# was and the pattern says what it is, so a hit is the match nearest the
+# recorded line, and the number is the fallback for when the definition has
+# changed as well as moved. A `ctags --excmd=number` tags file has only the
+# number, and nothing can rescue it from an edit; it points where the file
+# used to be.
+#
+# The pattern is matched as a LITERAL string, anchored where its `^`/`$` say:
+# ctags escapes only `\` and the `/` delimiter, so the rest of the definition
+# goes in raw. Read as a regex, a definition containing `[*.]` matches something
+# else; read as a string, it matches itself. The file searched is the one on
+# disk, except when the tag lands in the buffer you are editing and the binding
+# dumped it with `:wbuf`: then the match runs over that snapshot ($LVI_BUFFER),
+# so a jump within the file lands on the right line after you have added or
+# deleted lines above it. Only that one buffer: a jump into a DIFFERENT file
+# that lvi holds with unsaved edits lands by the copy on disk, because the
+# picker owns the terminal and lvi is frozen behind it, with no way to hand
+# that buffer over.
+#
+# The jump is jump-class (`:pos ... jump`), so Ctrl-O walks back out of it and
+# `''` returns to where you set off from. There is no tag stack to pop: lvi has
+# one history, the jumplist, and Ctrl-O is Ctrl-T.
+#
+# Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may
+# carry flags), LVI_READTAGS (readtags binary, default `readtags`; part of
+# Universal Ctags), LVI_TAG_FILE (tags file to query, skipping the upward walk).
+# Needs readtags and a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_FILE/
+# $LVI_CWORD/$LVI_BUFFER exported); from elsewhere pass -w and cd to the tree.
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+PICKER=${LVI_PICKER:-fzf}
+READTAGS=${LVI_READTAGS:-readtags}
+
+die() { echo "lvi-tagfile: $*" >&2; exit 1; }
+
+want_wid=; name=; cword=
+while [ $# -gt 0 ]; do
+  case $1 in
+    -w) want_wid=${2:-}; [ -n "$want_wid" ] || die "-w needs auto|WID"; shift 2 ;;
+    -c|--cword) cword=1; shift ;;
+    --) shift; [ -n "${1:-}" ] && name=$1; break ;;
+    -?*) die "unknown option '$1' (usage: lvi-tagfile [-w auto|WID] [-c | NAME])" ;;
+    *)  name=$1; shift ;;
+  esac
+done
+target=${want_wid:-${LVI_WID:-auto}}
+send() { "$LVI" -w "$target" --detach -- "$@"; }
+# Errors go to the view as well: bound under `:silent !`, this script's stderr
+# scrolls past under the repaint with nobody reading it.
+fail() { send "msge lvi-tagfile: $*"; exit 1; }
+
+if [ -n "$cword" ]; then
+  [ -z "$name" ] || die "-c takes the name from the cursor; don't also pass one"
+  name=${LVI_CWORD:-}
+  [ -n "$name" ] || fail "cursor is not on a word"
+fi
+command -v "$READTAGS" >/dev/null 2>&1 ||
+  fail "no $READTAGS on PATH (it ships with Universal Ctags)"
+
+# The buffer's file: from the env when lvi spawned us, else ask the live view.
+# An explicit -w always asks, so the walk can't start from the spawning view's
+# directory while the jump aims at a different view.
+if [ -n "${LVI_FILE+x}" ] && [ -z "$want_wid" ]; then curfile=$LVI_FILE
+else curfile=$("$LVI" -w "$target" -- path 2>/dev/null); fi
+
+# Canonicalise a path for comparison and for shortening (lvi-list's awk, and its
+# reasoning): values reach awk through ENVIRON, never -v, because awk expands
+# backslash escapes in a -v value and a path may contain one.
+PWD=${PWD:-$(pwd)}; export PWD
+CANON_AWK='
+function canon(p,   a, n, i, j, out, s) {
+  if (p == "") return ""
+  if (substr(p, 1, 1) != "/") p = ENVIRON["PWD"] "/" p
+  n = split(p, a, "/")
+  j = 0
+  for (i = 1; i <= n; i++) {
+    if (a[i] == "" || a[i] == ".") continue           # "//" and "/./" collapse
+    if (a[i] == "..") { if (j > 0) j--; continue }    # "/.." at the root eats nothing
+    out[++j] = a[i]
+  }
+  s = ""
+  for (i = 1; i <= j; i++) s = s "/" out[i]
+  return s == "" ? "/" : s
+}'
+canonpath() { printf '%s\n' "$1" | awk "$CANON_AWK"'{ print canon($0) }'; }
+
+# ---- the tags file -----------------------------------------------------------
+# Print the first `tags` (else `.tags`) at or above DIR, walking to the root.
+up() {
+  d=$1
+  while :; do
+    for n in tags .tags; do
+      [ -f "$d/$n" ] && { printf '%s\n' "$d/$n"; return 0; }
+    done
+    [ "$d" = "/" ] && return 1
+    d=${d%/*}; [ -n "$d" ] || d=/
+  done
+}
+TAG_CWD=$(canonpath .)
+tagfile=${LVI_TAG_FILE:-}
+if [ -z "$tagfile" ]; then
+  # Two starting points, which is vim's default `tags=./tags,tags`: the
+  # directory of the file being edited, then the editor's own cwd -- the second
+  # is what finds a project's tags file while you are editing a file from
+  # somewhere else, and is all a pathless buffer has to go on.
+  if [ -n "$curfile" ]; then
+    d=$(canonpath "$curfile"); d=${d%/*}; [ -n "$d" ] || d=/
+    tagfile=$(up "$d")
+  fi
+  [ -n "$tagfile" ] || tagfile=$(up "$TAG_CWD")
+fi
+if [ -z "$tagfile" ] || [ ! -f "$tagfile" ]; then
+  where=$TAG_CWD
+  [ -n "$curfile" ] && where="$curfile or $TAG_CWD"
+  fail "no tags file above $where (run ctags -R, or set \$LVI_TAG_FILE)"
+fi
+
+# Where the paths inside it are rooted. `readtags -D` reads the pseudo-tags
+# without us parsing the file, and gets them right on an unsorted one too.
+TAG_BASE=$("$READTAGS" -t "$tagfile" -D 2>/dev/null |
+  awk -F'\t' '$1 == "!_TAG_PROC_CWD" { print $2; exit }')
+TAG_BASE=${TAG_BASE%/}
+[ -n "$TAG_BASE" ] || { TAG_BASE=${tagfile%/*}; [ -n "$TAG_BASE" ] || TAG_BASE=/; }
+export TAG_BASE TAG_CWD
+
+# ---- the query ---------------------------------------------------------------
+# One row per hit, tab-separated, so the tags-file address never has to be
+# parsed back out of a line. $pattern goes last because it carries a line of
+# source, which may hold a tab; $line is empty when the address is a pattern.
+FMT='(list $name "\t" $input "\t" (if $line $line "") "\t" (if $kind $kind "") "\t" (if $pattern $pattern "") "\n")'
+
+# Rows live in a file, not a variable: a project tags file runs to six figures,
+# and the picker wants a stream anyway. No buffer text passes through it.
+tmpd=$(mktemp -d) || die "mktemp failed"
+trap 'rm -rf "$tmpd"' EXIT INT TERM
+
+if [ -n "$name" ]; then
+  "$READTAGS" -t "$tagfile" -F "$FMT" - "$name" 2>/dev/null
+else
+  "$READTAGS" -t "$tagfile" -F "$FMT" -l 2>/dev/null
+fi |
+# Resolve each hit's file against the tags file's root, shorten it against the
+# editor's cwd, and unescape the address into the definition line it came from.
+# Column 1 is the row index, and the picker's text is never parsed for anything
+# else -- a filename may hold a space, a definition holds anything at all.
+awk -F'\t' "$CANON_AWK"'
+function unesc(s,   i, c, out) {              # ctags escapes only "\" and "/"
+  out = ""
+  for (i = 1; i <= length(s); i++) {
+    c = substr(s, i, 1)
+    if (c == "\\" && i < length(s)) { i++; c = substr(s, i, 1) }
+    out = out c
+  }
+  return out
+}
+BEGIN { base = ENVIRON["TAG_BASE"]; cwd = ENVIRON["TAG_CWD"] }
+NF >= 2 {
+  addr = $5
+  for (i = 6; i <= NF; i++) addr = addr "\t" $i        # a tab inside the source line
+  abs = canon(substr($2, 1, 1) == "/" ? $2 : base "/" $2)
+  rel = abs
+  if (substr(abs, 1, length(cwd) + 1) == cwd "/") rel = substr(abs, length(cwd) + 2)
+
+  # The address: "NNN", "/^def$/", or ctags default "NNN;/^def$/". Strip the
+  # line number, then the search delimiters, then the anchors -- which say how
+  # the text must line up, and are the only regex left in it.
+  sub(/^[0-9]+;/, "", addr)
+  as = 0; ae = 0; pat = ""
+  d = substr(addr, 1, 1)
+  if ((d == "/" || d == "?") && substr(addr, length(addr), 1) == d) {
+    pat = substr(addr, 2, length(addr) - 2)
+    if (substr(pat, 1, 1) == "^") { as = 1; pat = substr(pat, 2) }
+    if (substr(pat, length(pat), 1) == "$") { ae = 1; pat = substr(pat, 1, length(pat) - 1) }
+    pat = unesc(pat)
+  }
+  if ($3 == "" && pat == "") next                      # nothing to aim with
+  printf "%d\t%s\t%s\t%s\t%s\t%s\t%d%d\t%s\n", ++n, abs, rel, $3, $4, $1, as, ae, pat
+}' > "$tmpd/rows"
+
+count=$(wc -l < "$tmpd/rows")
+if [ "$count" -eq 0 ]; then
+  if [ -n "$name" ]; then fail "no tag named '$name' in $tagfile"
+  else fail "no tags in $tagfile"; fi
+fi
+
+# ---- pick --------------------------------------------------------------------
+# One hit is a jump, not a menu: that is vi's `:tag` against its `:tselect`, and
+# a picker over a single unambiguous answer is a keystroke spent dismissing it.
+# Browsing (no NAME) always shows the picker, even at one tag.
+if [ -n "$name" ] && [ "$count" -eq 1 ]; then
+  row=$(cat "$tmpd/rows")
+else
+  sel=$(awk -F'\t' '{
+    where = ($4 != "") ? $3 ":" $4 : $3
+    def = $8; for (i = 9; i <= NF; i++) def = def "\t" $i
+    sub(/^[ \t]+/, "", def)
+    printf "%5s  %-2s %-24s %-30s %s\n", $1, $5, $6, where, def
+  }' "$tmpd/rows" | $PICKER) || exit 0
+  idx=$(printf '%s' "$sel" | awk '{print $1}')
+  case "$idx" in ''|*[!0-9]*) exit 0 ;; esac
+  row=$(awk -F'\t' -v i="$idx" '$1 == i' "$tmpd/rows")
+fi
+[ -n "$row" ] || exit 0
+
+abs=$(printf '%s\n' "$row" | cut -f2)
+rel=$(printf '%s\n' "$row" | cut -f3)
+line=$(printf '%s\n' "$row" | cut -f4)
+anch=$(printf '%s\n' "$row" | cut -f7)
+PAT=$(printf '%s\n' "$row" | cut -f8-); export PAT
+
+# ---- resolve the line --------------------------------------------------------
+# The pattern wins over the line number, because the combined address ctags
+# writes by default -- `12;/^def$/` -- is an ex address CHAIN: line 12, then
+# search from there. The number is where the definition was, the pattern is what
+# it is, and only the pattern survives an edit above it. So a hit is the match
+# nearest the recorded line, the number is the fallback when the definition has
+# moved out from under the pattern too, and an address with no pattern at all
+# (`ctags --excmd=number`) is the number and nothing else.
+#
+# In the file being edited the search runs over the buffer snapshot: the tags
+# file is as old as the last ctags run, the snapshot is as new as this press.
+same=0
+[ -n "$curfile" ] && [ "$(canonpath "$curfile")" = "$abs" ] && same=1
+# A tags file outlives the tree it indexed. Say so rather than letting `:e` open
+# an empty buffer on a path that is no longer there.
+{ [ "$same" = 1 ] || [ -f "$abs" ]; } || fail "$rel is gone (re-run ctags)"
+if [ -n "$PAT" ]; then
+  src=$abs
+  { [ "$same" = 1 ] && [ -n "${LVI_BUFFER:-}" ] && [ -f "$LVI_BUFFER" ]; } && src=$LVI_BUFFER
+  hit=$(awk -v as="${anch%?}" -v ae="${anch#?}" -v hint="${line:-0}" '
+    BEGIN { p = ENVIRON["PAT"]; n = length(p); best = 0 }
+    {
+      if (as && ae)  ok = ($0 == p)
+      else if (as)   ok = (substr($0, 1, n) == p)
+      else if (ae)   ok = (length($0) >= n && substr($0, length($0) - n + 1) == p)
+      else           ok = (index($0, p) > 0)
+      if (ok) {
+        if (hint == 0) { print NR; exit }
+        d = NR - hint; if (d < 0) d = -d
+        # Past the hint the distance only grows, so the previous best is final.
+        if (best == 0 || d < bd) { best = NR; bd = d } else { print best; exit }
+      }
+    }
+    END { if (best) print best }' "$src" 2>/dev/null)
+  [ -n "$hit" ] && line=$hit
+fi
+[ -n "$line" ] || fail "$rel no longer has that definition (re-run ctags)"
+
+# `e -- NAME` takes the name literally (no shell expansion, nothing to escape),
+# and is skipped when we are already in the file. `^` lands on the first
+# non-blank, the landing a line address gives for free.
+if [ "$same" = 1 ]; then send "pos $line 1 byte jump" "normal ^"
+else send "e -- $rel" "pos $line 1 byte jump" "normal ^"; fi

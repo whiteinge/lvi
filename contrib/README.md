@@ -115,7 +115,7 @@ cover: a tool that needs the terminal **and** the live buffer at once — an
 interactive picker built from *unsaved* text (`lvi-tags`). Self-backgrounding
 frees the loop but surrenders the tty the picker needs. So the binding snapshots
 the buffer to `$LVI_BUFFER` with `:wbuf` *before* handing over the tty, and the
-frozen picker reads that file: `map \t :wbuf<CR>:silent !lvi-tags<CR>`. The
+frozen picker reads that file: `map \tt :wbuf<CR>:silent !lvi-tags<CR>`. The
 manpage's *Shelling out* table lays the verbs side by side.
 
 **Reactive hooks push; nothing polls.** `on change` (the buffer settled), `on
@@ -730,14 +730,54 @@ and jumps to the one you pick. Because each row shows the tag's own definition
 line, scrolling the picker *is* a structural overview of the buffer — "jump
 to a function" or "what's in this file". It re-tags the **live buffer**,
 not from an on-disk`tags` file, so it reflects your unsaved, in-progress
-edits. Bind it: `map \t :wbuf<CR>:silent !lvi-tags<CR>` (`:wbuf` snapshots
+edits. Bind it: `map \tt :wbuf<CR>:silent !lvi-tags<CR>` (`:wbuf` snapshots
 the buffer so the picker can read it — see the spawn disciplines above; keep
 the `:wbuf` prefix, or the picker tags a stale earlier snapshot).
 
-There is no `readtags` in the pipeline: `readtags` indexes and queries an
-on-disk `tags` file, but here ctags' own stdout *is* the query result —
-every tag comes from this one buffer by construction, so there is nothing
-to filter and nothing for a `tags` file to add.
+There is no `readtags` in the pipeline: `readtags` queries an on-disk
+`tags` file, but here ctags' own stdout *is* the query result — every tag
+comes from this one buffer by construction, so there is nothing to filter
+and nothing for a `tags` file to add. The project-wide question is
+`lvi-tagfile`, next.
+
+### `lvi-tagfile` — jump to any tag in the project
+
+`lvi-tags` answers "what is in this file". `lvi-tagfile` answers "where is this
+defined", across everything ctags indexed: `readtags` queries the on-disk
+`tags` file, the hits go through the picker, and the view opens the file and
+lands on the definition. Given a name it is vi's `:tag` — one hit is a jump,
+several open the picker, which is `:tselect`.
+
+```
+map \tp :wbuf<CR>:silent !lvi-tagfile<CR>      " browse the project's tags
+map \tj :wbuf<CR>:silent !lvi-tagfile -c<CR>   " the tag under the cursor
+```
+
+The tags file is found by walking up from the file being edited (`tags`, then
+`.tags`), and failing that up from the editor's cwd — vim's default
+`tags=./tags,tags`, with no path list to configure. The cwd pass is what finds
+a project's tags file while you are editing something from outside the tree,
+and it is all a buffer with no file name has to go on. `$LVI_TAG_FILE` names
+one directly.
+
+A tag's address is a line number, a *search pattern* for its definition line,
+or (ctags' default) both. The pattern wins: the combined form `12;/^def$/` is
+an ex address chain, line 12 then search from there, and only the pattern
+survives an edit above the definition. ctags escapes only `\` and the `/`
+delimiter in it, so the rest of the line arrives raw — read as a regex, a
+definition containing `[*.]` matches something else; read as a string, it
+matches itself. lvi-tagfile matches the string, anchored where the pattern's `^`
+and `$` say.
+
+When the tag lands in the buffer you are already editing, that match runs over
+the `:wbuf` snapshot instead of the file on disk, so the jump follows lines you
+have added since the last ctags run. Keep the `:wbuf` in the binding for that
+reason. It covers that one buffer only: a jump into a different file lvi holds
+with unsaved edits lands by the copy on disk, since the picker owns the
+terminal and lvi is frozen behind it.
+
+The jump is jump-class, so Ctrl-O walks back out of it. There is no tag stack
+to pop: the jumplist is lvi's only history.
 
 ### `lvi-lsp` — definition and references, from a language server
 

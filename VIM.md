@@ -23,9 +23,10 @@ reference; this is the translation.
 
 The keymap in that file is one design, not thirty tools each grabbing a
 convenient letter. `\` is the only leader; a letter is either a single action
-(`\f` open a file, `\t` tags, `\e` lint) or a menu whose most-used action is
-that letter doubled (`\gg` git changes, `\ll` switch lists). Keys that mirror a
-vim key stay on that key instead: `/`, `*`, `n`, `]c`, `gc`, `z=`, `<C-a>`.
+(`\f` open a file, `\e` lint, `\s` spelling) or a menu whose most-used action
+is that letter doubled (`\tt` this file's tags, `\gg` git changes). Keys that
+mirror a vim key stay on that key instead: `/`, `*`, `n`, `]c`, `gc`, `z=`,
+`<C-a>`.
 
 ## Three habits to relearn
 
@@ -143,7 +144,7 @@ same few spellings recur, and most have no vim equivalent:
 | `:make` + errorformat | `lvi -q errorfile`, or lint on write | `lvi-list`, `lvi-lint` |
 | `:nohlsearch` | `\lh` hides the focused list's marks; the next `n` re-shows them (`:nohl` clears *every* overlay, syntax included) | `lvi-list` |
 | `matchadd()` | `\hm` marks the word under the cursor | `lvi-match` |
-| `Ctrl-]`, `:tag` | `<C-]>` asks a language server; with no server, `\t` outlines the *current* file (there is no tags file) | `lvi-lsp`, `lvi-tags` |
+| `Ctrl-]`, `:tag` | `<C-]>` asks a language server; `\tj` is the same jump through a `tags` file, `\tp` browses one, `\tt` outlines the current file | `lvi-lsp`, `lvi-tagfile`, `lvi-tags` |
 | global marks `A`–`Z` | same keys, once `on markset`/`on markjump` are wired | `lvi-gmark` |
 | `` `" `` (viminfo position) | `on ready lvi-pos restore` | `lvi-pos` |
 | `Ctrl-O` / `Ctrl-I`, `g;` | identical | core |
@@ -201,7 +202,8 @@ env knob.
 | Plugin | lvi | Key or rc line |
 | --- | --- | --- |
 | fzf.vim, ctrlp | `lvi-open`, `lvi-buf`, `lvi-cmd` — `$LVI_PICKER` aims them all | `map \f :silent !lvi-open<CR>` |
-| Tagbar, vista | `lvi-tags` — the current file's tags in a picker, so jump and outline are one key (`:wbuf` snapshots the buffer for it to read) | `map \t :wbuf<CR>:silent !lvi-tags<CR>` |
+| Tagbar, vista | `lvi-tags` — the current file's tags in a picker, so jump and outline are one key (`:wbuf` snapshots the buffer for it to read) | `map \tt :wbuf<CR>:silent !lvi-tags<CR>` |
+| vim's `tags` option, `:tselect` | `lvi-tagfile` — `readtags` over the project's `tags` file, in the same picker; the file is found by walking up from the buffer, then from the cwd | `map \tp :wbuf<CR>:silent !lvi-tagfile<CR>` |
 | vim-unimpaired | the `]x`/`[x` pairs in the sample rc: `]c` hunks, `]e` lint, `]s` spelling | `map ]e :bg lvi-list next lint<CR>` |
 | vim-illuminate, interestingwords | `lvi-match` — sticky pattern marks, one color apiece | `map \hm :bg lvi-match add --word -F "$LVI_CWORD"<CR>` |
 | vim-searchindex | the list's `[3/57]` counter in the status line | `lvi-list` |

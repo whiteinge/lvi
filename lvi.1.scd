@@ -1070,7 +1070,7 @@ text (see *contrib/lvi-tags*) -- the terminal verbs block lvi, so the tool
 cannot ask for the buffer back. Snapshot it to a file first, then let the
 blocked tool read the file:
 
-	map \\t :wbuf<CR>:silent !lvi-tags<CR>
+	map \\tt :wbuf<CR>:silent !lvi-tags<CR>
 
 *wbuf* writes the live buffer (unsaved edits and all) to *$LVI_BUFFER*, a
 scratch path in the tool's environment.
@@ -1442,8 +1442,26 @@ below, with the happy-path rc lines that turn it on:
 	outline in one key. *:wbuf* snapshots the live buffer for the picker to read:
 
 	```
-	map \\t :wbuf<CR>:silent !lvi-tags<CR>
+	map \\tt :wbuf<CR>:silent !lvi-tags<CR>
 	```
+
+*lvi-tagfile* -- jump to any tag in the project
+	vi's *:tag*, over an on-disk *tags* file: *readtags* queries it, the hits go
+	through the picker, and the view opens the file and lands on the definition.
+	One hit is a jump, several are a picker (*:tselect*). The tags file is found
+	by walking up from the file you are in, then from the editor's cwd (vim's
+	default *tags=./tags,tags*):
+
+	```
+	map \\tp :wbuf<CR>:silent !lvi-tagfile<CR>
+	map \\tj :wbuf<CR>:silent !lvi-tagfile -c<CR>
+	```
+
+	Where lvi-tags re-tags the live buffer, this reaches every file ctags
+	indexed, and is as fresh as the last ctags run. Keep the *:wbuf*: a tag that
+	points into the buffer you are editing is re-found in that snapshot, so the
+	jump follows lines you have added since. Ctrl-O walks back out -- the
+	jumplist is lvi's only history, and there is no tag stack.
 
 *lvi-lsp* -- ask a language server
 	Definition and references from a language server, as lists: *def* jumps to

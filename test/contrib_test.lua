@@ -2181,6 +2181,266 @@ wait
       end)
     end)
 
+    -- lvi-tagfile. The tags file here is hand-written, so the fixtures pin the
+    -- ADDRESS SHAPES the format allows -- a line number, a search pattern,
+    -- ctags' combined `NNN;/pattern/` -- rather than whatever the local ctags
+    -- emits. `!_TAG_FILE_SORTED 0` because readtags binary-searches a file that
+    -- claims to be sorted, and these rows are in fixture order. The picker
+    -- needs a terminal, so $LVI_PICKER is a line filter: the row it prints is
+    -- the row that was picked.
+    describe("lvi-tagfile", function()
+      local function tagsfile(rows)
+        return "!_TAG_FILE_FORMAT\t2\t//\n!_TAG_FILE_SORTED\t0\t//\n" .. rows
+      end
+      -- Skips rather than fails where readtags is absent: it ships with
+      -- Universal Ctags, which is not on every machine the suite runs on.
+      local function have_readtags()
+        return os.execute("command -v readtags >/dev/null 2>&1")
+      end
+
+      it("jumps straight to a single hit, no picker", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.lua", "a\nb\nfunction f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t3;/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.lua\npos 3 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- The pattern is the definition line, not a regex over it: ctags escapes
+      -- only `\` and `/`, so `[*.]` arrives as four literal characters. Line 1
+      -- is what a regex would land on; line 2 is the tag.
+      it("matches a pattern address literally, not as a regex", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.sh", 'c() { echo "*"; }\nc() { echo "[*.]"; }\n')
+        write(d .. "/tags", tagsfile('c\tsrc.sh\t/^c() { echo "[*.]"; }$/;"\tf\n'))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile c")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.sh\npos 2 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- ctags escapes the `/` delimiter and the backslash itself; nothing else.
+      it("unescapes the pattern's slashes and backslashes", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.sh", 'x\ny() { echo "a/b\\c"; }\n')
+        write(d .. "/tags", tagsfile('y\tsrc.sh\t/^y() { echo "a\\/b\\\\c"; }$/;"\tf\n'))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile y")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.sh\npos 2 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- ctags' default address is `NNN;/^def$/`, an ex address chain: the
+      -- number is where the definition was, the pattern is what it is. The
+      -- pattern wins, so lines added above the definition do not throw it off.
+      it("prefers the pattern over the line number in a combined address", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.lua", "pad\npad\na\nb\nfunction f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t3;/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.lua\npos 5 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- Two identical definition lines: the recorded number is the tiebreak,
+      -- which is what the address chain's "search FROM line N" amounts to.
+      it("takes the match nearest the recorded line", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.lua", "function f() end\nx\ny\nz\nfunction f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t4;/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.lua\npos 5 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- The definition changed as well as moved, so the pattern finds nothing
+      -- and the recorded line is all that is left to aim with.
+      it("falls back to the line number when the pattern is gone", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.lua", "a\nb\nfunction f(x) end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t3;/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.lua\npos 3 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- A number-only address (ctags --excmd=number) has nothing else to use.
+      it("uses a bare line-number address as-is", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.lua", "a\nb\nfunction f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t3;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.lua\npos 3 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- Already in the file: :e would be a buffer switch to where we are.
+      it("skips the :e when the tag is in the current buffer", function()
+        if not have_readtags() then return end
+        local d = stub({})
+        write(d .. "/src.lua", "a\nb\nfunction f() end\n")
+        write(d .. "/path", d .. "/src.lua\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = d .. "/src.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal("pos 3 1 byte jump\nnormal ^\n")
+        cleanup(d)
+      end)
+
+      -- The tags file is as old as the last ctags run; the :wbuf snapshot is as
+      -- new as this press. Two lines added above the definition, and the jump
+      -- follows them.
+      it("re-finds a pattern in the buffer snapshot, not the stale file", function()
+        if not have_readtags() then return end
+        local d = stub({})
+        write(d .. "/src.lua", "a\nb\nfunction f() end\n")
+        write(d .. "/snap", "new\nnew\na\nb\nfunction f() end\n")
+        write(d .. "/path", d .. "/src.lua\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t3;/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = d .. "/src.lua",
+              LVI_BUFFER = d .. "/snap", LVI_TAG_FILE = d .. "/tags",
+              LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal("pos 5 1 byte jump\nnormal ^\n")
+        cleanup(d)
+      end)
+
+      -- Several hits are a menu (vi's :tselect). The pick comes back off column
+      -- 1, the row index, so a filename with a space in it survives the trip.
+      it("offers several hits to the picker and reads the pick off column 1", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/one.lua", "function f() end\n")
+        write(d .. "/a b.lua", "x\nfunction f() end\n")
+        write(d .. "/tags", tagsfile(
+          "f\tone.lua\t/^function f() end$/;\"\tf\n" ..
+          "f\ta b.lua\t/^function f() end$/;\"\tf\n"))
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "elsewhere.lua", LVI_TAG_FILE = d .. "/tags" }
+        env.LVI_PICKER = "sed -n 2p"
+        run(env, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/a b.lua\npos 2 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- Browsing takes no name, so every tag is offered even at one hit.
+      it("browses every tag when given no name", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/one.lua", "function f() end\n")
+        write(d .. "/tags", tagsfile("f\tone.lua\t1;/^function f() end$/;\"\tf\n"))
+        local rows = d .. "/rows"
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags",
+              LVI_PICKER = "tee " .. rows }, "lvi-tagfile")
+        local offered = read(rows)
+        expect(offered:find("function f() end", 1, true)).to.exist()
+        expect(offered:find("one.lua:1", 1, true)).to.exist()
+        cleanup(d)
+      end)
+
+      -- Errors reach the view, not just stderr: every documented binding runs
+      -- under `:silent !`, where stderr scrolls past under the repaint.
+      it("reports an unknown name and a vanished file to the view", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/tags", tagsfile("f\tgone.lua\t/^function f() end$/;\"\tf\n"))
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "elsewhere.lua", LVI_TAG_FILE = d .. "/tags",
+                      LVI_PICKER = "false" }
+        run(env, "lvi-tagfile nosuch")
+        expect(read(d .. "/log"):find("no tag named 'nosuch'", 1, true)).to.exist()
+        os.remove(d .. "/log")
+        run(env, "lvi-tagfile f")
+        expect(read(d .. "/log"):find("gone.lua is gone", 1, true)).to.exist()
+        cleanup(d)
+      end)
+
+      -- vim's default `tags` option is `./tags,tags`: relative to the file,
+      -- then relative to where you are. The cwd pass is what finds a project's
+      -- tags file while the buffer is a file from outside the tree...
+      it("falls back to the cwd when the file's own tree has no tags file", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "/etc/hostname\n" })
+        write(d .. "/src.lua", "function f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "/etc/hostname",
+              LVI_PICKER = "false" }, ("cd '%s' && lvi-tagfile f"):format(d))
+        -- cwd is the tree, so the name sent back is the one you would type.
+        expect(read(d .. "/log")).to.equal("e -- src.lua\npos 1 1 byte jump\nnormal ^\n")
+        cleanup(d)
+      end)
+
+      -- ...and it is all a buffer with no file name has to go on.
+      it("finds the cwd's tags file for a buffer with no file name", function()
+        if not have_readtags() then return end
+        local d = stub({})
+        write(d .. "/path", "")
+        write(d .. "/src.lua", "function f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t/^function f() end$/;\"\tf\n"))
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "",
+              LVI_PICKER = "false" }, ("cd '%s' && lvi-tagfile f"):format(d))
+        expect(read(d .. "/log")).to.equal("e -- src.lua\npos 1 1 byte jump\nnormal ^\n")
+        cleanup(d)
+      end)
+
+      -- Relative paths in a tags file are rooted where ctags ran, which
+      -- Universal Ctags records; with no such tag, at the tags file itself.
+      it("roots relative paths at !_TAG_PROC_CWD when the tags file has one", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        os.execute("mkdir -p '" .. d .. "/tree'")
+        write(d .. "/tree/src.lua", "function f() end\n")
+        write(d .. "/tags", "!_TAG_FILE_FORMAT\t2\t//\n!_TAG_FILE_SORTED\t0\t//\n"
+          .. "!_TAG_PROC_CWD\t" .. d .. "/tree/\t//\n"
+          .. "f\tsrc.lua\t/^function f() end$/;\"\tf\n")
+        run({ LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_FILE = "elsewhere.lua",
+              LVI_TAG_FILE = d .. "/tags", LVI_PICKER = "false" }, "lvi-tagfile f")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/tree/src.lua\npos 1 1 byte jump\nnormal ^\n"):format(d))
+        cleanup(d)
+      end)
+
+      -- -c is the Ctrl-] shape: the name comes from the word under the cursor.
+      it("takes the name from $LVI_CWORD with -c", function()
+        if not have_readtags() then return end
+        local d = stub({ path = "elsewhere.lua\n" })
+        write(d .. "/src.lua", "function f() end\n")
+        write(d .. "/tags", tagsfile("f\tsrc.lua\t/^function f() end$/;\"\tf\n"))
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1",
+                      LVI_FILE = "elsewhere.lua", LVI_TAG_FILE = d .. "/tags",
+                      LVI_PICKER = "false", LVI_CWORD = "f" }
+        run(env, "lvi-tagfile -c")
+        expect(read(d .. "/log")).to.equal(
+          ("e -- %s/src.lua\npos 1 1 byte jump\nnormal ^\n"):format(d))
+        os.remove(d .. "/log")
+        env.LVI_CWORD = ""
+        run(env, "lvi-tagfile -c")
+        expect(read(d .. "/log"):find("not on a word", 1, true)).to.exist()
+        cleanup(d)
+      end)
+    end)
+
     -- lvi-cmd. The picker itself needs a terminal, so $LVI_PICKER points at a
     -- stub that saves the rows it was offered and echoes back the one matching
     -- $PICK -- which makes both halves assertable: what the tool put in front
