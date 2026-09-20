@@ -110,9 +110,9 @@ plus a column per tool to mark lines in, off by default.
 
 Turn those on and you get syntax highlighting, live-buffer search, quickfix
 lists, linting, formatting, toggleable spell check, fuzzy file-open,
-**go-to-definition from a language server** — and even a **two-way vimdiff with
-scrollbind and a `git add -p` staging UI** — all as [`contrib/`](contrib/) tools
-and *none* of it compiled into the core.
+project-wide `ctags` jumps, **go-to-definition from a language server** — and
+even a **two-way vimdiff with scrollbind and a `git add -p` staging UI** — all
+as [`contrib/`](contrib/) tools and *none* of it compiled into the core.
 
 👉 **The [manpage](lvi.1.scd) is the full command and configuration reference.**
 
