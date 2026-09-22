@@ -26,7 +26,8 @@
 #     :    or  colon         : line comment          (some assembler / config)
 #     cblock                /* ... */ block          C, CSS
 #     html                  <!-- ... --> block       HTML, XML, Markdown
-# A line style prefixes each line (at its own indent); a block style wraps the
+# A line style prefixes each line at the span's shallowest indent, so the
+# markers align and nesting survives after them; a block style wraps the
 # span's first non-blank line's content in OPEN and its last in CLOSE.
 #
 # SYNOPSIS
@@ -108,6 +109,15 @@ END {
       if (substr(t, 1, length(mark)) != mark) allc = 0
     }
     if (!any) allc = 0
+    # Comment at the span'"'"'s shallowest indent so the markers line up (vim-
+    # commentary / nvim gc style) and nesting survives after them. That indent
+    # is a literal prefix (tabs vs spaces), so a line not sharing it falls back
+    # to its own indent rather than being cut mid-indent.
+    pre = ""; pl = -1
+    for (i = 1; i <= NR; i++) {
+      s = L[i]; if (s ~ /^[ \t]*$/) continue
+      match(s, /^[ \t]*/); if (pl < 0 || RLENGTH < pl) { pl = RLENGTH; pre = substr(s, 1, pl) }
+    }
     for (i = 1; i <= NR; i++) {
       s = L[i]
       if (s ~ /^[ \t]*$/) { print s; continue }         # leave blank lines be
@@ -116,7 +126,9 @@ END {
         b = substr(body, length(mark) + 1)
         if (substr(b, 1, 1) == " ") b = substr(b, 2)     # and the one space we added
         print ind b
-      } else print ind mark " " body                     # comment
+      } else if (substr(s, 1, pl) == pre)                # comment, aligned
+        print pre mark " " substr(s, pl + 1)
+      else print ind mark " " body
     }
     exit
   }
