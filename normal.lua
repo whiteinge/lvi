@@ -369,14 +369,21 @@ local function backspace(ed)
 end
 
 -- Ctrl-W: delete the whitespace + word before the cursor (like the shell).
-local function kill_word(ed)
-  local s, c = line(ed, ed.cy), ed.cx
+-- erase_word_at is the scan alone, shared with the command line's Ctrl-W: the
+-- byte index the erase keeps up to, for a cursor at byte `c` of `s`.
+local function erase_word_at(s, c)
   local i = c - 1
   while i >= 1 and s:sub(i, i):match("%s") do i = i - 1 end     -- skip trailing blanks
   if i >= 1 then
     local cls = char_class(s:sub(i, i))
     while i >= 1 and char_class(s:sub(i, i)) == cls do i = i - 1 end
   end
+  return i
+end
+
+local function kill_word(ed)
+  local s, c = line(ed, ed.cy), ed.cx
+  local i = erase_word_at(s, c)
   ed.buf:set(ed.cy, s:sub(1, i) .. s:sub(c))
   ed.cx = i + 1
 end
@@ -1486,6 +1493,8 @@ local function collect_line(ed, hist, cmdwin)
       if #ed.cmdline == 0 then return done(k, nil) end
       -- Erase the whole trailing char (may be multibyte), like insert mode.
       ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
+    elseif k == 23 then                                         -- Ctrl-W: erase a word
+      ed.cmdline = ed.cmdline:sub(1, erase_word_at(ed.cmdline, #ed.cmdline + 1))
     elseif k == 21 then ed.cmdline = ""                         -- Ctrl-U: erase the line
     elseif cmdwin and k == 6 then                               -- Ctrl-F: the command window
       -- Carry any half-typed line in as the seed, then hand off. The window

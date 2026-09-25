@@ -2264,6 +2264,13 @@ describe("prompted commands (:prompt)", function()
     expect(got.input).to.equal("right")
   end)
 
+  it("Ctrl-W erases the word before the cursor, trailing blanks with it", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    feed(ed, ":prompt / bg tool\r"); feed(ed, "foo.bar baz  \23\23qux\r")
+    expect(got.input).to.equal("foo.qux")                  -- "baz  ", then "bar"
+  end)
+
   it("is refused off the interpreter, where a key cannot be read", function()
     local ed = make("a")
     local payload, status = ex.dispatch(ed, "prompt / bg tool")   -- as the socket calls it

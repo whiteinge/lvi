@@ -327,8 +327,9 @@ them all (*zR*) or stop honoring them (*zi*); both survive any push.
 	Begin an ex command (see *EX COMMANDS*). At the prompt, *Ctrl-P* and *Ctrl-N*
 	step back and forward through command history, and *Ctrl-F* opens the command
 	window (*:cmdwin*), carrying any half-typed line in. The prompt itself stays
-	deliberately minimal (type, Backspace, and *Ctrl-U* to erase the line); reach
-	for the command window when a command grows long enough to want real editing.
+	deliberately minimal (type, Backspace, *Ctrl-W* to erase a word, and *Ctrl-U*
+	to erase the line); reach for the command window when a command grows long
+	enough to want real editing.
 	A *.* that repeats a command whose line came from history replays the line
 	itself, so it runs the same text even after the history has moved on.
 
