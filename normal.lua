@@ -1447,30 +1447,58 @@ end
 --
 -- Keys arrive through getkey, so the funnel logs them: a pattern typed here is
 -- part of ed.last_change, which is what makes `.` replay `d/foo` -- it retypes
--- the pattern into this same prompt.
+-- the pattern into this same prompt. A history recall would break that: `.`
+-- would press the same Ctrl-Ps against a list that has grown since (the line
+-- just submitted is now its newest entry) and fetch a different line. So once
+-- a recall happens, the keys logged for this line are rewritten on the way out
+-- to the line as literal keystrokes (Ctrl-V before a control byte) plus the key
+-- that ended it -- `.` replays what was entered, not how. A seeded prompt (the
+-- `!` operator's range) is re-seeded on replay, possibly with different line
+-- numbers, so a line that still extends the seed replays as just the typed
+-- tail; one that replaced it (a recalled `1,5!sort`) replays behind a Ctrl-U,
+-- which kills whatever seed the replay brought. Macros keep the raw keys: a
+-- register holds what you pressed, the way vi's always has.
+local function literal_keys(ed, from, seed, text, last)
+  for i = #ed.keylog, from, -1 do ed.keylog[i] = nil end
+  if seed ~= "" and text:sub(1, #seed) == seed then text = text:sub(#seed + 1)
+  elseif seed ~= "" then ed.keylog[#ed.keylog + 1] = 21 end
+  for i = 1, #text do
+    local c = text:byte(i)
+    if c ~= 9 and (c < 32 or c == 127) then ed.keylog[#ed.keylog + 1] = 22 end
+    ed.keylog[#ed.keylog + 1] = c
+  end
+  ed.keylog[#ed.keylog + 1] = last
+end
+
 local function collect_line(ed, hist, cmdwin)
   local hidx = #hist + 1
   local stash = nil
+  local from, seed, recalled = #ed.keylog + 1, ed.cmdline, false
+  local function done(k, ...)
+    if recalled then literal_keys(ed, from, seed, ed.cmdline, k) end
+    return ...
+  end
   while true do
     local k = getkey(ed)
-    if k == 13 or k == 10 then return ed.cmdline
-    elseif k == 27 or k == 3 then return nil                    -- Esc / Ctrl-C cancel
+    if k == 13 or k == 10 then return done(k, ed.cmdline)
+    elseif k == 27 or k == 3 then return done(k, nil)           -- Esc / Ctrl-C cancel
     elseif k == 127 or k == 8 then
-      if #ed.cmdline == 0 then return nil end
+      if #ed.cmdline == 0 then return done(k, nil) end
       -- Erase the whole trailing char (may be multibyte), like insert mode.
       ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
+    elseif k == 21 then ed.cmdline = ""                         -- Ctrl-U: erase the line
     elseif cmdwin and k == 6 then                               -- Ctrl-F: the command window
       -- Carry any half-typed line in as the seed, then hand off. The window
       -- gives full-editor editing for anything too fiddly for a one-line prompt.
-      return nil, (ed.cmdline == "" and "cmdwin" or ("cmdwin " .. ed.cmdline))
+      return done(k, nil, (ed.cmdline == "" and "cmdwin" or ("cmdwin " .. ed.cmdline)))
     elseif k == 16 then                                         -- Ctrl-P: older history
       if hidx > 1 then
         if hidx == #hist + 1 then stash = ed.cmdline end
-        hidx = hidx - 1; ed.cmdline = hist[hidx]
+        hidx = hidx - 1; ed.cmdline = hist[hidx]; recalled = true
       end
     elseif k == 14 then                                         -- Ctrl-N: newer history
       if hidx <= #hist then
-        hidx = hidx + 1
+        hidx = hidx + 1; recalled = true
         ed.cmdline = (hidx > #hist) and (stash or "") or hist[hidx]
       end
     -- Ctrl-V / Ctrl-Q quote the next character here too. POSIX exempts only

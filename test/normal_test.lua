@@ -827,6 +827,22 @@ describe("normal-mode interpreter", function()
       feed(ed, "!!tr a-z A-Z\r")
       expect(ed.buf:get()).to.equal({ "HELLO", "world" })
     end)
+    it(". after a recalled ! command replays the typed tail behind the new seed", function()
+      local ed = make("a\nb\nc")
+      ed.cmdhist = { "1,1!tr a-z A-Z" }
+      feed(ed, "!!\16\r")                          -- recall extends the "1,1!" seed
+      expect(ed.buf:line(1)).to.equal("A")
+      feed(ed, "j.")                                -- reseeds "2,2!", retypes the tail
+      expect(ed.buf:get()).to.equal({ "A", "B", "c" })
+    end)
+    it(". after a recalled ! command that replaced the seed kills the new one", function()
+      local ed = make("a\nb\nc")
+      ed.cmdhist = { "1,$!tr a-z A-Z" }
+      feed(ed, "!!\16\r")                          -- a different range than the seed
+      local keys = {}
+      for i, k in ipairs(ed.last_change) do keys[i] = string.char(k) end
+      expect(table.concat(keys)).to.equal("!!\21" .. "1,$!tr a-z A-Z\r")
+    end)
     it("cancelling the ! prompt leaves the buffer unchanged", function()
       local ed = make("b\na")
       feed(ed, "!Gsort\27")                          -- Esc cancels
@@ -2154,6 +2170,18 @@ describe("external motions (:motion)", function()
     expect(ed.buf:line(2)).to.equal("aaaa")
     expect(#ed.cmdhist).to.equal(0)             -- the ex history never saw it
   end)
+
+  it("`.` replays a recalled pattern as the text it recalled", function()
+    local ed = withmotion("aaaaaa\naaaaaa\naaaaaa\naaaaaa", EATS)
+    feed(ed, "d/xx\r")
+    feed(ed, "j0d/yyyy\r")
+    feed(ed, "j0d/\16\16\r")                    -- two back: "xx"
+    expect(ed.buf:line(3)).to.equal("aaaa")
+    -- The history has grown by one since, so replaying the two Ctrl-Ps as
+    -- keys would fetch "yyyy" and eat four.
+    feed(ed, "j0.")
+    expect(ed.buf:line(4)).to.equal("aaaa")
+  end)
 end)
 
 describe("prompted commands (:prompt)", function()
@@ -2227,6 +2255,13 @@ describe("prompted commands (:prompt)", function()
     feed(ed, "/pat\r")
     feed(ed, ":prompt / bg tool\r"); feed(ed, "\16\r")
     expect(got.input).to.equal("pat")
+  end)
+
+  it("Ctrl-U erases the line typed so far", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    feed(ed, ":prompt / bg tool\r"); feed(ed, "wrong\21right\r")
+    expect(got.input).to.equal("right")
   end)
 
   it("is refused off the interpreter, where a key cannot be read", function()
