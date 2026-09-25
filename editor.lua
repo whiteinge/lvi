@@ -81,6 +81,7 @@ function M.new_ed()
     regs = {},                -- registers a-z + unnamed '"'
     reg_backends = {},        -- :register NAME -> { read = cmd, write = cmd } (clipboard etc.)
     cmdhist = {},             -- submitted ex-command lines (oldest first); Ctrl-P/N + the command window
+    prompthist = {},          -- prompt string -> submitted lines, for :prompt and prompting :motion keys (Ctrl-P/N)
     maps = {},                -- :map LHS -> RHS (byte strings)
     hooks = {},               -- :on event -> { cmd, ... }
     textobj_cmds = {},        -- :textobj KEY -> CMD (custom objects; see ex.textobj_range)

@@ -2142,6 +2142,18 @@ describe("external motions (:motion)", function()
     feed(ed, ".")                               -- retypes /foo<CR> into the prompt
     expect(ed.buf:line(2)).to.equal("foo")
   end)
+
+  -- The tool deletes as many bytes as the pattern is long, so the line left
+  -- behind says which pattern ran.
+  local EATS = "motion / prompt sh -c 'echo char $2 $((${#4}+1))'"
+
+  it("Ctrl-P/N at its prompt walk that key's own history", function()
+    local ed = withmotion("aaaaaa\naaaaaa", EATS)
+    feed(ed, "d/xx\r")
+    feed(ed, "j0d/\16\r")                       -- Ctrl-P recalls "xx"
+    expect(ed.buf:line(2)).to.equal("aaaa")
+    expect(#ed.cmdhist).to.equal(0)             -- the ex history never saw it
+  end)
 end)
 
 describe("prompted commands (:prompt)", function()
@@ -2190,6 +2202,31 @@ describe("prompted commands (:prompt)", function()
     expect(got.cmd).to.be(nil)
     expect(ed.message).to.be(nil)
     expect(ed.mode).to.equal("normal")
+  end)
+
+  it("Ctrl-P/N recall earlier lines typed at the same prompt string", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    feed(ed, ":prompt / bg tool\r"); feed(ed, "one\r")
+    feed(ed, ":prompt / bg tool\r"); feed(ed, "two\r")
+    feed(ed, ":prompt ? bg tool\r"); feed(ed, "back\r")
+    feed(ed, ":prompt / bg tool\r")
+    feed(ed, "\16"); expect(ed.cmdline).to.equal("two")   -- not "back": ? keeps its own
+    feed(ed, "\16"); expect(ed.cmdline).to.equal("one")
+    feed(ed, "\14\r")
+    expect(got.input).to.equal("two")
+    for _, c in ipairs(ed.cmdhist) do                      -- the ex line has only
+      expect(c:find("^prompt ")).to.be.truthy()            -- the :prompt commands
+    end
+  end)
+
+  it("shares its history with a prompting :motion on the same key", function()
+    local ed = make("a")
+    local got = withspawn(ed)
+    ex.dispatch(ed, "motion / prompt sh -c 'echo err none'")
+    feed(ed, "/pat\r")
+    feed(ed, ":prompt / bg tool\r"); feed(ed, "\16\r")
+    expect(got.input).to.equal("pat")
   end)
 
   it("is refused off the interpreter, where a key cannot be read", function()

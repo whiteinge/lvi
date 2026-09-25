@@ -1439,16 +1439,17 @@ end
 -- The command-line LINE EDITOR, on its own: collect a line and return it, or
 -- nil if it was cancelled. Two callers, and the second is why it is factored out
 -- of run_prompt below -- a `:motion` key that prompts wants the line editing and
--- none of the dispatch. `full` is the ':' line's extras: the command history
--- (Ctrl-P/N) and the command-window handoff (Ctrl-F), neither of which a search
--- pattern wants -- it is not an ex command, and it would only clutter both. The
--- second return is the ex command to run on the way out (the handoff).
+-- none of the dispatch. `hist` is the list Ctrl-P/N walk: the ex history for the
+-- ':' line, and for any other prompt its own list (read_line), since a search
+-- pattern is not an ex command and mixing the two would clutter both. `cmdwin`
+-- enables the command-window handoff (Ctrl-F), which only the ':' line wants.
+-- The second return is the ex command to run on the way out (the handoff).
 --
 -- Keys arrive through getkey, so the funnel logs them: a pattern typed here is
 -- part of ed.last_change, which is what makes `.` replay `d/foo` -- it retypes
 -- the pattern into this same prompt.
-local function collect_line(ed, full)
-  local hidx = #ed.cmdhist + 1
+local function collect_line(ed, hist, cmdwin)
+  local hidx = #hist + 1
   local stash = nil
   while true do
     local k = getkey(ed)
@@ -1458,19 +1459,19 @@ local function collect_line(ed, full)
       if #ed.cmdline == 0 then return nil end
       -- Erase the whole trailing char (may be multibyte), like insert mode.
       ed.cmdline = ed.cmdline:sub(1, disp.prev_char(ed.cmdline, #ed.cmdline + 1) - 1)
-    elseif full and k == 6 then                                 -- Ctrl-F: the command window
+    elseif cmdwin and k == 6 then                               -- Ctrl-F: the command window
       -- Carry any half-typed line in as the seed, then hand off. The window
       -- gives full-editor editing for anything too fiddly for a one-line prompt.
       return nil, (ed.cmdline == "" and "cmdwin" or ("cmdwin " .. ed.cmdline))
-    elseif full and k == 16 then                                -- Ctrl-P: older history
+    elseif k == 16 then                                         -- Ctrl-P: older history
       if hidx > 1 then
-        if hidx == #ed.cmdhist + 1 then stash = ed.cmdline end
-        hidx = hidx - 1; ed.cmdline = ed.cmdhist[hidx]
+        if hidx == #hist + 1 then stash = ed.cmdline end
+        hidx = hidx - 1; ed.cmdline = hist[hidx]
       end
-    elseif full and k == 14 then                                -- Ctrl-N: newer history
-      if hidx <= #ed.cmdhist then
+    elseif k == 14 then                                         -- Ctrl-N: newer history
+      if hidx <= #hist then
         hidx = hidx + 1
-        ed.cmdline = (hidx > #ed.cmdhist) and (stash or "") or ed.cmdhist[hidx]
+        ed.cmdline = (hidx > #hist) and (stash or "") or hist[hidx]
       end
     -- Ctrl-V / Ctrl-Q quote the next character here too. POSIX exempts only
     -- Ctrl-D and Ctrl-T from line-oriented commands, and a literal control byte
@@ -1486,13 +1487,23 @@ local function collect_line(ed, full)
 end
 
 -- Run the command line under the prompt character `ch`, seeded with `seed`.
--- Returns the submitted line or nil. Command mode is what render draws, so the
--- state goes up before the first key and comes down before we return, whichever
--- way we leave.
-local function read_line(ed, ch, seed, full)
+-- Returns the submitted line or nil, having recorded it in the history it was
+-- read against. The ':' line (`is_ex`) reads and records the ex history and
+-- may hand off to the command window; every other prompt gets a history of its
+-- own keyed by its prompt string, so `/` via `:prompt` and `/` via a prompting
+-- `:motion` share one list of patterns while `?` keeps another. Command mode is
+-- what render draws, so the state goes up before the first key and comes down
+-- before we return, whichever way we leave.
+local function read_line(ed, ch, seed, is_ex)
+  local hist = ed.cmdhist
+  if not is_ex then
+    hist = ed.prompthist[ch] or {}
+    ed.prompthist[ch] = hist
+  end
   ed.mode = "command"; ed.cmdline = seed or ""; ed.cmdchar = ch
-  local text, handoff = collect_line(ed, full)
+  local text, handoff = collect_line(ed, hist, is_ex)
   ed.mode = "normal"; ed.cmdline = ""; ed.cmdchar = ":"
+  if text then ex.record_history(ed, text, hist) end
   if handoff then ex.dispatch(ed, handoff) end
   return text
 end
@@ -1503,7 +1514,6 @@ end
 local function run_prompt(ed, seed)
   local cmd = read_line(ed, ":", seed, true)
   if not cmd then return false end
-  ex.record_history(ed, cmd)
   local payload, status = ex.dispatch(ed, cmd)
   if status == "err" then
     ed.message = payload:gsub("\n", " "); ed.message_hl = "Error"
@@ -2279,9 +2289,9 @@ function M.loop(ed)
   -- that it is on this coroutine before calling; the field's presence alone is
   -- not the permission (it outlives every park).
   --
-  -- `full` is false, for the reason the `:motion` prompt has it false: what is
-  -- being typed is an argument to a tool, not an ex command, so the ex history
-  -- and the command-window handoff would only clutter it.
+  -- It is not the ex line, for the reason the `:motion` prompt is not: what is
+  -- being typed is an argument to a tool, not an ex command, so it gets its own
+  -- per-prompt history and no command-window handoff.
   ed.read_line = function(ch, seed) return read_line(ed, ch, seed, false) end
   while true do
     command(ed)

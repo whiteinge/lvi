@@ -626,6 +626,11 @@ spaces and tabs included.
 	tool prompting for itself would need the terminal handed over first.
 	Cancelling runs nothing and is not an error.
 
+	*Ctrl-P* and *Ctrl-N* step through earlier lines typed at the same _prompt_
+	string. Each string keeps its own history, apart from the ex command
+	history, so */* recalls patterns and *?* recalls its own. A prompting
+	*motion* on the same key shares that history.
+
 	The typed line reaches _cmd_ only through the environment, never spliced
 	into the command line. Quote the expansion and a pattern holding spaces,
 	quotes or *$(...)* arrives as itself.
@@ -881,7 +886,8 @@ spaces and tabs included.
 	using _key_ itself as the prompt character, which is what makes */* feel like
 	*/*. The editor prompts, not the tool: a filter is a child of an editor
 	holding the terminal in raw mode, so a read of its own would take raw
-	keystrokes with no echo. A key without *prompt* works from the cursor
+	keystrokes with no echo. *Ctrl-P*/*Ctrl-N* at that prompt walk the history
+	of _key_, the same list a *prompt* with that prompt string uses. A key without *prompt* works from the cursor
 	(*contrib/lvi-search --motion --word* for *\**) and gets an empty argument.
 
 	It is invoked *cmd TMPFILE COUNT LINE COL ARG* (buffer text in a private temp

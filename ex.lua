@@ -32,10 +32,13 @@ local EVENTS = { change = true, write = true, ready = true,
 -- set, not an audit log: capped and consecutive-deduped, session-only, never
 -- written to disk. Appended to only when a command actually runs (like Vim) --
 -- editing lines in the command window that you never execute leaves it alone.
+-- `h` names a different list with the same discipline: the per-prompt histories
+-- of `:prompt` and prompting `:motion` keys (ed.prompthist, see normal.lua's
+-- read_line).
 local CMDHIST_MAX = 100
-function M.record_history(ed, cmd)
+function M.record_history(ed, cmd, h)
   if cmd == "" then return end
-  local h = ed.cmdhist
+  h = h or ed.cmdhist
   if h[#h] == cmd then return end          -- collapse an immediate repeat
   h[#h + 1] = cmd
   if #h > CMDHIST_MAX then table.remove(h, 1) end
@@ -1277,8 +1280,9 @@ end)
 -- on the primary screen -- where the tty's line editor, not lvi's, decides what
 -- the keys mean, and what it echoes lands on a screen lvi does not repaint.
 -- Prompting HERE gives the tool lvi's own line editor (Esc/Ctrl-C cancel,
--- multibyte erase, Ctrl-V) on the status line, and leaves it with nothing
--- interactive to do, so the map can run it under `:bg` -- no tty handoff:
+-- multibyte erase, Ctrl-V, Ctrl-P/N through the history of that prompt string)
+-- on the status line, and leaves it with nothing interactive to do, so the map
+-- can run it under `:bg` -- no tty handoff:
 --
 --     map / :prompt / bg lvi-search -- "$LVI_INPUT"<CR>
 --
