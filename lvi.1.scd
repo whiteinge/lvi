@@ -66,8 +66,12 @@ CONTROL SOCKET*).
 
 # NORMAL MODE
 
-Commands are literal characters (POSIX vi specifies no arrow keys). Most accept a
-leading count, e.g. *3dw*.
+Commands are literal characters. Most accept a leading count, e.g. *3dw*.
+
+POSIX vi specifies no arrow keys, and lvi decodes none. An arrow key arrives as
+*Esc* plus a few bytes, and telling that apart from a typed *Esc* takes a timeout
+on every *Esc* press. Without arrows there is nothing to wait for, so *Esc* acts
+at once.
 
 ## Motions
 

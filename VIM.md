@@ -66,7 +66,9 @@ go through the shell, so the current file is `$LVI_FILE` and
 ## Surprises worth knowing up front
 
 - **No arrow keys.** POSIX vi specifies literal characters and lvi decodes no
-  escape sequences. `hjkl`, in every mode.
+  escape sequences. An arrow sends Esc plus a few bytes, so decoding them means
+  waiting after every Esc to see what follows (the lag vim tunes with
+  `ttimeoutlen`). lvi skips that, and Esc acts at once. `hjkl`, in every mode.
 - **No visual mode.** An edit is an operator plus a range stated in one gesture.
   The manpage's *Without visual mode* section is the full translation table.
 - **Patterns are POSIX BRE.** `\(foo\)`, not `(foo)`. `:s` and `:g` are handed
