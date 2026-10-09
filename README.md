@@ -102,8 +102,8 @@ Real modal editing — motions, operators with full composition (`dw`, `cf.`,
 scrolling/positioning commands. An ex layer shared by the `:` prompt and
 the socket, with **anything lvi doesn't implement delegated to the system `ex`**
 (so `:s`, `:g`, `:m`, and the full address grammar just work). A **config file**
-that's simply a list of those ex commands. A **styled highlight overlay** (`:hl`
-+ `:hi`) and **change hooks** (`:on change …`) — the two primitives that let
+that's simply a list of those ex commands. A **styled highlight overlay**
+(`:hl` and `:hi`) and **change hooks** (`:on change …`) — the two primitives that let
 external tools paint syntax, search, and quickfix into the view. And a **left
 margin** of named columns (`set gutter=number,gitchanges,lint`) — line numbers,
 plus a column per tool to mark lines in, off by default.

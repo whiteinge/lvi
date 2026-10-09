@@ -1076,7 +1076,7 @@ onto it with `\dp`, pull one back off with `\do`, move a motion's span with
 `:L1,L2bg lvi-diff --xfer-range …` — to split two changes `diff` merged into one
 hunk. Those are ordinary buffer edits: `u` backs a move out, and nothing touches
 git yet. **`:w` on the index pane is what stages** — it hashes
-the pane into a blob and points the index at it (`git hash-object -w` + `git
+the pane into a blob and points the index at it (`git hash-object -w` and `git
 update-index`), the whole buffer at once, so there's no partial-patch fuzz to
 misapply. Shuffle and edit until the pane reads the way you want it staged, then
 write.
