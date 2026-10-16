@@ -1086,6 +1086,18 @@ pane saves the file. To restore a working-tree hunk from the index, `\do` it bac
 Unstaging to HEAD isn't a keystroke yet: edit the index pane to the version you
 want and `:w`, or `git reset`. Run `lvi-stagediff FILE` inside a new tmux window.
 
+### `lvi-diffregs` — diff two registers
+
+Yank one version of something into `"a`, another into `"b`, and `\dr ab` shows
+the two side by side in `lvi-diff`'s file mode: a new tmux window, highlighted
+and scrollbound. Quit the left pane and the window and its temp files go away.
+Nothing gets saved anywhere along the way.
+
+It reads each register with `:reg! NAME`, the core's exact read of one
+register. The `:registers` listing prints newlines as `^J`, which reads fine but
+can't be decoded back into bytes. Both register names are required. vim's
+version defaulted to `"0` against `"1`, and lvi has no `"0`.
+
 ### Git mergetool
 
 `lvi-diff`'s file mode drops into git's mergetool protocol — paired with

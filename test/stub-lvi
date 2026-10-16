@@ -15,6 +15,9 @@
 #   $STUB_DIR/pos      payload served for `pos` (missing -> "1<TAB>1")
 #   $STUB_DIR/modified payload served for `set modified?` (missing -> empty)
 #   $STUB_DIR/list     output served for `lvi -l` (missing -> no views)
+#   $STUB_DIR/reg.X    register X's text, served for `reg! X` with the client's
+#                      trailing newline (missing -> the empty-register error on
+#                      stderr and a non-zero exit, as the real client reports it)
 #   $STUB_DIR/log      every command received, appended one per line
 dir=${STUB_DIR:?stub-lvi: STUB_DIR not set}
 [ "$1" = -l ] && { cat "$dir/list" 2>/dev/null; exit 0; }
@@ -37,6 +40,10 @@ for c in "$@"; do
     pos)  if [ -f "$dir/pos" ]; then cat "$dir/pos"; else printf '1\t1\n'; fi ;;
     'set modified?') cat "$dir/modified" 2>/dev/null ;;
     f)    printf '"%s" 1 lines\n' "$(cat "$dir/path" 2>/dev/null || echo '[No File]')" ;;
+    'reg! '?)
+          r=${c#reg! }
+          if [ -f "$dir/reg.$r" ]; then cat "$dir/reg.$r"; echo
+          else echo "lvi: $c: registers!: register $r is empty" >&2; rc=1; fi ;;
   esac
 done
-exit 0
+exit ${rc:-0}

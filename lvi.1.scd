@@ -1565,6 +1565,7 @@ below, with the happy-path rc lines that turn it on:
 	lvi-diff                 " the sole pair of live panes
 	lvi-diff old new         " two files, in a new tmux window
 	lvi-stagediff file       " git add -p, side by side
+	lvi-diffregs a b         " register a against register b
 	```
 
 *lvi-textobj-tag* -- HTML/XML tag object

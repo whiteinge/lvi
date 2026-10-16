@@ -40,7 +40,7 @@
 "       \i  invis     \ii toggle    \ip page (exact bytes in less)
 "       \n  numbers   \nn absolute  \nr relative        (the left margin)
 "       \x  execute   \xx run again  \xp pick pane  \xw watch  \xq unwatch
-"       \d  diff      \dp put       \do obtain          (installed by lvi-diff)
+"       \d  diff      \dr registers \dp put    \do obtain   (\dp/\do installed by lvi-diff)
 "
 " Motions/operators that mirror a vim key stay OFF the leader and on that key: /
 " and * (search), n/N (step the focused list), the ]x/[x pairs (step list x),
@@ -695,5 +695,9 @@ map \xq :bg lvi-send unwatch<CR>       " stop
 " working pane (a g@ operator), so \dx ip / \dx } / \dx 2j move just those lines
 " onto the index pane -- like \dp/\do it is wired into the pane at launch, not an
 " rc default (it carries per-session wids the rc can't know).
+"
+" \dr is the one rc default in the menu: type two register names (`ab`) and
+" lvi-diffregs diffs "a against "b in a new tmux window, through lvi-diff.
+map \dr :prompt regs: bg lvi-diffregs "$LVI_INPUT"<CR>
 
 " }}}

@@ -2531,6 +2531,71 @@ wait
       end)
     end)
 
+    -- lvi-diffregs. The differ is a stub that copies the two files it was
+    -- handed (the real one is lvi-diff in a tmux window), so the assertions are
+    -- what reached the files and that they are gone once the differ returns.
+    describe("lvi-diffregs", function()
+      local function regs(d, args, extra)
+        write(d .. "/differ", "#!/bin/sh\n"
+          .. "cp \"$1\" \"$STUB_DIR/got.a\"; cp \"$2\" \"$STUB_DIR/got.b\"\n"
+          .. "printf '%s\\n%s\\n' \"$1\" \"$2\" > \"$STUB_DIR/paths\"\n")
+        os.execute("chmod +x '" .. d .. "/differ'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_SOCK = d .. "/w1",
+                      LVI_DIFFREGS_DIFF = d .. "/differ" }
+        for k, v in pairs(extra or {}) do env[k] = v end
+        return run(env, "contrib/lvi-diffregs " .. args)
+      end
+
+      it("hands the differ both registers byte for byte, then cleans up", function()
+        local d = stub({ ["reg.a"] = "one\ntwo\n\n", ["reg.b"] = "ciwX\27" })
+        local _, ok = regs(d, "a b")
+        expect(ok).to.equal(true)
+        expect(read(d .. "/log")).to.equal("reg! a\nreg! b\n")
+        expect(read(d .. "/got.a")).to.equal("one\ntwo\n\n")   -- trailing newlines kept
+        expect(read(d .. "/got.b")).to.equal("ciwX\27")          -- no newline added
+        local pa = read(d .. "/paths"):match("^[^\n]+")
+        expect(pa:find("/reg%-a$")).to.exist()
+        expect(exists(pa)).to.equal(false)                     -- temp files removed
+        cleanup(d)
+      end)
+
+      it("takes both names as one word, and vim's @ and \" prefixes", function()
+        local d = stub({ ["reg.a"] = "x\n", ["reg.b"] = "y\n", ['reg."'] = "z\n" })
+        regs(d, "ab")
+        expect(read(d .. "/log")).to.equal("reg! a\nreg! b\n")
+        os.remove(d .. "/log")
+        regs(d, "@A '\"b'")
+        expect(read(d .. "/log")).to.equal("reg! a\nreg! b\n")
+        os.remove(d .. "/log")
+        regs(d, "'\"\"' a")
+        expect(read(d .. "/log")).to.equal('reg! "\nreg! a\n')
+        expect(read(d .. "/paths"):find("/reg%-unnamed\n")).to.exist()
+        cleanup(d)
+      end)
+
+      it("requires two distinct names", function()
+        local d = stub({ ["reg.a"] = "x\n" })
+        local _, ok = regs(d, "a")
+        expect(ok).to.equal(false)
+        expect(read(d .. "/log"):find("^msge lvi%-diffregs: usage")).to.exist()
+        os.remove(d .. "/log")
+        _, ok = regs(d, "a A")
+        expect(ok).to.equal(false)
+        expect(read(d .. "/log")).to.equal("msge lvi-diffregs: both names are register a\n")
+        cleanup(d)
+      end)
+
+      it("reports an empty register to the view and runs no diff", function()
+        local d = stub({ ["reg.a"] = "x\n" })
+        local _, ok = regs(d, "a b")
+        expect(ok).to.equal(false)
+        expect(read(d .. "/log")).to.equal(
+          "reg! a\nreg! b\nmsge lvi-diffregs: registers!: register b is empty\n")
+        expect(exists(d .. "/paths")).to.equal(false)
+        cleanup(d)
+      end)
+    end)
+
     -- lvi-shell.sh is sourced, not run, so these drive its functions from a
     -- shell whose $LVI is the stub. LVI_WID set is the shell-out case (queued,
     -- and $LVI_FILE is the only source for the current file); unset is the

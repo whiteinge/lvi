@@ -1,0 +1,126 @@
+#!/bin/sh
+# lvi-diffregs [-w auto|WID] A B -- diff two registers side by side.
+#
+# The `:DiffRegs @a @b` habit from vim: yank one version into "a, the other into
+# "b, and see what changed between them without saving either anywhere.
+#
+# lvi has no scratch buffers or tabpages to put them in, so this copies the two
+# registers into temp files and hands them to `lvi-diff FILE_A FILE_B`, which
+# opens them in a new tmux window, highlighted and scrollbound. Quit the left
+# pane (or `:cq`) and the window closes and the temp files go with it. Edits in
+# the panes are scratch work: `:w` lands in the temp files and nothing else.
+#
+# The text comes over the socket with `:reg! NAME`, the core's lossless read of
+# one register (the `:registers` listing shows newlines and control bytes in
+# caret notation, which can't be turned back into the bytes). A name resolves
+# the way a put's does, so `+` reads a clipboard-backed register fresh.
+#
+# SYNOPSIS
+#   lvi-diffregs a b        diff "a against "b in the view named by $LVI_WID
+#   lvi-diffregs ab         the same, both names in one word (what a :prompt
+#                           map hands over when you type `ab`)
+#   lvi-diffregs -w WID a b read the registers from that view (default
+#                           $LVI_WID when run from the editor, else `auto`)
+# Both names are required: there is no default pair. vim's was "0 (last yank)
+# against "1 (last delete), and lvi has no "0. A name may carry a leading @ or "
+# (`@a`, `"a`) out of vim habit; `""` is the unnamed register.
+#
+# SUGGESTED BINDING (~/.lvirc). It runs under `:bg` because lvi-diff blocks until
+# you quit the diff, and the prompt reads the two names on the status line:
+#     map \dr :prompt regs: bg lvi-diffregs "$LVI_INPUT"<CR>
+#
+# Any spawn form works. Under `:!`, `:silent !` (what lvi-cmd seeds) or a `:sh`
+# shell, lvi is frozen until we exit, so a socket read would deadlock; there the
+# script re-runs itself detached and returns at once, the way lvi-highlight's
+# worker does. Errors (an empty register, no tmux) come back to the view as a
+# `:msge` either way, since `:bg` and the detached copy discard their output.
+#
+# Config (env): LVI (client, default `lvi`); LVI_DIFFREGS_DIFF (the program run
+# as `PROG FILE_A FILE_B` on the two temp files, default `lvi-diff`; it must
+# block until you are done, since the files are deleted when it returns).
+
+# -h/--help: print this script's header comment (its full reference), then exit.
+case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
+LVI=${LVI:-lvi}
+DIFF=${LVI_DIFFREGS_DIFF:-lvi-diff}
+
+wid=${LVI_WID:-auto}
+[ "${1:-}" = -w ] && { wid=$2; shift 2; }
+
+# Report to the view as well as stderr: under `:bg` nobody sees stderr.
+fail() {
+  echo "lvi-diffregs: $1" >&2
+  "$LVI" -w "$wid" --detach -- "msge lvi-diffregs: $1" >/dev/null 2>&1
+  exit 1
+}
+
+# One word of two plain names (`ab`, from the prompt) splits into two.
+if [ $# -eq 1 ] && [ ${#1} -eq 2 ] && [ "$1" != '""' ]; then
+  set -- "$(printf '%s' "$1" | cut -c1)" "$(printf '%s' "$1" | cut -c2)"
+fi
+[ $# -eq 2 ] || fail "usage: lvi-diffregs [-w WID] A B (two register names)"
+
+# Normalize one name: drop a vim-style @ or " prefix, fold uppercase onto the
+# register it appends to (so `a A` is caught as the same register below).
+regname() {
+  case $1 in
+    '""')  printf '"' ;;
+    [@\"]?) printf '%s' "${1#?}" | tr 'A-Z' 'a-z' ;;
+    ?)     printf '%s' "$1" | tr 'A-Z' 'a-z' ;;
+    *)     return 1 ;;
+  esac
+}
+ra=$(regname "$1") || fail "not a register name: $1"
+rb=$(regname "$2") || fail "not a register name: $2"
+[ "$ra" = "$rb" ] && fail "both names are register $ra"
+
+if [ "$DIFF" = lvi-diff ] && [ -z "$TMUX" ]; then
+  fail "lvi-diff opens a tmux window -- run lvi inside tmux"
+fi
+
+# A child of a frozen lvi holds the terminal ($LVI_WID set and stderr a tty), so
+# hand off to a detached copy before the first socket read. Its stderr is not a
+# tty, so the copy runs straight through. Stdin goes too: lvi's tty must not
+# reach a process that outlives the handover.
+if [ -t 2 ] && [ -n "${LVI_WID:-}" ]; then
+  ("$0" -w "$wid" "$ra" "$rb" </dev/null >/dev/null 2>&1 &)
+  exit 0
+fi
+
+# Register text is buffer text, so the temp files go in lvi's private per-uid
+# dir beside the sockets (as path.tmp() does), never shared /tmp: $LVI_SOCK's
+# dir when the editor spawned us, else any live view's.
+RUNDIR=${LVI_SOCK%/*}
+if [ ! -d "$RUNDIR" ]; then
+  s=$("$LVI" -l 2>/dev/null | sed -n 1p | cut -f2); RUNDIR=${s%/*}
+fi
+[ -n "$RUNDIR" ] && [ -d "$RUNDIR" ] || fail "no lvi run dir (is a view running?)"
+dir=$(mktemp -d "$RUNDIR/lvi-diffregs.XXXXXX") || fail "cannot make a temp dir"
+trap 'rm -rf "$dir"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# The file name is what each pane's status line shows, so keep it readable.
+fname() {
+  case $1 in
+    '"')           echo "$dir/reg-unnamed" ;;
+    [a-z0-9+~*-])  echo "$dir/reg-$1" ;;
+    *)             echo "$dir/reg-$(printf '%d' "'$1")" ;;
+  esac
+}
+
+# Copy register $1 into file $2 byte for byte. The client prints an ok payload
+# plus one newline, so drop exactly that newline (a trailing x keeps the command
+# substitution from eating the register's own trailing newlines too).
+dump() {
+  "$LVI" -w "$wid" -- "reg! $1" >"$dir/raw" 2>"$dir/err" || {
+    msg=$(cat "$dir/err"); fail "${msg#"lvi: reg! $1: "}"
+  }
+  t=$(cat "$dir/raw"; printf x); t=${t%?x}
+  printf '%s' "$t" >"$2"
+}
+
+fa=$(fname "$ra"); fb=$(fname "$rb")
+dump "$ra" "$fa"
+dump "$rb" "$fb"
+rm -f "$dir/raw" "$dir/err"
+$DIFF "$fa" "$fb"

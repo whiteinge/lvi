@@ -158,6 +158,7 @@ same few spellings recur, and most have no vim equivalent:
 | `:sp`, `:vs`, `Ctrl-W` | tmux panes (or screen, Zellij, a tiling WM) | your multiplexer |
 | two panes on one file | `lvi-mirror` — live buffer, unsaved edits included | `lvi-mirror` |
 | `vimdiff` | `lvi-diff` — highlighted, scrollbound, `]c`/`[c`, `\dp`/`\do` | `lvi-diff` |
+| `:diffthis` on two pasted registers | `lvi-diffregs` — `\dr ab` diffs `"a` against `"b` | `lvi-diffregs` |
 | `:tabnew` | buffers (`:ls`, `:bn`, `Ctrl-^`, `\b`) plus tmux windows | core, `lvi-buf` |
 | `:ls`, `:b#`, `:bd` | identical | core |
 | netrw, NERDTree | `\f` picker, or `:sh` | `lvi-open` |
