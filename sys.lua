@@ -109,8 +109,10 @@ M.POLLHUP = 0x10
 M.POLLNVAL= 0x20
 
 -- Non-blocking I/O: O_NONBLOCK and EAGAIN are per-OS, handled like SIGTSTP /
--- TIOCGWINSZ below -- one constant per branch. F_GETFL/F_SETFL are uniform.
+-- TIOCGWINSZ below -- one constant per branch. F_GETFL/F_SETFL are uniform,
+-- as are F_SETFD and FD_CLOEXEC.
 local F_GETFL, F_SETFL = 3, 4
+local F_SETFD, FD_CLOEXEC = 2, 1
 local O_NONBLOCK = (ffi.os == "Linux") and 0x800 or 0x4
 local EAGAIN     = (ffi.os == "Linux") and 11 or 35  -- == EWOULDBLOCK on all targets
 
@@ -166,6 +168,18 @@ function M.newer(a, b)
   return os.execute(("[ %s -nt %s ]"):format(shq(a), shq(b))) == 0
 end
 
+--- Mark a socket close-on-exec, so no child lvi spawns (a :bg tool, a :!
+--- command, a hook) inherits it. An inherited listener outlives a dead lvi: the
+--- socket keeps accepting connections that nothing will ever answer, so
+--- `lvi -w` hangs on it and `lvi -l` lists the view as live. An inherited
+--- connection keeps a client from seeing EOF the same way. The flag goes on
+--- with fcntl after the fact because SOCK_CLOEXEC and accept4 are missing on
+--- macOS; lvi is single-threaded, so no exec can slip in between. Internal.
+local function cloexec(fd)
+  C.fcntl(fd, F_SETFD, ffi.new("int", FD_CLOEXEC))
+  return fd
+end
+
 --- Build a filled-in sockaddr_un for `path`. Internal.
 local function sockaddr(path)
   assert(#path < 104, "socket path too long: " .. path)
@@ -196,6 +210,7 @@ function M.listen(path, backlog)
 
   local fd = C.socket(AF_UNIX, SOCK_STREAM, 0)
   if fd < 0 then error("socket() failed for " .. path) end
+  cloexec(fd)
   if C.bind(fd, addr, len) ~= 0 then C.close(fd); error("bind() failed for " .. path) end
   -- Generous backlog: a tty shell-out (:!, :sh, a picker) freezes the poll
   -- loop, and hook children keep connecting back meanwhile. Once the backlog
@@ -211,7 +226,7 @@ end
 function M.accept(fd)
   local conn = C.accept(fd, nil, nil)
   if conn < 0 then return nil end
-  return conn
+  return cloexec(conn)
 end
 
 --- Connect to a Unix-domain socket at `path`. Returns the connected fd, or nil
@@ -220,6 +235,7 @@ function M.connect(path)
   local addr, len = sockaddr(path)
   local fd = C.socket(AF_UNIX, SOCK_STREAM, 0)
   if fd < 0 then return nil end
+  cloexec(fd)
   if C.connect(fd, addr, len) ~= 0 then C.close(fd); return nil end
   return fd
 end
