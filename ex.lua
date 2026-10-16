@@ -1658,7 +1658,29 @@ local function do_registers(ed, args)
   if #out == 0 then return "no registers", "ok" end
   return table.concat(out, "\n"), "ok"
 end
-def("registers reg display", function(ed, c) return do_registers(ed, c.args) end)
+-- :registers! NAME (:reg! NAME) -- one register's text, verbatim: no caret
+-- notation, no type or name column. The listing above is for eyes and cannot be
+-- decoded (a literal ^J and a newline print the same), so a script that needs
+-- the bytes -- contrib/lvi-diffregs diffing two registers -- reads this. The
+-- name resolves the way a put's does: an uppercase name reads its lowercase
+-- buffer, a read-backed register runs its `read` command fresh, and `""` is the
+-- rc-safe spelling of the unnamed one (as in :register). An unset or empty
+-- register is an error, so `lvi -w` exits non-zero instead of printing nothing.
+local function do_register_raw(ed, args)
+  local name = args:match("^%s*(.-)%s*$")
+  if name == '""' then name = '"' end
+  if #name ~= 1 then return "usage: registers! NAME", "err" end
+  if name:match("%u") then name = name:lower() end
+  local be, text = ed.reg_backends[name]
+  if be and be.read and ed.reg_read then text = ed.reg_read(be.read)
+  else text = ed.regs[name] and ed.regs[name].text end
+  if not text or text == "" then return ("registers!: register %s is empty"):format(name), "err" end
+  return text, "ok"
+end
+def("registers reg display", function(ed, c)
+  if c.bang then return do_register_raw(ed, c.args) end
+  return do_registers(ed, c.args)
+end)
 
 -- :marks [chars] (Vim's :marks) -- list this buffer's marks, one line each as
 -- "mark line col text" (text is the marked line, leading blanks stripped; col is

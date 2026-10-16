@@ -943,6 +943,15 @@ spaces and tabs included.
 	split: *register* (singular) configures one register, *registers* (*reg*)
 	displays them, as in *vi*.
 
+*registers!* _name_, *reg!*
+	Return one register's text exactly as stored: no caret notation, no type or
+	name column. The listing above is for reading by eye and cannot be decoded
+	(a literal *^J* and a newline print the same), so a script that needs the
+	bytes reads this. The name resolves as a put's does: uppercase reads the
+	lowercase register, a *read*-backed register runs its command, and *""* is
+	the unnamed one. An empty register is an error. *contrib/lvi-diffregs*
+	diffs two registers this way.
+
 *marks* [_names_]
 	List marks, one line each as _mark_ _line_ _col_ _text_ (_text_ is the
 	marked line with leading blanks stripped; _col_ is the 1-based byte column,
