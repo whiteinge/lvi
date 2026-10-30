@@ -33,6 +33,7 @@
 "   * MENU -- a tool with several actions gets a prefix, and its most-used action
 "     is that letter DOUBLED (a leaf-like two-key press for the common case):
 "       \g  git      \gg changes   \gs staged   \gp stage-hunks (git add -p)
+"                     \gb blame     \gB the line's commit
 "       \l  lists     \ll switch    \lg goto   \lc current   \lh hide   \lp preview
 "       \h  highlight \hh refresh   \ht toggle   \hm mark word   \hc clear marks
 "                     \ho column-limit marks (lvi-hl-col)
@@ -390,6 +391,16 @@ hi gitchanges-cur fg=black bg=green            " the hunk you are standing in
 " lvi-diff. It opens its panes in a tmux split and never wants the terminal
 " itself, so :bg:
 map \gp :bg lvi-stagediff<CR>                  " "git add -p" the current file
+"
+" Blame is a lookup you read and leave, so it gets the terminal and a pager, not
+" a tool. :wbuf plus --contents blames the live buffer, unsaved edits and all, so
+" $LVI_LINE lands on the right row (an unsaved line reads `00000000 External
+" file`). The cd lets it work when lvi was started outside the repo. Jumping to a
+" line is pager-specific: `+Ng` is less's (-j.5 centers it). \gB shows the commit
+" that last touched the cursor's line; on an unsaved line there is none, and git
+" says so.
+map \gb :wbuf<CR>:!cd "$(dirname -- "$LVI_FILE")" && git blame --contents "$LVI_BUFFER" -- "${LVI_FILE##*/}" | less -j.5 +"$LVI_LINE"g<CR>
+map \gB :wbuf<CR>:!cd "$(dirname -- "$LVI_FILE")" && git show $(git blame --porcelain --contents "$LVI_BUFFER" -L "$LVI_LINE,+1" -- "${LVI_FILE##*/}" | sed 1q | cut -d' ' -f1)<CR>
 
 " }}}
 " ---- the left margin --------------------------------------------------- {{{

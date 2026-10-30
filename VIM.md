@@ -219,7 +219,8 @@ env knob.
 | fugitive `:Gdiff` | `lvi-diff`, two panes | `lvi-diff old new` |
 | fugitive `:Gstatus` staging | `lvi-stagediff` — `git add -p` as a diff you edit, `:w` stages | `lvi-stagediff file` |
 | `git mergetool` | `lvi-diff` as git's mergetool: with `hideResolved`, only the real conflicts differ; `\do` takes theirs, `:x` accepts | `cmd = lvi-diff "$LOCAL" "$REMOTE" "$MERGED"` |
-| fugitive `:Gblame`, `:Gcommit` | plain `git` in a tmux pane or `:sh` | — |
+| fugitive `:Gblame` | `git blame` of the live buffer in `less`, opened at the cursor's line; `\gB` shows the line's commit | the sample rc's `\gb` and `\gB` maps |
+| fugitive `:Gcommit` | plain `git` in a tmux pane or `:sh` | — |
 
 ### Diagnostics and language
 
