@@ -131,8 +131,8 @@ tool_paths() (
 # path -> `cmd<TAB>name<TAB>purpose`. First spelling of a name wins, as it would
 # when run.
 #
-# The purpose comes out of the header comment every contrib tool opens with,
-# which has two shapes: `name [args] -- what it does` on one line, or a synopsis
+# The purpose comes out of the header comment every contrib tool opens with
+# (`#` lines, or `--` in a Lua tool), which has two shapes: `name [args] -- what it does` on one line, or a synopsis
 # line (sometimes several) then a blank comment line then a paragraph. So: the
 # text after the first ` -- ` if one turns up before that blank line, else the
 # paragraph's first line, cut at its first sentence end. Anything with no header
@@ -147,8 +147,8 @@ tool_rows() {
       purpose = ""; blank = 0
       for (n = 0; n < 16 && (getline line < path) > 0; n++) {
         if (n == 0) continue                        # the #! line
-        if (line !~ /^#/) break
-        sub(/^# ?/, "", line); sub(/[ \t]+$/, "", line)
+        if (line !~ /^(#|--)/) break                 # -- : a Lua tool (lvi-lsp)
+        sub(/^(#|--) ?/, "", line); sub(/[ \t]+$/, "", line)
         if (line == "") { blank = 1; continue }
         if (blank) { purpose = line; break }
         if (line ~ /^-- /) { purpose = substr(line, 4); break }

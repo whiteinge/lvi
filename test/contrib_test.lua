@@ -2568,6 +2568,7 @@ wait
         local _, rows = pick(d, "n ")
         expect(rows:find("cmd  lvi%-hl%-col +mark text past a column limit.")).to.exist()
         expect(rows:find("cmd  lvi%-search +Search a running lvi from outside it")).to.exist()
+        expect(rows:find("cmd  lvi%-lsp +ask a language server about the symbol")).to.exist()  -- `--` header
         cleanup(d)
       end)
 
