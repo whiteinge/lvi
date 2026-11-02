@@ -48,6 +48,8 @@
 #
 # Operates on bytes (LC_ALL=C). Debug: LVI_COMMENT_DEBUG=1 traces to stderr (g@
 # discards a spawn's stderr, so trace by invoking the script directly).
+#
+# Spawn: operator
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

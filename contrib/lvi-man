@@ -26,6 +26,8 @@
 #
 # Config (env): LVI (editor, default `lvi`), LVI_MAN_RC (the pager rc to load,
 # default contrib/lvirc-man beside this script).
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

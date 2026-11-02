@@ -60,6 +60,8 @@
 #
 # LIMITS (MVP): one file, no directory/index browser; unstaging to HEAD is hand-
 # edit + :w until a HEAD-vs-index mode lands. Conflicts are refused up front.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

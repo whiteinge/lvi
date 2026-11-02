@@ -213,6 +213,8 @@
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags).
 # Run from inside lvi (a map) and $LVI_WID/$LVI_SOCK are already in the env; from
 # another terminal, pass `-w auto|WID`.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

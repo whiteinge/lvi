@@ -29,15 +29,17 @@
 # you quit the diff, and the prompt reads the two names on the status line:
 #     map \dr :prompt regs: bg lvi-diffregs "$LVI_INPUT"<CR>
 #
-# Any spawn form works. Under `:!`, `:silent !` (what lvi-cmd seeds) or a `:sh`
-# shell, lvi is frozen until we exit, so a socket read would deadlock; there the
-# script re-runs itself detached and returns at once, the way lvi-highlight's
-# worker does. Errors (an empty register, no tmux) come back to the view as a
-# `:msge` either way, since `:bg` and the detached copy discard their output.
+# Any spawn form works. Under `:!`, `:silent !` or a `:sh` shell, lvi is frozen
+# until we exit, so a socket read would deadlock; there the script re-runs
+# itself detached and returns at once, the way lvi-highlight's worker does.
+# Errors (an empty register, no tmux) come back to the view as a `:msge` either
+# way, since `:bg` and the detached copy discard their output.
 #
 # Config (env): LVI (client, default `lvi`); LVI_DIFFREGS_DIFF (the program run
 # as `PROG FILE_A FILE_B` on the two temp files, default `lvi-diff`; it must
 # block until you are done, since the files are deleted when it returns).
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

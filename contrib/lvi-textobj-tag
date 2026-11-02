@@ -29,6 +29,8 @@
 # a huge-file object would want a real streaming parser instead.
 #
 # Debug: LVI_TAG_DEBUG=1 prints the reassembled cursor offset to stderr.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

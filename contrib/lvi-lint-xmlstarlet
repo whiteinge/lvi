@@ -21,6 +21,8 @@
 # empty buffer is not well-formed XML (no root element), so a file reports one
 # error until it has one. HTML is not XML -- xmlstarlet rejects the unclosed
 # tags that HTML allows; use `tidy -eq` (or the Nu validator) for html/xhtml.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

@@ -138,6 +138,8 @@
 #
 # Config: LVI (client, default `lvi`). Needs git on PATH, and lvi-list when
 # pushing to a view.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

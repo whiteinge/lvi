@@ -86,6 +86,8 @@
 #     LVI_WID=$(lvi -l | cut -f1) LVI_FILE=foo.py lvi-ftype
 #
 # LVI overrides the client (default `lvi`).
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

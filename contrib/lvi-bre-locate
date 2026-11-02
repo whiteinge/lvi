@@ -65,6 +65,8 @@
 # there is still a user to tell.
 #
 # Config: none. Needs sed and awk, and nothing else.
+#
+# Spawn: none
 
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
 

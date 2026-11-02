@@ -79,6 +79,8 @@
 # LVI_YANKRING_DIR (relocate the shared store; for tests, not a workflow knob --
 # the ring is global by design, so there is no per-view scope to opt back into).
 # See lvirc.sample.vim for the register lines and key maps.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

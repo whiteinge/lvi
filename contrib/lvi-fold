@@ -45,6 +45,8 @@
 # default 2), LVI_FOLD_MANHEAD (man-mode heading regex, default "^[A-Z][A-Z ]*$"),
 # LVI_FOLD_MANKEEP (man-mode headings to leave unfolded, default NAME/SYNOPSIS),
 # LVI_FOLD_DEBUG (a file to capture the worker's output).
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

@@ -118,6 +118,17 @@ the buffer to `$LVI_BUFFER` with `:wbuf` *before* handing over the tty, and the
 frozen picker reads that file: `map \tt :wbuf<CR>:silent !lvi-tags<CR>`. The
 manpage's *Shelling out* table lays the verbs side by side.
 
+Each tool declares its discipline as the last line of its header, `Spawn:`
+followed by one word: `bg`, `tty` (`:silent !`), `wbuf` (`:wbuf` then
+`:silent !`), `filter` (a `!` range), `operator` (`operatorfunc` for `g@`), or
+`none` for a backend or helper you never run yourself. A tool with several
+subcommands names the form of its common case and its header covers the rest
+(`lvi-spell` is `bg`, but its `fix` picker wants the terminal). `lvi-cmd` reads
+the line to seed its prompt, because the wrong form fails: a tool that calls
+back over the socket and waits for the answer, run under `:silent !`, waits on
+a view that is waiting on it. (`lvi -w` notices after two seconds and exits
+with an error saying to use `:bg`.)
+
 **Reactive hooks push; nothing polls.** `on change` (the buffer settled), `on
 write` (a `:w`), and `on scroll` (a keyboard move of the viewport top) are the
 editor's *push* seams — each fires a command with the relevant state in the
@@ -678,8 +689,10 @@ it comes up beside the tool itself. The picker does that join for free.
 
 Picking a `key` row sends `normal LHS`. The keys go in through the funnel the
 keyboard uses and expand there, so it is exactly as if you had pressed them.
-Picking a `cmd` row *seeds* the `:` prompt with `silent !NAME` and stops, since
-only you know whether that tool wants a range, arguments, or nothing at all.
+Picking a `cmd` row *seeds* the `:` prompt and stops, since only you know
+whether that tool wants a range, arguments, or nothing at all. The seed uses
+the spawn form from the tool's `Spawn:` line (below): `bg lvi-ftype`,
+`silent !lvi-buf`, `.!lvi-reflow`.
 Under fzf the preview pane runs `NAME --help`: the tool's full reference, beside
 its one-line summary.
 

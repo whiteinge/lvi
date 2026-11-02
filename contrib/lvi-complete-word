@@ -20,6 +20,8 @@
 # this buffer's own words ahead of the others.
 #
 # Config: LVI_COMPL_MIN (drop words shorter than this; default 2).
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

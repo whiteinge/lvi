@@ -32,15 +32,25 @@
 # and injecting the trimmed remainder would run a different command than the
 # one you picked. Press those yourself.
 #
-# PICKING A `cmd` ROW SEEDS the ':' prompt with `silent !NAME` and stops there,
-# because only you know how that tool wants to be called: some want a range
-# (`:%!lvi-reflow`), some want arguments, some are filters that make no sense
-# run bare. Seeding beats guessing, and `silent !` is the safer of the two spawn
-# forms to seed -- a tool that wanted `:bg` still works from it (at the cost of
-# a screen flash), while a tool that needs the terminal, as half of contrib
-# does, would silently do nothing under `:bg`. Edit the line and press Enter.
-# (The prompt lands with no trailing space for the same dispatcher trim; type
-# one.)
+# PICKING A `cmd` ROW SEEDS the ':' prompt and stops there, because only you
+# know the arguments, and some tools want a range. The prompt is seeded in the
+# spawn form the tool's header declares on its `Spawn:` line:
+#
+#   bg        :bg NAME                   detached, no terminal (most of contrib)
+#   tty       :silent !NAME              a picker or pager that needs the tty
+#   wbuf      :silent !NAME, after a :wbuf   a tty picker over the live buffer
+#   filter    :.!NAME                    a `!` filter; widen the range to taste
+#   operator  :set operatorfunc=NAME     then g@{motion}
+#   none      nothing -- a backend, a helper, or run from your shell; a message
+#             says so
+#
+# The form matters, so the header owns it. A tool that calls back into the view
+# and waits for an answer deadlocks under `silent !`, since the view is
+# frozen waiting on it (lvi -w notices after two seconds and fails with an
+# error), and a tool that needs the terminal does nothing under `:bg`. A tool
+# with no `Spawn:` line, someone else's lvi-* on your PATH, is seeded as `tty`.
+# (The prompt lands with no trailing space, for the dispatcher trim noted
+# above; type one.)
 #
 # WHERE THE ROWS COME FROM. A picker needs the terminal, so the map runs it
 # under `:silent !`, which freezes lvi's event loop -- a `map` read back over
@@ -65,6 +75,8 @@
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags).
 # Needs a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_MAPS exported);
 # from elsewhere pass -w.
+#
+# Spawn: tty
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
@@ -171,7 +183,23 @@ key=$(printf '%s' "$sel" | awk '{print $2}')
 [ -n "$key" ] || exit 0
 
 case $kind in
-  cmd) send "normal :silent !$key" ;;
+  cmd)
+    # The header's `Spawn:` line (see PICKING A `cmd` ROW above). A Lua tool's
+    # header is `--` comments, so both prefixes are read.
+    # `command -v` can fail (a multi-select picker hands over two rows); awk
+    # given an empty filename would read stdin, the tty under `:silent !`.
+    p=$(command -v "$key") &&
+      spawn=$(awk 'NR==1&&/^#!/{next} /^(#|--)/{ if (sub(/^(#|--) Spawn: */, "")) { print $1; exit } next } {exit}' \
+                "$p" 2>/dev/null)
+    case $spawn in
+      bg)       send "normal :bg $key" ;;
+      filter)   send "normal :.!$key" ;;
+      operator) send "normal :set operatorfunc=$key" ;;
+      wbuf)     send "wbuf" "normal :silent !$key" ;;
+      none)     send "msg lvi-cmd: $key is not run from the : line; see $key --help" ;;
+      *)        send "normal :silent !$key" ;;
+    esac
+    ;;
   key)
     # Key notation back to the raw bytes :normal wants. Only the LHS passes
     # through here, so this is a handful of names and <C-x>; the octal goes

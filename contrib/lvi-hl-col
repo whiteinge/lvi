@@ -118,6 +118,8 @@
 # `toggle`/`on` starts with when none is set, default 79), LVI_HL_COL_MAXBYTES
 # (skip buffers larger than this, default 262144), LVI_HL_COL_DEBUG (file to
 # capture worker stderr).
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

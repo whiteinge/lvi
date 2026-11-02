@@ -29,6 +29,8 @@
 # Config: LVI (client, default `lvi`), LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags).
 # Needs a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_BUFS exported); from
 # elsewhere pass -w.
+#
+# Spawn: tty
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

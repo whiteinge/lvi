@@ -74,6 +74,8 @@
 -- picked from the file extension), LVI_LSP_TIMEOUT (seconds, default 20),
 -- LVI_LSP_DEBUG (file for server stderr and a transcript). Needs lvi-list on
 -- PATH and a `lvi-lsp-<backend>` adapter for the file's language.
+--
+-- Spawn: bg
 
 -- -h/--help: print this script's header comment (its full reference), then exit.
 if arg[1] == "-h" or arg[1] == "--help" then

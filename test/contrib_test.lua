@@ -2492,12 +2492,64 @@ wait
         cleanup(d)
       end)
 
-      -- A tool can want a range, arguments, or a different spawn form, so the
-      -- pick seeds the ':' prompt and stops -- no <CR>.
-      it("seeds the prompt for a tool instead of running it blind", function()
+      -- A tool can want a range or arguments, so the pick seeds the ':' prompt
+      -- and stops -- no <CR> -- in the spawn form its header's `Spawn:` line
+      -- declares. Seeding `silent !` for a tool that calls back into the view
+      -- and waits (lvi-ftype) froze the editor.
+      it("seeds the prompt in the spawn form the tool's header declares", function()
+        local cases = {
+          { "cmd  lvi-ftype ",   "normal :bg lvi-ftype\n" },
+          { "cmd  lvi-buf ",     "normal :silent !lvi-buf\n" },
+          { "cmd  lvi-tags ",    "wbuf\nnormal :silent !lvi-tags\n" },
+          { "cmd  lvi-reflow ",  "normal :.!lvi-reflow\n" },
+          { "cmd  lvi-comment ", "normal :set operatorfunc=lvi-comment\n" },
+          { "cmd  lvi-lsp ",     "normal :bg lvi-lsp\n" },        -- a `--` header
+        }
+        for _, c in ipairs(cases) do
+          local d = stub({})
+          expect(pick(d, c[1])).to.equal(c[2])
+          cleanup(d)
+        end
+      end)
+
+      it("seeds nothing for a backend, and says why", function()
         local d = stub({})
-        expect(pick(d, "cmd  lvi-list")).to.equal("normal :silent !lvi-list\n")
+        expect(pick(d, "cmd  lvi-hl-bat ")).to.equal(
+          "msg lvi-cmd: lvi-hl-bat is not run from the : line; see lvi-hl-bat --help\n")
         cleanup(d)
+      end)
+
+      -- Someone else's lvi-* has no `Spawn:` line; `silent !` is the form that
+      -- at least works for a tool needing the terminal.
+      it("seeds silent ! for a tool with no Spawn: line", function()
+        local d = stub({})
+        write(d .. "/lvi-zzforeign", "#!/bin/sh\n# lvi-zzforeign -- not ours.\n\nexit 0\n")
+        os.execute("chmod +x '" .. d .. "/lvi-zzforeign'")
+        expect(pick(d, "cmd  lvi-zzforeign", { PATH = d })).to.equal("normal :silent !lvi-zzforeign\n")
+        cleanup(d)
+      end)
+
+      -- A row whose tool `command -v` cannot find (a multi-select picker hands
+      -- over two rows at once) must still seed the guess. awk given an empty
+      -- filename reads stdin instead, the tty under `:silent !`: the picker
+      -- would hang, or here read a header off stdin that is not the tool's.
+      it("seeds silent ! for a tool it cannot find, without reading stdin", function()
+        local d = stub({})
+        write(d .. "/pick", "#!/bin/sh\ncat >/dev/null\nprintf 'cmd  lvi-zzgone\\n'\n")
+        os.execute("chmod +x '" .. d .. "/pick'")
+        local env = { LVI = STUB, STUB_DIR = d, LVI_WID = "w1", LVI_MAPS = MAPS,
+                      LVI_PICKER = d .. "/pick" }
+        run(env, "printf '# Spawn: bg\\n' | contrib/lvi-cmd")
+        expect(read(d .. "/log")).to.equal("normal :silent !lvi-zzgone\n")
+        cleanup(d)
+      end)
+
+      -- Every contrib tool declares its form, so none falls through to the guess.
+      it("finds a Spawn: line in every contrib tool", function()
+        local p = io.popen("cd contrib && for f in lvi-*; do [ -x \"$f\" ] || continue; "
+          .. "grep -Eq '^(#|--) Spawn: (bg|tty|wbuf|filter|operator|none)$' \"$f\" || echo \"$f\"; done")
+        expect(p:read("*a")).to.equal("")
+        p:close()
       end)
 
       it("offers the keymap and PATH's lvi-* tools in one list", function()
@@ -2526,7 +2578,7 @@ wait
         local env = { LVI = STUB, STUB_DIR = d, LVI_MAPS = MAPS,
                       LVI_PICKER = picker(d), PICK = "cmd  lvi-list" }
         run(env, "contrib/lvi-cmd -w w9")
-        expect(read(d .. "/log")).to.equal("map\nnormal :silent !lvi-list\n")
+        expect(read(d .. "/log")).to.equal("map\nnormal :bg lvi-list\n")
         cleanup(d)
       end)
     end)

@@ -20,6 +20,8 @@
 # .jsonl; the flip side is that a stray second document in a .json file passes.
 # Comments do not: a .jsonc/.json5 buffer wants a comment-tolerant backend
 # (biome), and schema checking is check-jsonschema's job.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

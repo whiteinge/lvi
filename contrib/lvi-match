@@ -93,6 +93,8 @@
 # empty pushes none), LVI_MATCH_MAXBYTES (skip buffers larger than this, default
 # 262144), LVI_MATCH_MAXHITS (per-pattern paint cap, default 5000),
 # LVI_MATCH_DEBUG (file to capture worker stderr). Needs lvi-bre-locate on PATH.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

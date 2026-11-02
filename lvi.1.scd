@@ -1444,10 +1444,11 @@ below, with the happy-path rc lines that turn it on:
 *lvi-cmd* -- find the binding you forgot
 	The same picker over your own configuration: every key you have mapped
 	(read from *$LVI_MAPS*) and every *lvi-*\* tool on *$PATH*, in one list.
-	Picking a binding presses it; picking a tool seeds the *:* prompt, since
-	only you know whether it wants a range or arguments. A binding you press
-	daily needs no help, but the one set up months ago has faded, and the ex
-	prompt has no completion to jog it:
+	Picking a binding presses it; picking a tool seeds the *:* prompt, in the
+	spawn form its header declares, since only you know whether it wants a
+	range or arguments. A binding you press daily needs no help, but the one
+	set up months ago has faded, and the ex prompt has no completion to jog
+	it:
 
 	```
 	map \\c :silent !lvi-cmd<CR>
@@ -1668,7 +1669,6 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	*:wbuf* snapshots the live buffer for a *silent !* tool to read (see
 	*Shelling out* under *EX COMMANDS*).
 
-*LVI_QUICKFIX*
 *LVI_BG*
 	Set to *1* for the detached spawns (*bg*, *on* hooks, the *g@* operator)
 	and absent from every child lvi waits on (*!*, *sh*, a filter, a
@@ -1677,6 +1677,7 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	unanswered handshake fails with an error after two seconds instead of
 	hanging. A *bg* child waits as long as it takes.
 
+*LVI_QUICKFIX*
 	The _errorfile_ given with *-q*, exported for the *ready* hook to load (see
 	*-q*). Unset when *-q* was not given.
 

@@ -13,6 +13,8 @@
 # LVI_WID/LVI_SOCK are exported by lvi. Set LVI if `lvi` is not on PATH; set
 # LVI_PICKER to your finder (default: fzf; fzy, sk, etc. work too, and it may
 # carry flags: 'fzf --height 10').
+#
+# Spawn: tty
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

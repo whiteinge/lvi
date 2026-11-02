@@ -60,6 +60,8 @@
 #
 # Config: LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags), LVI_COMPL_POPUP (tmux popup when
 # set and $TMUX), plus each source's own knobs -- see its header.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

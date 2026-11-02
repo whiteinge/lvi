@@ -31,6 +31,8 @@
 #                        `pygmentize -f terminal256` would pick), 16 or 8
 #                        (nearest ANSI color, which then follows your terminal
 #                        palette). Only affects --theme.
+#
+# Spawn: none
 import os
 import sys
 from pygments.lexers import get_lexer_for_filename, guess_lexer_for_filename, get_lexer_by_name

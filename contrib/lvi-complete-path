@@ -33,6 +33,8 @@
 #
 # Dotfiles are always listed. The picker is seeded with what you have typed, so
 # they stay out of the way until you type a leading `.`.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

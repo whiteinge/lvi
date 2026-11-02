@@ -48,6 +48,8 @@
 # $XDG_STATE_HOME/lvi/marks). Run from inside lvi ($LVI_WID/$LVI_MARK/$LVI_FILE...
 # exported by the hook); from elsewhere pass -w, name the MARK, and cd to the tree
 # so relative paths resolve alike.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

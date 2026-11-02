@@ -23,6 +23,8 @@
 # machine's rc had `show-warnings: no` (silence, and a linter reporting clean
 # because of a config file is worse than no linter), and the `show-errors`
 # default of 6 truncates a bad file mid-list.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

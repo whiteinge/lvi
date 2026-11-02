@@ -65,6 +65,8 @@
 # Universal Ctags), LVI_TAG_FILE (tags file to query, skipping the upward walk).
 # Needs readtags and a picker on PATH. Run from inside lvi ($LVI_WID/$LVI_FILE/
 # $LVI_CWORD/$LVI_BUFFER exported); from elsewhere pass -w and cd to the tree.
+#
+# Spawn: wbuf
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

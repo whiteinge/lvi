@@ -54,6 +54,8 @@
 # Config (env): LVI_REFLOW_WIDTH (default 79; -w / a bare numeric arg override),
 # LVI_REFLOW_TABSTOP (tab width used when measuring indent, default 8),
 # LVI_REFLOW_PREFIX (force this prefix instead of detecting one; -p overrides).
+#
+# Spawn: filter
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

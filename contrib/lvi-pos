@@ -51,6 +51,8 @@
 # $XDG_STATE_HOME/lvi/positions), LVI_POS_MAX (entries to keep, default 1000).
 # Run from inside lvi ($LVI_WID/$LVI_FILE/$LVI_LINE exported by the hook); from
 # elsewhere pass -w and cd to the tree so relative paths resolve alike.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

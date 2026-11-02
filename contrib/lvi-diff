@@ -72,6 +72,8 @@
 # cursor at the top line, so the follower's cursor jumps to its top as you scroll
 # the other -- fine for reading, surprising if you then edit the pane you weren't
 # driving.
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

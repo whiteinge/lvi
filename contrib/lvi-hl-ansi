@@ -23,6 +23,8 @@
 -- --wrap=never) or expand tabs (--tabs=0), or byte columns would desync.
 -- At most 64 distinct styles are tracked per run; text drawn in styles past
 -- that cap comes out unhighlighted (a theme rarely has more than a few dozen).
+--
+-- Spawn: none
 
 -- -h/--help: print this script's header comment (its full reference), then exit.
 if arg[1] == "-h" or arg[1] == "--help" then

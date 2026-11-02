@@ -55,6 +55,8 @@
 # Config: LVI_SEND_PASTE (plain|bracket, default plain), LVI_SEND_SCOPE
 # (session|server, default session). Needs tmux on PATH.
 # You do not have to be inside tmux, only to have a server running.
+#
+# Spawn: none
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac

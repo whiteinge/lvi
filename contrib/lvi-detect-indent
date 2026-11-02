@@ -26,6 +26,8 @@
 # buffer simply reads as inconclusive, leaving the caller's default to stand).
 #
 # Used by lvi-ftype; also runnable by hand: `lvi-detect-indent foo.py`.
+#
+# Spawn: none
 
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next}/^#/{sub(/^# ?/,"");print;next}{exit}' "$0" ;; esac
 

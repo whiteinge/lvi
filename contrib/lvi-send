@@ -72,6 +72,8 @@
 # LVI_PICKER (fzf/fzy/sk, default fzf; may carry flags), LVI_SEND_MAXBYTES
 # (refuse to send more than this, default 65536), LVI_SEND_DEBUG (1 traces to
 # stderr; :bg discards it, so trace by running the script directly).
+#
+# Spawn: bg
 
 # -h/--help: print this script's header comment (its full reference), then exit.
 case ${1:-} in -h|--help) exec awk 'NR==1&&/^#!/{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "$0" ;; esac
