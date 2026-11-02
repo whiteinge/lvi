@@ -622,6 +622,11 @@ function M.run(opts)
   -- Without the trap, a hook fired on the way out (`write` from :wq/:x, `exit`)
   -- dies mid-flight; ignored dispositions survive exec, so the whole child tree
   -- is immune. (setsid would detach harder but has no portable -f.)
+  --
+  -- `LVI_BG=1` marks the child as detached, for `lvi -w`'s deadlock check
+  -- (client.lua): a child of this view that lacks it is one the view may be
+  -- blocked on, and a hello it sends that goes unanswered means exactly that.
+  -- Set inline, not with setenv, so it never leaks into a foreground spawn.
   ed.spawn_bg = function(cmd, buf, line1, line2, col1, col2, kind)
     ed.export_context(buf)
     if line1 then sys.setenv("LVI_LINE1", line1); sys.setenv("LVI_LINE2", line2 or line1) end
@@ -629,7 +634,7 @@ function M.run(opts)
       sys.setenv("LVI_KIND", kind)
       if col1 then sys.setenv("LVI_COL1", col1); sys.setenv("LVI_COL2", col2 or col1) end
     end
-    os.execute("( trap '' HUP; " .. cmd .. " ) >/dev/null 2>&1 &")
+    os.execute("( trap '' HUP; LVI_BG=1; export LVI_BG; " .. cmd .. " ) >/dev/null 2>&1 &")
   end
   -- Command-backed registers (`:register`): a yank/delete into the register pipes
   -- its text to `write`; a put reads `read`'s stdout. Synchronous and tty-free --
@@ -714,6 +719,11 @@ function M.run(opts)
   -- the scratch path above.
   sys.setenv("LVI_WID", ed.wid)
   sys.setenv("LVI_SOCK", ed.sock_path)
+  -- A view launched from a `:bg` child or a hook inherits that child's LVI_BG=1
+  -- (spawn_bg above). Clear it, or every foreground child of THIS view would
+  -- carry it too and `lvi -w`'s deadlock check (client.lua) would wave them
+  -- through.
+  sys.setenv("LVI_BG", "")
   sys.setenv("LVI_BUFFER", ed.buffer_scratch)
   -- `lvi -q FILE` parks the errorfile path here for a `ready` hook to consume
   -- (e.g. `on ready ... lvi-list load "$LVI_QUICKFIX" ...` in the rc). The core

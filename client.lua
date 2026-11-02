@@ -39,6 +39,34 @@ end
 -- the handshake reply, so it upgrades blindly only when a command actually
 -- needs framing -- plain commands stay bare lines, byte-identical to the old
 -- wire, whatever the server.
+--
+-- The one deadlock the client can see coming: a program the view is blocked
+-- running (`:!`, `:silent !`, a register backend, `:sh` and the shell it gives
+-- you) calls back into THAT view and waits for a reply. The view is waiting on
+-- the program, so no reply ever comes, and a mis-bound map would freeze the
+-- editor for good. A view that is running answers the %hello at once, so when
+-- we are the view's own child (our socket is $LVI_SOCK) and it was not a
+-- detached `:bg` spawn (no $LVI_BG), an unanswered hello past HELLO_WAIT_MS is
+-- that deadlock: fail with an error saying how to fix it instead of hanging.
+-- Everyone else still waits indefinitely -- a `:bg` hook whose view is busy in
+-- a long `:!make` is not deadlocked, only early. A self-backgrounding worker
+-- forked from a `:!` child keeps the suspicion, which is harmless: its parent
+-- returns at once and the view answers well inside the window. The check runs
+-- after connect(), so a view frozen long enough for its listen backlog to fill
+-- (sys.listen) blocks the connect itself, before any of this, and that client
+-- hangs as before.
+local HELLO_WAIT_MS = 2000
+
+local function frozen_on_us(sock, fd)
+  if (os.getenv("LVI_BG") or "") ~= "" or os.getenv("LVI_SOCK") ~= sock then return false end
+  -- One poll for the whole window. nil is EINTR (a resize, job control), not
+  -- time passed, so the window restarts: a signal can only make us wait longer,
+  -- never call a slow view frozen.
+  local ready
+  repeat ready = sys.poll({ fd }, HELLO_WAIT_MS) until ready ~= nil
+  return next(ready) == nil
+end
+
 function M.send(wid, commands, detach)
   local sock, err = resolve(wid)
   if not sock then return nil, err end
@@ -56,6 +84,16 @@ function M.send(wid, commands, detach)
     local framed = false
     if not detach then
       sys.write(fd, proto.HELLO)
+      if frozen_on_us(sock, fd) then
+        -- Our stderr is gone under `:silent !`, so also leave the reason on the
+        -- connection: the view reads it once it resumes and shows it on the
+        -- status line. (A bare line, valid with or without the handshake.)
+        sys.write(fd, "msge lvi -w: a command lvi was waiting on called back"
+          .. " into it and was refused; run it with :bg\n")
+        error("view " .. (os.getenv("LVI_WID") or "?") .. " is waiting for this"
+          .. " command to exit, so it cannot answer; run it with :bg, or send"
+          .. " with lvi -w --detach", 0)
+      end
       local payload = reader:response()
       framed = payload:match("^lvi %d") ~= nil      -- old server: empty or an ex error
       if multiline and not framed then

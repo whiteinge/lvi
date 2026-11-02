@@ -43,7 +43,9 @@ CONTROL SOCKET*).
 *-d*, *--detach*
 	Client mode: send without waiting for replies (fire-and-forget). Use this
 	when a command driven from inside the same editor would otherwise deadlock
-	the single-threaded loop.
+	the single-threaded loop. Without it, a client run by a shell-out of the
+	view it targets fails after two seconds unanswered, rather than wait
+	forever on a view that is waiting on it (see *LVI_BG*).
 
 *-l*, *--list*
 	List running views as _wid_<TAB>_socket-path_<TAB>_file_, one per line, and
@@ -1085,7 +1087,9 @@ picker (fzf), a pager, or you just want to watch its output? Then *!*, or
 way lvi is blocked until it exits. Second: does it instead reach back to change
 the view as it runs -- move the cursor, set a highlight, update a list? Then
 *bg*, which never blocks (so those updates land at once, with no full-screen
-flash) but gets no terminal.
+flash) but gets no terminal. Run such a tool under *!* instead and it waits
+on lvi while lvi waits on it; *lvi -w* gives up after two seconds and says
+to use *bg*.
 
 When it needs both at once -- an interactive picker built from your *unsaved*
 text (see *contrib/lvi-tags*) -- the terminal verbs block lvi, so the tool
@@ -1665,6 +1669,14 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	*Shelling out* under *EX COMMANDS*).
 
 *LVI_QUICKFIX*
+*LVI_BG*
+	Set to *1* for the detached spawns (*bg*, *on* hooks, the *g@* operator)
+	and absent from every child lvi waits on (*!*, *sh*, a filter, a
+	*register* backend). *lvi -w* reads it: a client aimed at its own
+	view (*LVI_SOCK*) without it may be what that view is blocked on, so an
+	unanswered handshake fails with an error after two seconds instead of
+	hanging. A *bg* child waits as long as it takes.
+
 	The _errorfile_ given with *-q*, exported for the *ready* hook to load (see
 	*-q*). Unset when *-q* was not given.
 
