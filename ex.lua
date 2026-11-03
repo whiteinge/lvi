@@ -421,7 +421,7 @@ local function run_capture(ed, cmd)
     if p then p:close() end
     return o
   end
-  local out = interactive and ed.with_tty(run) or run()
+  local out = ed.blocking(function() return interactive and ed.with_tty(run) or run() end)
   local code = tonumber((slurp(codef):match("%d+"))) or 0
   local err = interactive and "" or slurp(errf)
   os.remove(codef); os.remove(errf)
@@ -663,9 +663,12 @@ function M.textobj_range(ed, cmd, around, key)
   -- holds the terminal in raw mode on the alternate screen, so a filter's
   -- diagnostics would land in the middle of the text.
   local full = ("%s '%s' %s %d %d 2>/dev/null"):format(cmd, tmp, around and "a" or "i", ed.cy, ed.cx)
-  local p = io.popen(full, "r")
-  local out = p and p:read("*a") or ""
-  if p then p:close() end
+  local out = ed.blocking(function()
+    local p = io.popen(full, "r")
+    local o = p and p:read("*a") or ""
+    if p then p:close() end
+    return o
+  end)
   os.remove(tmp)
   local kind, rest = out:match("^%s*(%a+)%s+(.-)%s*$")
   if kind == "char" then
@@ -712,9 +715,12 @@ function M.motion_target(ed, cmd, count, arg)
   wf:write(ed.buf:text()); wf:close()
   local full = ("%s %s %d %d %d %s 2>/dev/null"):format(
                  cmd, sys.shq(tmp), count or 1, ed.cy, ed.cx, sys.shq(arg or ""))
-  local p = io.popen(full, "r")
-  local out = p and p:read("*a") or ""
-  if p then p:close() end
+  local out = ed.blocking(function()
+    local p = io.popen(full, "r")
+    local o = p and p:read("*a") or ""
+    if p then p:close() end
+    return o
+  end)
   os.remove(tmp)
   local kind, rest = out:match("^%s*(%a+)%s+(.-)%s*$")
   if kind == "char" then

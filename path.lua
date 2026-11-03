@@ -55,6 +55,15 @@ function M.socket(wid)
   return M.dir() .. "/" .. wid
 end
 
+-- The view's busy marker, beside its socket. While the editor is blocked on a
+-- child it waits for, this file holds the token that child carries in
+-- $LVI_BUSY (editor.blocking); `lvi -w` reads both to refuse, instead of
+-- hang, when that child calls back (client.lua). A `.busy` sidecar, so
+-- reap_sidecars sweeps a crashed view's with the rest.
+function M.busy(sockpath)
+  return sockpath .. ".busy"
+end
+
 -- A private temp-file path. os.tmpname points at world-readable /tmp with a
 -- predictable name -- unacceptable for what the editor writes out through temp
 -- files (whole buffer contents: ex delegation, filters, completion), and the

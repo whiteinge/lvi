@@ -5,6 +5,7 @@ local lust   = require("lust")
 local buffer = require("buffer")
 local editor = require("editor")
 local normal = require("normal")
+local path   = require("path")
 local describe, it, expect = lust.describe, lust.it, lust.expect
 
 local function ed_with(text, over)
@@ -484,6 +485,46 @@ describe("editor.preserve (crash salvage)", function()
     expect(f:read("*a")).to.equal("scratch work\n")
     f:close()
     os.remove(tmp); os.remove(tmp .. ".recover.1")
+  end)
+end)
+
+-- The busy marker: a child the view waits on finds the same token in its
+-- environment and in the `.busy` file beside the socket; both go when the
+-- spawn returns, and a reason a refused client left in the file lands on the
+-- status line (see client.lua for the other side).
+describe("editor.blocking", function()
+  it("marks the spawn for its child, clears after, and relays a refused reason", function()
+    local tmp = os.tmpname()
+    local ed = editor.new_ed()
+    ed.wid, ed.sock_path = "w7", tmp
+    local busy = path.busy(tmp)
+    local seen_env, seen_file
+    local r1, r2 = ed.blocking(function()
+      seen_env = os.getenv("LVI_BUSY")
+      local f = io.open(busy, "r"); seen_file = f:read("*l"); f:close()
+      f = io.open(busy, "a"); f:write("refused: use :bg\n"); f:close()
+      return "a", "b"
+    end)
+    expect(seen_env).to.equal("w7.1")
+    expect(seen_file).to.equal("w7.1")
+    expect(r1).to.equal("a"); expect(r2).to.equal("b")
+    expect(os.getenv("LVI_BUSY")).to.equal("")
+    expect(io.open(busy, "r")).to_not.exist()
+    expect(ed.message).to.equal("refused: use :bg")
+    expect(ed.message_hl).to.equal("Error")
+    -- An error inside still clears both, and the next spawn gets a new token.
+    local ok = pcall(ed.blocking, function() error("boom", 0) end)
+    expect(ok).to.equal(false)
+    expect(os.getenv("LVI_BUSY")).to.equal("")
+    expect(io.open(busy, "r")).to_not.exist()
+    expect(ed.busy_n).to.equal(2)
+    os.remove(tmp)
+  end)
+
+  it("is a plain call for an ed with no view identity", function()
+    local ed = editor.new_ed()
+    expect(ed.blocking(function() return 42 end)).to.equal(42)
+    expect(io.open(path.busy("/nonexistent"), "r")).to_not.exist()
   end)
 end)
 

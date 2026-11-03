@@ -41,7 +41,7 @@ local M = {}
 --   * read_line                          -- the keyboard capability, injected by
 --     normal.loop (the only scope it is callable from; see there)
 function M.new_ed()
-  return {
+  local ed = {
     -- lifecycle
     running = true,           -- the poll loop spins while true (:q flips it)
     exit_code = nil,          -- process exit status (:cq sets non-zero)
@@ -115,7 +115,61 @@ function M.new_ed()
 
     -- the buffer list (bufs.init populates)
     buffers = nil, bufidx = nil, altbuf = nil,
+
+    -- blocking spawns (see M.blocking)
+    busy_n = 0,               -- how many so far; numbers the LVI_BUSY token
   }
+  -- Run fn as a spawn this view waits on (see M.blocking). Bound here rather
+  -- than in run() so the ex-layer spawn sites call it unconditionally; without
+  -- a sock_path (a test ed) it is a plain call.
+  ed.blocking = function(fn) return M.blocking(ed, fn) end
+  return ed
+end
+
+-- ---- blocking spawns and the busy marker ------------------------------------
+-- Every child the view WAITS on (`:!`, `:sh`, a filter, a register backend,
+-- completion, a textobj/motion backend) runs inside blocking(). While it runs
+-- the view cannot answer its socket, so a child that calls back with `lvi -w`
+-- and waits for the reply deadlocks the editor for good -- a mis-bound map, or
+-- a `:bg` tool seeded under `:silent !`. The editor is the one party that knows
+-- precisely when it is blocked, so it says so where the client can see: a token
+-- in the child's environment ($LVI_BUSY) and the same token in the `.busy`
+-- sidecar beside the socket (path.busy), removed when the child returns. The
+-- client (client.lua) reads "my token is still in the file" as the deadlock
+-- and refuses. A detached worker the child left behind carries the token too,
+-- but by the time it calls back the file has moved on, so it is let through.
+-- The token is per view and per spawn (wid.n), so a nested editor or a stale
+-- environment can never match by accident.
+--
+-- A refused client's stderr is gone under `:silent !`, so it leaves its reason
+-- in the file after the token line; blocking() reads it back and shows it on
+-- the status line. No socket is involved on either side, on purpose: a frozen
+-- view's listen backlog may be full, and a connect to it would block.
+--
+-- An env marker alone (the first cut: LVI_BG=1 on detached spawns, and a
+-- timed-out handshake meant deadlock) could not tell a worker from a hang,
+-- needed every blocking site to remember NOT to set it, and ran after the
+-- connect the full backlog blocks. The file is owned by the party that knows.
+function M.blocking(ed, fn)
+  if not ed.sock_path then return fn() end           -- a test ed: no view identity
+  ed.busy_n = ed.busy_n + 1
+  local tok = (ed.wid or "ed") .. "." .. ed.busy_n
+  local busy = path.busy(ed.sock_path)
+  local f = io.open(busy, "w")
+  if f then f:write(tok, "\n"); f:close() end
+  sys.setenv("LVI_BUSY", tok)
+  local res = { pcall(fn) }
+  sys.setenv("LVI_BUSY", "")
+  f = io.open(busy, "r")
+  if f then
+    f:read("*l")                                     -- the token
+    local note = f:read("*l")                        -- a refused child's reason, if any
+    f:close()
+    if note and note ~= "" then ed.message = note; ed.message_hl = "Error" end
+  end
+  os.remove(busy)
+  if not res[1] then error(res[2], 0) end
+  return unpack(res, 2)
 end
 
 -- Resume the interpreter coroutine so it consumes whatever is queued in
@@ -623,10 +677,9 @@ function M.run(opts)
   -- dies mid-flight; ignored dispositions survive exec, so the whole child tree
   -- is immune. (setsid would detach harder but has no portable -f.)
   --
-  -- `LVI_BG=1` marks the child as detached, for `lvi -w`'s deadlock check
-  -- (client.lua): a child of this view that lacks it is one the view may be
-  -- blocked on, and a hello it sends that goes unanswered means exactly that.
-  -- Set inline, not with setenv, so it never leaks into a foreground spawn.
+  -- No busy marker (M.blocking): the view does not wait on these, so a child
+  -- here may call back and wait on a busy view as long as it likes. LVI_BUSY is
+  -- empty between blocking spawns, and the loop never spawns during one.
   ed.spawn_bg = function(cmd, buf, line1, line2, col1, col2, kind)
     ed.export_context(buf)
     if line1 then sys.setenv("LVI_LINE1", line1); sys.setenv("LVI_LINE2", line2 or line1) end
@@ -634,7 +687,7 @@ function M.run(opts)
       sys.setenv("LVI_KIND", kind)
       if col1 then sys.setenv("LVI_COL1", col1); sys.setenv("LVI_COL2", col2 or col1) end
     end
-    os.execute("( trap '' HUP; LVI_BG=1; export LVI_BG; " .. cmd .. " ) >/dev/null 2>&1 &")
+    os.execute("( trap '' HUP; " .. cmd .. " ) >/dev/null 2>&1 &")
   end
   -- Command-backed registers (`:register`): a yank/delete into the register pipes
   -- its text to `write`; a put reads `read`'s stdout. Synchronous and tty-free --
@@ -647,18 +700,22 @@ function M.run(opts)
   -- delegation). stderr is muted so a warning can't corrupt the alt screen.
   ed.reg_write = function(cmd, text)
     ed.export_context()
-    local p = io.popen("(" .. cmd .. ") 2>/dev/null", "w")
-    if not p then return end
-    pcall(function() p:write(text) end)
-    p:close()
+    ed.blocking(function()
+      local p = io.popen("(" .. cmd .. ") 2>/dev/null", "w")
+      if not p then return end
+      pcall(function() p:write(text) end)
+      p:close()
+    end)
   end
   ed.reg_read = function(cmd)
     ed.export_context()
-    local p = io.popen("(" .. cmd .. ") 2>/dev/null", "r")
-    if not p then return "" end
-    local out = p:read("*a") or ""
-    p:close()
-    return out
+    return ed.blocking(function()
+      local p = io.popen("(" .. cmd .. ") 2>/dev/null", "r")
+      if not p then return "" end
+      local out = p:read("*a") or ""
+      p:close()
+      return out
+    end)
   end
   -- Keep marks/jumps honest across edits (see make_splice_hook); bufs attaches
   -- this to each buffer as it becomes current, so it must exist before init.
@@ -719,11 +776,11 @@ function M.run(opts)
   -- the scratch path above.
   sys.setenv("LVI_WID", ed.wid)
   sys.setenv("LVI_SOCK", ed.sock_path)
-  -- A view launched from a `:bg` child or a hook inherits that child's LVI_BG=1
-  -- (spawn_bg above). Clear it, or every foreground child of THIS view would
-  -- carry it too and `lvi -w`'s deadlock check (client.lua) would wave them
-  -- through.
-  sys.setenv("LVI_BG", "")
+  -- A view launched from a child another view waits on (`:!lvi other`)
+  -- inherits that view's LVI_BUSY. Clear it: the token is ours to issue
+  -- (M.blocking), and a stale one would ride into every child of THIS view.
+  -- It could never match our tokens, but the environment should tell the truth.
+  sys.setenv("LVI_BUSY", "")
   sys.setenv("LVI_BUFFER", ed.buffer_scratch)
   -- `lvi -q FILE` parks the errorfile path here for a `ready` hook to consume
   -- (e.g. `on ready ... lvi-list load "$LVI_QUICKFIX" ...` in the rc). The core
@@ -820,7 +877,9 @@ function M.run(opts)
     ed.shell = function(cmd, prompt)
       ed.export_context()
       return ed.with_tty(function()
-        local st = os.execute(cmd)
+        -- Only the command is a blocking spawn, not the Press-ENTER wait: a
+        -- worker it left behind may call back while the prompt sits there.
+        local st = ed.blocking(function() return os.execute(cmd) end)
         local code = (type(st) == "number") and math.floor(st / 256) or (st and 0 or 1)
         if prompt then
           local note = (code ~= 0) and (" [exit " .. code .. "]") or ""
@@ -860,12 +919,12 @@ function M.run(opts)
         end
         f:close()
       end
-      local sel = ed.with_tty(function()
+      local sel = ed.blocking(function() return ed.with_tty(function()
         local p = io.popen(cmd .. " < " .. tmp, "r")    -- picker UI on /dev/tty
         local o = p and p:read("*a") or ""
         if p then p:close() end
         return o
-      end, true)
+      end, true) end)
       os.remove(tmp)
       ed.force_clear = true                             -- repaint over the picker
       return (sel or ""):match("^[^\r\n]*")             -- first line only (a line has no \n)

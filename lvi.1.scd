@@ -44,8 +44,8 @@ CONTROL SOCKET*).
 	Client mode: send without waiting for replies (fire-and-forget). Use this
 	when a command driven from inside the same editor would otherwise deadlock
 	the single-threaded loop. Without it, a client run by a shell-out of the
-	view it targets fails after two seconds unanswered, rather than wait
-	forever on a view that is waiting on it (see *LVI_BG*).
+	view it targets fails after two seconds, rather than wait forever on a
+	view that is waiting on it (see *LVI_BUSY*).
 
 *-l*, *--list*
 	List running views as _wid_<TAB>_socket-path_<TAB>_file_, one per line, and
@@ -1669,13 +1669,15 @@ set -- every binding, theme, and variant -- and each tool's *-h* (or
 	*:wbuf* snapshots the live buffer for a *silent !* tool to read (see
 	*Shelling out* under *EX COMMANDS*).
 
-*LVI_BG*
-	Set to *1* for the detached spawns (*bg*, *on* hooks, the *g@* operator)
-	and absent from every child lvi waits on (*!*, *sh*, a filter, a
-	*register* backend). *lvi -w* reads it: a client aimed at its own
-	view (*LVI_SOCK*) without it may be what that view is blocked on, so an
-	unanswered handshake fails with an error after two seconds instead of
-	hanging. A *bg* child waits as long as it takes.
+*LVI_BUSY*
+	A token set for every child lvi waits on (*!*, *sh*, a filter, a
+	*register* backend, completion) and kept, for as long as it waits, in the
+	*.busy* file beside the socket; absent from the detached spawns (*bg*,
+	*on* hooks, the *g@* operator). *lvi -w* reads both: aimed at its own
+	view (*LVI_SOCK*) with its token still in that file after two seconds,
+	it is a child the view is blocked on, so it fails with an error instead
+	of hanging, and leaves the reason for the status line. A *bg* child, or
+	a worker a *!* child left running, waits as long as it takes.
 
 *LVI_QUICKFIX*
 	The _errorfile_ given with *-q*, exported for the *ready* hook to load (see
