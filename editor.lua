@@ -527,7 +527,6 @@ local function refresh(ed)
 
   if ed.opts.wrap then
     ed.leftcol = 0
-    ed.topsub = ed.topsub
     -- A closed-fold head is one row: its cursor sub-row is 0, not ed.cx's wrapped
     -- position in the (hidden-bodied) underlying line.
     local csub = (view.hasfolds(ed) and fold.closed_head(ed.folds, ed.cy)) and 0
