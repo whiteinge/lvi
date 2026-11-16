@@ -141,9 +141,18 @@ install-common: man
 	$(INSTALL) -d $(DESTDIR)$(MANDIR)/man1
 	$(INSTALL) -m 0644 man1/lvi.1 $(DESTDIR)$(MANDIR)/man1/lvi.1
 
+# Removes either install's files by name, never a whole directory: anything the
+# user added under APPDIR or DOCDIR survives, and rmdir only drops a dir that is
+# then empty (failing on a non-empty or absent dir is the point, hence || :).
+# rmdir -p runs on the path relative to APPDIR, so it climbs no higher.
 uninstall:
-	rm -rf $(DESTDIR)$(APPDIR)
+	rm -f $(addprefix $(DESTDIR)$(APPDIR)/,$(MODULES) lvi $(VENDOR))
+	for f in $(VENDOR); do \
+	  (cd $(DESTDIR)$(APPDIR) 2>/dev/null && rmdir -p $$(dirname $$f) 2>/dev/null) || :; \
+	done
+	rmdir $(DESTDIR)$(APPDIR) 2>/dev/null || :
 	rm -f $(DESTDIR)$(BINDIR)/lvi
 	for f in $(CONTRIB) $(CONTRIB_DATA); do rm -f $(DESTDIR)$(BINDIR)/$$(basename $$f); done
-	rm -rf $(DESTDIR)$(DOCDIR)
+	for f in $(CONTRIB_DOC); do rm -f $(DESTDIR)$(DOCDIR)/$$(basename $$f); done
+	rmdir $(DESTDIR)$(DOCDIR) 2>/dev/null || :
 	rm -f $(DESTDIR)$(MANDIR)/man1/lvi.1
