@@ -6,6 +6,9 @@
 #
 # Override PREFIX (or the individual dirs) to relocate; set DESTDIR for staged /
 # packaged installs (it is prepended to every path but never baked into files).
+#
+# `make static` is the alternative to that tree: one self-contained build/lvi
+# (see the target for how and why).
 
 PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
@@ -17,10 +20,19 @@ DESTDIR ?=
 LUAJIT  ?= luajit
 SCDOC   ?= scdoc
 INSTALL ?= install
+# luastatic is a single Lua script; point this at it however it is installed,
+# e.g. LUASTATIC='luajit /path/to/luastatic.lua'.
+LUASTATIC ?= luastatic
+LUAJIT_PC ?= luajit
+LUAJIT_A  ?= $(shell pkg-config --variable=libdir $(LUAJIT_PC))/libluajit-5.1.a
+LUAJIT_CFLAGS ?= $(shell pkg-config --cflags $(LUAJIT_PC))
 
 APPDIR  = $(LIBDIR)/lvi
 MODULES = buffer.lua bufs.lua client.lua config.lua disp.lua editor.lua \
           ex.lua normal.lua path.lua proto.lua render.lua sys.lua term.lua
+# Vendored runtime modules, each installed at its repo-relative path. Mirrors
+# the vendor entry in lvi's package.path (lvi:12) -- change the two together.
+VENDOR  = vendor/argparse/src/argparse.lua
 # Contrib is globbed, not listed: a hand-written list went stale for 30-odd
 # scripts, and going missing is not a soft failure here -- the dispatchers
 # resolve their adapters and each other through $DIR, which is BINDIR once
@@ -33,7 +45,7 @@ CONTRIB_DATA = contrib/lvirc-man
 CONTRIB_DOC  = contrib/lvirc.sample.vim contrib/lvi-shell.sh
 TESTS   = $(wildcard test/*_test.lua)
 
-.PHONY: all man test clean install uninstall
+.PHONY: all man test static clean install install-static install-common uninstall
 
 all: man
 
@@ -44,6 +56,29 @@ man: man1/lvi.1
 man1/lvi.1: lvi.1.scd
 	$(INSTALL) -d man1
 	$(SCDOC) < lvi.1.scd > $@
+
+# One binary with LuaJIT and every module linked in, so it runs with no luajit
+# on the host. luastatic names each embedded module by its path (dir/x.lua ->
+# require "dir.x") and writes its output beside its input, named after the main
+# script -- so everything is staged flat into a scratch dir (argparse included,
+# making require "argparse" resolve), and the main script goes in as lvi.lua so
+# the binary it emits never lands on the repo's `lvi`. The bundled modules are
+# found through package.preload, which require consults before the
+# package.path lvi builds from arg[0], so that path setup is harmless here.
+# libc stays dynamic on purpose: sys.lua's FFI resolves socket/poll/ioctl
+# through ffi.C, i.e. dlsym in the running image, which a -static link breaks.
+# Contrib is untouched -- it is shell (plus the luajit/python helpers, which
+# still need their interpreters) and reaches this binary as `lvi` on PATH.
+static: build/lvi
+
+build/lvi: lvi $(MODULES) $(VENDOR)
+	rm -rf build/static
+	$(INSTALL) -d build/static
+	cp $(MODULES) $(VENDOR) build/static/
+	cp lvi build/static/lvi.lua
+	cd build/static && $(LUASTATIC) lvi.lua $(MODULES) $(notdir $(VENDOR)) $(LUAJIT_A) $(LUAJIT_CFLAGS)
+	mv build/static/lvi $@
+	rm -rf build/static
 
 test:
 	@for t in $(TESTS); do echo "== $$t"; $(LUAJIT) $$t || exit 1; done
@@ -69,21 +104,34 @@ sloc:
 	   done; } | column -t -s,
 
 clean:
-	rm -rf man1
+	rm -rf man1 build
 
-install: man
-	# Runtime tree: the script, its modules, and just the vendored argparse
-	# module (the path lvi's package.path expects, minus the repo's docs/specs).
+install: install-common
+	# Runtime tree: the script, its modules, and just the vendored modules
+	# (at the paths lvi's package.path expects, minus the repo's docs/specs).
 	$(INSTALL) -d $(DESTDIR)$(APPDIR)
 	$(INSTALL) -m 0644 $(MODULES) $(DESTDIR)$(APPDIR)/
 	$(INSTALL) -m 0755 lvi $(DESTDIR)$(APPDIR)/lvi
-	$(INSTALL) -d $(DESTDIR)$(APPDIR)/vendor/argparse/src
-	$(INSTALL) -m 0644 vendor/argparse/src/argparse.lua $(DESTDIR)$(APPDIR)/vendor/argparse/src/
+	for f in $(VENDOR); do \
+	  $(INSTALL) -d $(DESTDIR)$(APPDIR)/$$(dirname $$f) && \
+	  $(INSTALL) -m 0644 $$f $(DESTDIR)$(APPDIR)/$$f || exit 1; \
+	done
 	# Launcher on PATH (references the real runtime path, not DESTDIR).
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	printf '#!/bin/sh\nexec %s %s/lvi "$$@"\n' '$(LUAJIT)' '$(APPDIR)' > $(DESTDIR)$(BINDIR)/lvi
 	chmod 0755 $(DESTDIR)$(BINDIR)/lvi
-	# Contrib helpers on PATH (they find each other and the launcher there).
+
+# The static binary takes the launcher's place on PATH; no runtime tree. A tree
+# left by an earlier `make install` is left alone (nothing runs it; `make
+# uninstall` first to clear it), and `make install` later simply overwrites the
+# binary with the launcher again.
+install-static: static install-common
+	$(INSTALL) -m 0755 build/lvi $(DESTDIR)$(BINDIR)/lvi
+
+# Everything both installs share: contrib, docs, manpage.
+install-common: man
+	# Contrib helpers on PATH (they find each other and lvi there).
+	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 0755 $(CONTRIB) $(DESTDIR)$(BINDIR)/
 	$(INSTALL) -m 0644 $(CONTRIB_DATA) $(DESTDIR)$(BINDIR)/
 	# Sample rc and shell functions, for the user to copy and source.

@@ -123,7 +123,7 @@ as [`contrib/`](contrib/) tools and *none* of it compiled into the core.
 
 No C toolchain, no `luarocks`, no external modules: `argparse` (CLI) and `lust`
 (tests) are vendored. Ship the `luajit` binary plus the `.lua` files, or bundle a
-single executable with `luastatic`.
+single executable with `make static`.
 
 Optional, only for the features that lean on them: a system **`ex`** (delegated
 ex commands — present on every UNIX), **`scdoc`** (to build the manpage),
@@ -135,10 +135,19 @@ and a highlighter like **Pygments** or **bat** (`contrib/lvi-highlight`).
 make man       # render lvi.1 from lvi.1.scd (needs scdoc)
 make test      # run the test suite
 make install   # PREFIX=/usr/local by default; honors PREFIX and DESTDIR
+make static    # one self-contained build/lvi (needs luastatic and a C compiler)
+make install-static  # install that binary instead of the LuaJIT runtime tree
 ```
 
 `make install` puts the runtime tree under `$(PREFIX)/lib/lvi`, a launcher and
 the `contrib` helpers on `PATH`, and the manpage under `$(PREFIX)/share/man`.
+
+`make static` links LuaJIT and every module into one binary that runs without
+`luajit` installed. `make install-static` installs it in place of the launcher,
+with the `contrib` helpers and the manpage as usual (contrib isn't bundled; the
+helpers are separate scripts that find the binary as `lvi` on `PATH`). If
+`luastatic` isn't on `PATH`, point at the script:
+`make static LUASTATIC='luajit /path/to/luastatic.lua'`.
 
 ---
 
